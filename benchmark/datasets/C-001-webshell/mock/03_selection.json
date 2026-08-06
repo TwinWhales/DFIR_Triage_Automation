@@ -1,0 +1,58 @@
+{
+  "case_id": "C-001",
+  "stage": "03_select",
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T04:12:40Z",
+  "generator": "select.py",
+  "mapping_table_version": "0.3",
+  "selected": [
+    {
+      "artifact": "$MFT",
+      "tier": 1,
+      "scope": {
+        "path_prefix": ["C:\\inetpub\\wwwroot"],
+        "extensions": [".aspx", ".asp", ".ashx", ".asmx"],
+        "time_range": { "start": "2026-07-18T00:00:00Z", "end": "2026-07-22T23:59:59Z" }
+      },
+      "reason": { "technique": "T1505.003", "rationale": "웹셸 파일 생성 흔적" }
+    },
+    {
+      "artifact": "evtx:Security",
+      "tier": 1,
+      "scope": {
+        "event_ids": [4720, 4728, 4732],
+        "time_range": { "start": "2026-07-18T00:00:00Z", "end": "2026-07-22T23:59:59Z" }
+      },
+      "reason": { "technique": "T1136.001", "rationale": "계정 생성 및 권한 그룹 추가" }
+    }
+  ],
+  "deferred": [
+    {
+      "artifact": "$UsnJrnl",
+      "tier": 2,
+      "trigger": "Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시",
+      "reason": { "technique": "T1505.003", "rationale": "웹셸 파일 삭제/재생성 이력" }
+    },
+    {
+      "artifact": "evtx:System",
+      "tier": 2,
+      "trigger": "Tier1에서 서비스 관련 정황 발견 시",
+      "reason": { "technique": "T1543.003", "rationale": "서비스 기반 지속성" }
+    }
+  ],
+  "excluded": [
+    {
+      "artifact": "prefetch",
+      "reason": "Windows Server 기본 설정에서 비활성화되어 수집 불가"
+    },
+    {
+      "artifact": "$LogFile",
+      "reason": "본 버전 미지원 (파싱 모듈 범위 외)"
+    }
+  ],
+  "stats": {
+    "selected_count": 2,
+    "deferred_count": 2,
+    "excluded_count": 2
+  }
+}

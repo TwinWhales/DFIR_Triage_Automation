@@ -1,0 +1,13 @@
+{
+  "case_id": "C-001",
+  "stage": "01_input",
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T04:10:00Z",
+  "source_type": "natural_language",
+  "raw": "웹서버 WEB01에서 이상한 aspx 파일이 발견됐습니다. 비슷한 시기에 관리자 그룹에 모르는 계정이 추가된 것 같습니다. 7월 20일 전후로 보입니다.",
+  "evidence": {
+    "root": "/mnt/evidence/WEB01",
+    "os_hint": "windows_server_2019",
+    "artifacts_available": ["$MFT", "$UsnJrnl", "evtx"]
+  }
+}

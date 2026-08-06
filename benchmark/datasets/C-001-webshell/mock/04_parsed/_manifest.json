@@ -1,0 +1,25 @@
+{
+  "case_id": "C-001",
+  "stage": "04_parse",
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T04:18:02Z",
+  "generator": "parse.py",
+  "files": [
+    {
+      "artifact": "$MFT",
+      "path": "mft.jsonl",
+      "record_count": 3,
+      "flagged_count": 1,
+      "parse_errors": 0
+    },
+    {
+      "artifact": "evtx:Security",
+      "path": "evtx_security.jsonl",
+      "record_count": 2,
+      "flagged_count": 2,
+      "parse_errors": 1
+    }
+  ],
+  "total_records": 5,
+  "flagged_records": 3
+}

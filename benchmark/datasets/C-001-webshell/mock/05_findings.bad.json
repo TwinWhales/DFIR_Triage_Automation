@@ -1,0 +1,42 @@
+{
+  "case_id": "C-001",
+  "stage": "05_interpret",
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T04:21:47Z",
+  "generator": "mock (negative fixture)",
+  "input_refs": ["MFT#12345", "MFT#12346", "EVTX-SEC#40912", "EVTX-SEC#40915"],
+  "findings": [
+    {
+      "id": "F4",
+      "statement": "C:\\Windows\\Temp\\svchost.exe가 2026-07-20 04:01:00에 생성되어 백도어로 사용된 것으로 보입니다.",
+      "refs": ["MFT#99999"],
+      "claims": [
+        { "ref": "MFT#99999", "field": "path", "value": "C:\\Windows\\Temp\\svchost.exe" }
+      ],
+      "technique": "T1036.005",
+      "severity": "high"
+    },
+    {
+      "id": "F5",
+      "statement": "shell.aspx는 2026-07-19 22:00:00에 생성되었습니다.",
+      "refs": ["MFT#12345"],
+      "claims": [
+        { "ref": "MFT#12345", "field": "path", "value": "C:\\inetpub\\wwwroot\\upload\\shell.aspx" },
+        { "ref": "MFT#12345", "field": "si_ctime", "value": "2026-07-19T22:00:00Z" }
+      ],
+      "technique": "T1505.003",
+      "severity": "high"
+    },
+    {
+      "id": "F6",
+      "statement": "웹루트에 health.aspx가 존재하며 동일 공격자가 배치한 추가 웹셸로 판단됩니다.",
+      "refs": ["MFT#12400"],
+      "claims": [
+        { "ref": "MFT#12400", "field": "path", "value": "C:\\inetpub\\wwwroot\\health.aspx" }
+      ],
+      "technique": "T1505.003",
+      "severity": "medium"
+    }
+  ],
+  "timeline": []
+}

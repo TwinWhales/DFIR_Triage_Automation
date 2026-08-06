@@ -1,0 +1,11 @@
+# 팀원 OS가 섞여 있으므로 리포지토리 내부는 LF로 통일한다.
+* text=auto eol=lf
+
+# 셸 스크립트는 CRLF로 체크아웃되면 리눅스에서 실행이 깨진다.
+*.sh text eol=lf
+
+# 증거 조각·테스트 픽스처는 변환하지 않는다.
+*.bin  binary
+*.dd   binary
+*.raw  binary
+*.evtx binary

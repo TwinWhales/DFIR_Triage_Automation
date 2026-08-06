@@ -1,0 +1,23 @@
+{
+  "case_id": "C-001",
+  "stage": "06_verify",
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T04:22:03Z",
+  "generator": "verify.py",
+  "tolerance": { "timestamp_seconds": 1 },
+  "passed": [
+    { "id": "F1", "checks": 3, "checks_passed": 3 },
+    { "id": "F2", "checks": 3, "checks_passed": 3 }
+  ],
+  "rejected": [],
+  "unverifiable": [
+    { "id": "F3", "reason": "claims 없음 (종합 판단 문장)" }
+  ],
+  "stats": {
+    "total_findings": 3,
+    "passed": 2,
+    "rejected": 0,
+    "unverifiable": 1,
+    "hallucination_rate": 0.0
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "case_id": "C-001",
+  "stage": "05_interpret",
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T04:21:47Z",
+  "generator": "qwen2.5-7b-instruct-q4",
+  "input_refs": ["MFT#12345", "MFT#12346", "EVTX-SEC#40912", "EVTX-SEC#40915"],
+  "findings": [
+    {
+      "id": "F1",
+      "statement": "웹루트 하위 upload 디렉터리에 shell.aspx가 2026-07-20 03:14:22에 생성되었으며, $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황이 확인됩니다.",
+      "refs": ["MFT#12345"],
+      "claims": [
+        { "ref": "MFT#12345", "field": "path", "value": "C:\\inetpub\\wwwroot\\upload\\shell.aspx" },
+        { "ref": "MFT#12345", "field": "si_ctime", "value": "2026-07-20T03:14:22Z" },
+        { "ref": "MFT#12345", "field": "flags", "value": "timestamp_mismatch" }
+      ],
+      "technique": "T1505.003",
+      "severity": "high"
+    },
+    {
+      "id": "F2",
+      "statement": "웹셸 생성 약 8분 후 IIS 애플리케이션 풀 계정에 의해 svc_backup 계정이 생성되고 Administrators 그룹에 추가되었습니다.",
+      "refs": ["EVTX-SEC#40912", "EVTX-SEC#40915"],
+      "claims": [
+        { "ref": "EVTX-SEC#40912", "field": "fields.TargetUserName", "value": "svc_backup" },
+        { "ref": "EVTX-SEC#40912", "field": "timestamp", "value": "2026-07-20T03:22:15Z" },
+        { "ref": "EVTX-SEC#40915", "field": "fields.MemberName", "value": "svc_backup" }
+      ],
+      "technique": "T1136.001",
+      "severity": "high"
+    },
+    {
+      "id": "F3",
+      "statement": "전반적으로 웹셸을 통한 초기 침투 이후 계정 생성으로 지속성을 확보한 전형적인 공격 흐름으로 판단됩니다.",
+      "refs": [],
+      "claims": [],
+      "technique": null,
+      "severity": "info"
+    }
+  ],
+  "timeline": [
+    { "ts": "2026-07-20T03:14:22Z", "event": "shell.aspx 생성", "refs": ["MFT#12345"] },
+    { "ts": "2026-07-20T03:22:15Z", "event": "svc_backup 계정 생성", "refs": ["EVTX-SEC#40912"] },
+    { "ts": "2026-07-20T03:22:19Z", "event": "svc_backup을 Administrators에 추가", "refs": ["EVTX-SEC#40915"] }
+  ]
+}

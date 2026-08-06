@@ -1,0 +1,4 @@
+{"ts":"2026-08-06T04:12:30Z","stage":"02_normalize","type":"schema_violation","detail":{"field":"techniques[0].id","value":"T9999","message":"유효하지 않은 ATT&CK ID"},"action":"retry","attempt":1}
+{"ts":"2026-08-06T04:12:33Z","stage":"02_normalize","type":"schema_violation","detail":{"field":"confidence","value":1.5,"message":"범위 초과"},"action":"retry","attempt":2}
+{"ts":"2026-08-06T04:18:01Z","stage":"04_parse","type":"parse_error","detail":{"artifact":"evtx:Security","offset":"0x2B4000","message":"레코드 시그니처 불일치, 건너뜀"},"action":"skip"}
+{"ts":"2026-08-06T04:21:50Z","stage":"05_interpret","type":"malformed_output","detail":{"message":"JSON 파싱 실패, 코드펜스 제거 후 재시도"},"action":"retry","attempt":1}

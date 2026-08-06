@@ -1,0 +1,36 @@
+{
+  "case_id": "C-001",
+  "stage": "02_normalize",
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T04:12:33Z",
+  "generator": "qwen2.5-7b-instruct-q4",
+  "target_os": "windows",
+  "techniques": [
+    {
+      "id": "T1505.003",
+      "name": "Web Shell",
+      "confidence": 0.85,
+      "evidence_text": "이상한 aspx 파일이 발견됐습니다"
+    },
+    {
+      "id": "T1136.001",
+      "name": "Create Account: Local Account",
+      "confidence": 0.70,
+      "evidence_text": "관리자 그룹에 모르는 계정이 추가된 것 같습니다"
+    }
+  ],
+  "time_range": {
+    "start": "2026-07-18T00:00:00Z",
+    "end": "2026-07-22T23:59:59Z",
+    "basis": "사용자가 7월 20일 전후로 언급, ±2일 확장"
+  },
+  "entities": {
+    "hosts": ["WEB01"],
+    "paths": ["C:\\inetpub\\wwwroot"],
+    "processes": [],
+    "accounts": [],
+    "ips": []
+  },
+  "overall_confidence": 0.78,
+  "unmapped_text": []
+}

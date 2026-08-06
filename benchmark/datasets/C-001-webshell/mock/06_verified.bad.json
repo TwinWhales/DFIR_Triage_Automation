@@ -1,0 +1,39 @@
+{
+  "case_id": "C-001",
+  "stage": "06_verify",
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T04:22:03Z",
+  "generator": "mock (negative fixture)",
+  "tolerance": { "timestamp_seconds": 1 },
+  "passed": [],
+  "rejected": [
+    {
+      "id": "F4",
+      "reason": "ref_not_found",
+      "detail": { "ref": "MFT#99999", "message": "파싱 결과에 존재하지 않는 레코드" }
+    },
+    {
+      "id": "F5",
+      "reason": "value_mismatch",
+      "detail": {
+        "ref": "MFT#12345",
+        "field": "si_ctime",
+        "claimed": "2026-07-19T22:00:00Z",
+        "actual": "2026-07-20T03:14:22Z"
+      }
+    },
+    {
+      "id": "F6",
+      "reason": "ref_not_in_input",
+      "detail": { "ref": "MFT#12400", "message": "LLM에 전달되지 않은 레코드를 참조" }
+    }
+  ],
+  "unverifiable": [],
+  "stats": {
+    "total_findings": 3,
+    "passed": 0,
+    "rejected": 3,
+    "unverifiable": 0,
+    "hallucination_rate": 1.0
+  }
+}
