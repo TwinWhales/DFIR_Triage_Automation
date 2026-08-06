@@ -157,6 +157,7 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
 
 
 def main(argv: "list[str] | None" = None) -> int:
+    io.configure_console()
     args = _parse_args(argv)
     out_path = Path(args.out)
     log = errlog.ErrorLog(Path(args.errors) if args.errors else out_path.parent / "errors.jsonl")

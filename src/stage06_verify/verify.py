@@ -53,35 +53,10 @@ DEFAULT_TOLERANCE_SECONDS = 1.0
 UNVERIFIABLE_REASON = "claims 없음 (종합 판단 문장)"
 
 
-class DuplicateRefError(ValueError):
-    """같은 ref를 가진 레코드가 둘 이상이다. 파서 쪽 결함이다."""
-
-
-def load_records(parsed_dir: str | Path) -> dict[str, dict[str, Any]]:
-    """``04_parsed/*.jsonl``을 전부 읽어 ref로 색인한다.
-
-    ref가 겹치면 즉시 실패한다. 조용히 덮어쓰면 검증이 어느 레코드를 봤는지
-    알 수 없게 되고, 통과·기각 판정이 파일 읽는 순서에 좌우된다.
-    """
-    directory = Path(parsed_dir)
-    if not directory.is_dir():
-        raise NotADirectoryError(f"파싱 결과 디렉터리 없음: {directory}")
-
-    records: dict[str, dict[str, Any]] = {}
-    sources: dict[str, str] = {}
-    for path in sorted(directory.glob("*.jsonl")):
-        for record in io.read_jsonl(path):
-            ref = record.get("ref")
-            if ref is None:
-                raise ValueError(f"{path}: ref 없는 레코드")
-            if ref in records:
-                raise DuplicateRefError(
-                    f"ref 중복: {ref} ({sources[ref]}, {path.name}). "
-                    "레코드 번호는 아티팩트 내부에서 고유해야 한다."
-                )
-            records[ref] = record
-            sources[ref] = path.name
-    return records
+#: 04단계 산출물 읽기는 05단계와 공유하므로 공용에 있다. 두 단계가
+#: 다르게 읽으면 ``input_refs``와 검증 대상이 어긋난다.
+DuplicateRefError = io.DuplicateRefError
+load_records = io.read_parsed_records
 
 
 def verify(
@@ -189,6 +164,7 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
 
 
 def main(argv: "list[str] | None" = None) -> int:
+    io.configure_console()
     args = _parse_args(argv)
     out_path = Path(args.out)
     log = errlog.ErrorLog(Path(args.errors) if args.errors else out_path.parent / "errors.jsonl")

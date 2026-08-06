@@ -1,0 +1,67 @@
+{
+  "note": "정규화 단계 few-shot 예시. 프롬프트 실험 시 예시 수와 구성을 바꿔 가며 환각률 변화를 측정한다.",
+  "examples": [
+    {
+      "input": "웹서버 WEB01에서 이상한 aspx 파일이 발견됐습니다. 비슷한 시기에 관리자 그룹에 모르는 계정이 추가된 것 같습니다. 7월 20일 전후로 보입니다.",
+      "output": {
+        "target_os": "windows",
+        "techniques": [
+          {
+            "id": "T1505.003",
+            "name": "Web Shell",
+            "confidence": 0.85,
+            "evidence_text": "이상한 aspx 파일이 발견됐습니다"
+          },
+          {
+            "id": "T1136.001",
+            "name": "Create Account: Local Account",
+            "confidence": 0.7,
+            "evidence_text": "관리자 그룹에 모르는 계정이 추가된 것 같습니다"
+          }
+        ],
+        "time_range": {
+          "start": "2026-07-18T00:00:00Z",
+          "end": "2026-07-22T23:59:59Z",
+          "basis": "사용자가 7월 20일 전후로 언급, ±2일 확장"
+        },
+        "entities": {
+          "hosts": ["WEB01"],
+          "paths": ["C:\\inetpub\\wwwroot"],
+          "processes": [],
+          "accounts": [],
+          "ips": []
+        },
+        "overall_confidence": 0.78,
+        "unmapped_text": []
+      }
+    },
+    {
+      "input": "리눅스 서버에서 cron으로 뭔가 이상한 게 계속 실행된다는 제보가 있었습니다. 언제부터인지는 모르겠습니다.",
+      "output": {
+        "target_os": "linux",
+        "techniques": [
+          {
+            "id": "T1053.005",
+            "name": "Scheduled Task/Job: Scheduled Task",
+            "confidence": 0.4,
+            "evidence_text": "cron으로 뭔가 이상한 게 계속 실행된다"
+          }
+        ],
+        "time_range": {
+          "start": "2026-06-01T00:00:00Z",
+          "end": "2026-08-06T23:59:59Z",
+          "basis": "시간 단서 없음, 최근 2개월로 넓게 설정"
+        },
+        "entities": {
+          "hosts": [],
+          "paths": [],
+          "processes": [],
+          "accounts": [],
+          "ips": []
+        },
+        "overall_confidence": 0.4,
+        "unmapped_text": []
+      }
+    }
+  ]
+}

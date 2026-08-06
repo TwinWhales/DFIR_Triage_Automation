@@ -43,9 +43,24 @@ F6이 성립하려면 `mft.jsonl`에는 있으나 `input_refs`에는 없는 레�
 `MFT#12400`(`health.aspx`)이 그 역할입니다 — 선별 범위에는 들어오지만 flag가 없어
 `record_filter.py`의 상위 N건 추림에서 빠진 레코드를 가정한 것입니다.
 
-`06_verified.bad.json`은 `verify.py`의 **기대 출력 그대로**입니다.
-`tests/test_verify_checkers.py`가 이 파일과 실제 출력을 대조합니다
-(`generated_at`만 제외).
+## 어느 파일이 "기대 출력"인가
+
+구현이 진행되면서 일부 목업은 손으로 쓴 예시에서 **실제 기대 출력**으로
+바뀌었습니다. 테스트가 생성 결과와 대조합니다 (`generated_at`, `generator` 제외).
+
+| 파일 | 성격 | 대조 테스트 |
+|---|---|---|
+| `01_input.json`, `02_scenario.json` | 입력 (손으로 작성) | — |
+| `03_selection.json` | `select.py` 기대 출력 | `test_mapping_loader.py` |
+| `04_parsed/*` | 입력 (파서 미구현) | — |
+| `05_findings.json` | 스텁 응답 겸 기대 출력 | `test_interpret.py` |
+| `06_verified.json`, `06_verified.bad.json` | `verify.py` 기대 출력 | `test_verify_checkers.py` |
+| `07_report.md` | `report.py` 기대 출력 | `test_report.py` |
+
+`07_report.md`의 제목이 `F1 — T1505.003 Server Software Component: Web Shell`처럼
+기법명인 것은 의도입니다. findings에는 제목 필드가 없고, 문장에서 요약 제목을
+만들어 내면 **그것이 검증되지 않은 새 문장**이 됩니다. 이미 검증된 값인
+기법 ID만 씁니다.
 
 ## 스펙 문서와 의도적으로 다른 부분
 

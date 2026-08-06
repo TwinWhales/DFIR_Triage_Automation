@@ -16,16 +16,19 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 __all__ = [
     "SCHEMA_VERSION",
     "HEADER_FIELDS",
+    "TIMESTAMP_PATTERN",
     "HeaderError",
     "utc_now",
+    "parse_timestamp",
     "make_generator",
     "new_document",
     "check_header",
@@ -35,7 +38,31 @@ __all__ = [
     "write_jsonl",
     "append_jsonl",
     "count_jsonl",
+    "DuplicateRefError",
+    "read_parsed_records",
+    "configure_console",
 ]
+
+
+def configure_console() -> None:
+    """표준 출력을 UTF-8로 바꾼다. 각 단계 CLI가 시작할 때 부른다.
+
+    Windows 콘솔 기본 코드페이지(cp949)는 한글은 처리하지만 em dash 같은
+    문자에서 ``UnicodeEncodeError``로 죽는다. 진행 상황을 찍다가 파이프라인이
+    멈추는 것은 어이없는 실패다.
+
+    ``errors="replace"``를 두는 것은 콘솔 출력이 실패해도 실행은 계속되어야
+    하기 때문이다. 파일 출력은 항상 UTF-8이므로 산출물에는 영향이 없다.
+    """
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
 
 #: 이 값이 다르면 즉시 에러를 낸다. 개발 중 필드가 바뀌는 것을 조용히
 #: 흡수하면 어느 버전으로 만든 산출물인지 알 수 없게 된다.
@@ -48,9 +75,48 @@ class HeaderError(ValueError):
     """공통 헤더 누락 또는 불일치."""
 
 
+#: 초 이하 자릿수를 제한하지 않는다. NTFS는 100ns 단위라 7자리가 오는데
+#: ``datetime``은 마이크로초(6자리)까지만 담는다. 남는 자리는 버린다.
+TIMESTAMP_PATTERN = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})[T ]"
+    r"(?P<time>\d{2}:\d{2}:\d{2})"
+    r"(?:\.(?P<frac>\d+))?"
+    r"(?P<tz>Z|[+-]\d{2}:?\d{2})?$"
+)
+
+
 def utc_now() -> str:
     """``"2026-08-06T04:12:33Z"`` 형식의 현재 UTC 시각."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_timestamp(value: Any) -> datetime | None:
+    """ISO 8601 문자열을 UTC ``datetime``으로. 형식이 아니면 ``None``.
+
+    파이프라인 전체가 이 형식으로 시각을 주고받으므로 파서도 한 곳에
+    둔다. 05단계의 레코드 정렬과 06단계의 값 비교가 같은 규칙을 써야
+    "정렬은 됐는데 비교는 안 되는" 상황이 생기지 않는다.
+
+    타임존이 없으면 UTC로 간주한다. 스키마가 Z 표기를 강제하므로
+    파이프라인 내부 데이터에서는 안전한 가정이다.
+    """
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if not isinstance(value, str):
+        return None
+    m = TIMESTAMP_PATTERN.match(value.strip())
+    if not m:
+        return None
+
+    frac = (m.group("frac") or "")[:6].ljust(6, "0")
+    parsed = datetime.fromisoformat(f"{m.group('date')}T{m.group('time')}.{frac}")
+
+    tz = m.group("tz")
+    if tz in (None, "Z"):
+        return parsed.replace(tzinfo=timezone.utc)
+    digits = tz[1:].replace(":", "")
+    offset = timedelta(hours=int(digits[:2]), minutes=int(digits[2:4]))
+    return parsed.replace(tzinfo=timezone(offset if tz[0] == "+" else -offset))
 
 
 def make_generator(script: str, model: str | None = None) -> str:
@@ -173,6 +239,41 @@ def append_jsonl(path: str | os.PathLike[str], record: dict[str, Any]) -> None:
 def count_jsonl(path: str | os.PathLike[str]) -> int:
     """레코드 수를 센다. ``_manifest.json``의 ``record_count`` 대조용."""
     return sum(1 for _ in read_jsonl(path))
+
+
+class DuplicateRefError(ValueError):
+    """같은 ref를 가진 레코드가 둘 이상이다. 파서 쪽 결함이다."""
+
+
+def read_parsed_records(directory: str | os.PathLike[str]) -> dict[str, dict[str, Any]]:
+    """``04_parsed/*.jsonl``을 전부 읽어 ref로 색인한다.
+
+    05단계(전달할 레코드 추림)와 06단계(근거 대조)가 같은 방식으로 읽어야
+    하므로 공용에 둔다. 한쪽만 다르게 읽으면 ``input_refs``와 검증 대상이
+    어긋나 환각률이 엉뚱하게 나온다.
+
+    ref가 겹치면 즉시 실패한다. 조용히 덮어쓰면 검증이 어느 레코드를
+    봤는지 알 수 없게 되고, 판정이 파일 읽는 순서에 좌우된다.
+    """
+    root = Path(directory)
+    if not root.is_dir():
+        raise NotADirectoryError(f"파싱 결과 디렉터리 없음: {root}")
+
+    records: dict[str, dict[str, Any]] = {}
+    sources: dict[str, str] = {}
+    for path in sorted(root.glob("*.jsonl")):
+        for record in read_jsonl(path):
+            ref = record.get("ref")
+            if ref is None:
+                raise ValueError(f"{path}: ref 없는 레코드")
+            if ref in records:
+                raise DuplicateRefError(
+                    f"ref 중복: {ref} ({sources[ref]}, {path.name}). "
+                    "레코드 번호는 아티팩트 내부에서 고유해야 한다."
+                )
+            records[ref] = record
+            sources[ref] = path.name
+    return records
 
 
 def _atomic_write(path: Path, text: str) -> Path:

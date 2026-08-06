@@ -45,21 +45,33 @@ python benchmark/validator_check.py
 | `schemas/` 6개 | 확정 (동결 대상) |
 | `src/common/` | 구현 완료 — `io` `schema` `errors` `refs` `attack` |
 | C-001 목업 세트 | 작성 완료 |
-| **03 아티팩트 선별** | **구현 완료** — 매핑 5개 + 카탈로그 |
-| **06 근거 검증** | **구현 완료** — 체커 3종 + `--checkers` 조합 |
-| 02·04·05·07 단계 | 미착수 |
+| 02 시나리오 정규화 | 구현 완료 — 알럿 어댑터는 실동작, LLM은 **스텁** |
+| 03 아티팩트 선별 | 구현 완료 — 매핑 5개 + 카탈로그 |
+| **04 파싱** | **입력 처리만** — 바이트 파서 미구현 |
+| 05 sLLM 해석 | 구현 완료 — 레코드 추림은 실동작, LLM은 **스텁** |
+| 06 근거 검증 | 구현 완료 — 체커 3종 + `--checkers` 조합 |
+| 07 결과 보고 | 구현 완료 — Jinja2 템플릿 (LLM 미사용) |
 
-구현된 두 단계는 목업만으로 바로 돌려볼 수 있습니다.
+**파이프라인은 01→07 전 구간이 관통됩니다.** 다만 두 가지가 아직 대체물입니다.
+
+- **04 파싱** — `parsers/`의 바이트 레벨 구현이 비어 있습니다. `--skip-existing`으로
+  건너뛰고 목업 산출물을 씁니다.
+- **02·05의 LLM** — `--llm stub`이 기록된 응답을 재생합니다. 프롬프트 조립,
+  응답 파싱, 스키마 검증, 재시도까지 실제 경로를 그대로 지나가고 네트워크
+  호출만 대체됩니다.
+
+### 관통 실행해 보기
 
 ```bash
-M=benchmark/datasets/C-001-webshell/mock
+python tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \
+  --input benchmark/datasets/C-001-webshell/input.json \
+  --seed-parsed benchmark/datasets/C-001-webshell/mock/04_parsed
 
-python -m src.stage03_select.select \
-  --in $M/02_scenario.json --out /tmp/03_selection.json --mappings mappings/
-
-python -m src.stage06_verify.verify \
-  --findings $M/05_findings.json --parsed $M/04_parsed/ --out /tmp/06_verified.json
+./run_pipeline.sh C-001 /mnt/evidence/WEB01 benchmark/datasets/C-001-webshell/mock
 ```
+
+`cases/C-001/`에 01부터 07까지 쌓이고 `07_report.md`가 나옵니다.
+세 번째 인자를 빼면 스텁 대신 Ollama를 호출합니다.
 
 ### 먼저 읽을 것
 

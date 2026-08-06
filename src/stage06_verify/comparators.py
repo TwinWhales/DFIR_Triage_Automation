@@ -20,9 +20,9 @@
 
 from __future__ import annotations
 
-import re
-from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from ..common.io import parse_timestamp
 
 __all__ = [
     "parse_timestamp",
@@ -31,6 +31,7 @@ __all__ = [
     "compare",
     "get_field",
     "FieldMissing",
+    "PATH_FIELDS",
 ]
 
 
@@ -38,45 +39,9 @@ class FieldMissing(LookupError):
     """레코드에 해당 필드가 없다."""
 
 
-#: 초 이하 자릿수를 제한하지 않는다. NTFS는 100ns 단위라 7자리가 오는데
-#: ``datetime``은 마이크로초(6자리)까지만 담는다. 남는 자리는 버린다 —
-#: 허용 오차가 초 단위이므로 100ns 손실은 판정에 영향이 없다.
-_TIMESTAMP = re.compile(
-    r"^(?P<date>\d{4}-\d{2}-\d{2})[T ]"
-    r"(?P<time>\d{2}:\d{2}:\d{2})"
-    r"(?:\.(?P<frac>\d+))?"
-    r"(?P<tz>Z|[+-]\d{2}:?\d{2})?$"
-)
-
 #: 경로로 취급할 필드. 이름으로 판단한다. 값의 생김새로 추측하면
 #: ``C:\Users``처럼 보이는 계정명 같은 것에서 오작동한다.
 PATH_FIELDS = frozenset({"path", "target_path", "source_path", "image_path"})
-
-
-def parse_timestamp(value: Any) -> datetime | None:
-    """ISO 8601 문자열을 UTC ``datetime``으로. 형식이 아니면 ``None``.
-
-    타임존이 없으면 UTC로 간주한다. 파이프라인 전체가 UTC Z 표기로
-    고정되어 있으므로(스키마가 강제한다) 이 가정은 안전하다.
-    """
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    if not isinstance(value, str):
-        return None
-    m = _TIMESTAMP.match(value.strip())
-    if not m:
-        return None
-
-    frac = (m.group("frac") or "")[:6].ljust(6, "0")
-    base = f"{m.group('date')}T{m.group('time')}.{frac}"
-    dt = datetime.fromisoformat(base)
-
-    tz = m.group("tz")
-    if tz in (None, "Z"):
-        return dt.replace(tzinfo=timezone.utc)
-    sign = 1 if tz[0] == "+" else -1
-    hh, mm = tz[1:].replace(":", "")[:2], tz[1:].replace(":", "")[2:4]
-    return dt.replace(tzinfo=timezone(sign * timedelta(hours=int(hh), minutes=int(mm))))
 
 
 def normalize_path(value: str) -> str:

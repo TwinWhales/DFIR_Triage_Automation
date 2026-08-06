@@ -1,0 +1,76 @@
+# 침해사고 분석 보고서 — {{ case_id }}
+
+## 개요
+
+- 대상 호스트: {{ hosts | join(', ') if hosts else '미상' }}
+- 대상 OS: {{ target_os }}
+- 분석 기간: {{ period_start }} ~ {{ period_end }}
+- 식별 기법: {{ techniques | join(', ') if techniques else '없음' }}
+- 검증 결과: 통과 {{ stats.passed }} / 기각 {{ stats.rejected }} / 미검증 {{ stats.unverifiable }}
+{% if stats.rejected %}
+
+기각된 {{ stats.rejected }}개 문장은 근거 검증을 통과하지 못해 본 보고서에서 제외되었습니다.
+{% endif %}
+
+## 확인된 사항
+{% if passed %}
+{% for finding in passed %}
+
+### {{ finding.id }} — {{ finding.title }} [{{ finding.severity_label }}]
+
+{{ finding.statement }}
+{% if finding.evidence %}
+
+{% for line in finding.evidence %}
+> 근거: {{ line }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% else %}
+
+근거 검증을 통과한 항목이 없습니다.
+{% endif %}
+{% if timeline %}
+
+## 타임라인
+
+| 시각 | 사건 | 근거 |
+|---|---|---|
+{% for entry in timeline %}
+| {{ entry.ts }} | {{ entry.event }} | {{ entry.refs | join(', ') }} |
+{% endfor %}
+{% endif %}
+
+## 미검증 항목
+{% if unverifiable %}
+
+다음 서술은 특정 증거로 뒷받침되지 않는 종합 판단이며 분석가 검토가 필요합니다.
+{% for finding in unverifiable %}
+- {{ finding.statement }}
+{% endfor %}
+{% else %}
+
+없습니다.
+{% endif %}
+
+## 분석 범위 한계
+{% if limits %}
+
+본 분석에서 확인하지 않은 아티팩트는 다음과 같습니다.
+
+| 아티팩트 | 사유 |
+|---|---|
+{% for limit in limits %}
+| {{ limit.artifact }} | {{ limit.reason }} |
+{% endfor %}
+{% else %}
+
+카탈로그의 모든 아티팩트를 확인했습니다.
+{% endif %}
+
+---
+
+본 보고서는 자동 생성되었으며 수사상 참고 자료입니다. 포렌식 감정 결과나
+전문가 의견이 아니며, 해석의 타당성은 분석가 검토가 필요합니다.
+
+생성: {{ generated_at }} / {{ generator }}
