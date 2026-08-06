@@ -45,21 +45,28 @@ python benchmark/validator_check.py
 | `schemas/` 6개 | 확정 (동결 대상) |
 | `src/common/` | 구현 완료 — `io` `schema` `errors` `refs` `attack` |
 | C-001 목업 세트 | 작성 완료 |
+| **03 아티팩트 선별** | **구현 완료** — 매핑 5개 + 카탈로그 |
 | **06 근거 검증** | **구현 완료** — 체커 3종 + `--checkers` 조합 |
-| 02·03·04·05·07 단계 | 미착수 |
+| 02·04·05·07 단계 | 미착수 |
+
+구현된 두 단계는 목업만으로 바로 돌려볼 수 있습니다.
 
 ```bash
+M=benchmark/datasets/C-001-webshell/mock
+
+python -m src.stage03_select.select \
+  --in $M/02_scenario.json --out /tmp/03_selection.json --mappings mappings/
+
 python -m src.stage06_verify.verify \
-  --findings benchmark/datasets/C-001-webshell/mock/05_findings.json \
-  --parsed   benchmark/datasets/C-001-webshell/mock/04_parsed/ \
-  --out      /tmp/06_verified.json
+  --findings $M/05_findings.json --parsed $M/04_parsed/ --out /tmp/06_verified.json
 ```
 
 ### 먼저 읽을 것
 
 1. `work-guide.md` — 설계 전제와 팀 분담
-2. `schemas/README.md` — 데이터 계약, **스펙에 없어서 정한 것 7건**
+2. `schemas/README.md` — 데이터 계약, **스펙에 없어서 정한 것 8건**
 3. `benchmark/datasets/C-001-webshell/README.md` — 목업 사용법
+4. `docs/mapping-guide.md` — 매핑 테이블 작성 규칙 (선별 담당)
 
 ### 착수하는 사람에게
 

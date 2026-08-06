@@ -1,0 +1,45 @@
+# flags 어휘 정의 — 04단계 파싱이 룰 기반으로 부여한다.
+#
+# 이 어휘가 고정인 이유는 LLM에 전달할 레코드를 추리는 필터로 쓰이기
+# 때문이다. 파서마다 다른 이름을 쓰면 record_filter.py가 레코드를
+# 놓치고, 그 결과가 선별 재현율 저하로 잘못 집계된다.
+#
+# schemas/parsed_record.schema.json 의 flags enum과 반드시 일치해야 한다.
+# tests/test_mapping_loader.py 가 두 곳의 일치를 확인한다.
+
+flags:
+  timestamp_mismatch:
+    artifacts: [$MFT]
+    condition: $SI와 $FN 타임스탬프 불일치
+    note: 타임스탬프 조작(T1070.006)의 대표 흔적. $FN은 사용자 도구로 바꾸기 어렵다.
+
+  deleted:
+    artifacts: [$MFT]
+    condition: MFT 레코드 미할당 상태
+
+  zero_timestamp:
+    artifacts: [$MFT]
+    condition: 타임스탬프가 0 또는 비정상 값
+
+  account_created:
+    artifacts: [evtx:Security]
+    condition: EVTX 4720
+
+  privileged_group_add:
+    artifacts: [evtx:Security]
+    condition: EVTX 4728/4732, 대상이 특권 그룹
+
+  outside_time_range:
+    artifacts: [$MFT, $UsnJrnl, evtx:Security, evtx:System]
+    condition: 선별된 시간 범위 밖
+    note: |
+      범위 밖이라도 버리지 않고 표시만 한다. 시간 범위 추론이 틀렸을 때
+      원인을 되짚으려면 레코드가 남아 있어야 한다.
+
+# 특권 그룹 판정 기준. privileged_group_add 가 참조한다.
+privileged_groups:
+  - Administrators
+  - Domain Admins
+  - Enterprise Admins
+  - Backup Operators
+  - Remote Desktop Users

@@ -1,0 +1,16 @@
+technique: T1543.003
+name: "Create or Modify System Process: Windows Service"
+os: windows
+
+artifacts:
+  - name: evtx:System
+    tier: 1
+    scope_template:
+      # 7045 서비스 설치 / 7034 비정상 종료 / 7036 상태 변경
+      event_ids: [7045, 7034, 7036]
+    rationale: 서비스 설치 및 상태 변경
+
+  - name: $MFT
+    tier: 2
+    trigger: Tier1에서 서비스 바이너리 경로가 확인된 경우
+    rationale: 서비스 바이너리 생성 시각 및 타임스탬프 조작 여부

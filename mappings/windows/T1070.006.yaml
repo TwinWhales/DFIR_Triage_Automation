@@ -1,0 +1,17 @@
+technique: T1070.006
+name: "Indicator Removal: Timestomp"
+os: windows
+
+artifacts:
+  # 경로를 좁히지 않는다. 어디를 조작했는지 모르는 상태에서 찾는 것이
+  # 이 기법의 성격이다. 판정은 flags(timestamp_mismatch)가 하고,
+  # 선별은 시간 범위로만 좁힌다.
+  - name: $MFT
+    tier: 1
+    scope_template: {}
+    rationale: $SI와 $FN 타임스탬프 불일치
+
+  - name: $UsnJrnl
+    tier: 2
+    trigger: Tier1 $MFT에서 timestamp_mismatch 플래그 발견 시
+    rationale: 조작 대상 파일의 실제 변경 시각

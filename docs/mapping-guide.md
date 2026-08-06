@@ -1,0 +1,181 @@
+# 매핑 테이블 작성 규칙
+
+`mappings/`는 **코드가 아니라 데이터**입니다. 여러 명이 동시에 채울 수 있고,
+개수를 셀 수 있고, 파이썬을 몰라도 작성할 수 있습니다.
+
+여기 담기는 것은 "이 기법을 확인하려면 어떤 아티팩트의 어디를 봐야 하는가"라는
+도메인 지식입니다. 이 파일의 품질이 곧 **선별 재현율**입니다.
+
+## 파일 구성
+
+```
+mappings/
+├── _artifacts.yaml     아티팩트 카탈로그 — 이 도구가 아는 전부
+├── _flags.yaml         flags 어휘 정의 (04단계가 사용)
+├── windows/
+│   └── T1505.003.yaml  기법 하나당 한 파일. 파일명 = 기법 ID
+└── linux/
+```
+
+**파일명은 반드시 기법 ID와 같아야 합니다.** 로더가 불일치를 거부합니다.
+파일명으로 "매핑이 있는 기법" 목록을 세기 때문입니다.
+
+## 기법 매핑 파일
+
+```yaml
+technique: T1505.003
+name: "Server Software Component: Web Shell"
+os: windows
+
+artifacts:
+  - name: $MFT              # _artifacts.yaml 에 있는 이름과 정확히 일치
+    tier: 1
+    scope_template:
+      path_prefix: ["{web_root}"]
+      extensions: [".aspx", ".asp", ".ashx", ".asmx"]
+    rationale: 웹셸 파일 생성 흔적
+
+  - name: $UsnJrnl
+    tier: 2
+    trigger: Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시
+    rationale: 웹셸 파일 삭제/재생성 이력
+
+defaults:
+  web_root: 'C:\inetpub\wwwroot'
+```
+
+### Tier 1과 Tier 2
+
+| | 의미 | 필수 항목 |
+|---|---|---|
+| **Tier 1** | 지금 읽는다 | `scope_template` (비어 있어도 됨) |
+| **Tier 2** | 조건이 맞으면 읽는다 | `trigger` |
+
+Tier 1에 `trigger`를 쓰거나 Tier 2에 `trigger`를 빠뜨리면 **로드가 실패합니다.**
+Tier 2의 핵심은 "언제 보게 되는가"입니다. 조건 없는 유예는 보고서에서
+왜 안 봤는지 설명할 수 없습니다.
+
+본 버전은 **Tier 2 루프백을 구현하지 않습니다**(명시적 비목표). `deferred`는
+기록만 되고 실제로 파싱되지 않으며, 보고서의 "분석 범위 한계"로 전달됩니다.
+그래도 `trigger`를 정확히 쓰세요 — 그 문장이 보고서에 그대로 실립니다.
+
+### rationale은 보고서에 실립니다
+
+"왜 이 아티팩트를 봤는가"의 답입니다. 비워 두면 로드가 실패합니다.
+`웹셸 파일 생성 흔적`처럼 **무엇을 찾으려는지**를 쓰고, `중요함` 같은
+평가어는 쓰지 마세요.
+
+### scope_template 변수
+
+`{변수명}` 형태로 씁니다. 값은 두 곳에서 옵니다.
+
+1. **시나리오의 `entities`** — 사용자가 실제로 언급한 값 (우선)
+2. **매핑의 `defaults`** — 언급이 없을 때의 관례적 위치
+
+| 변수 | 시나리오 출처 |
+|---|---|
+| `{web_root}` | `entities.paths[0]` |
+| `{host}` | `entities.hosts[0]` |
+| `{account}` | `entities.accounts[0]` |
+| `{process}` | `entities.processes[0]` |
+| `{ip}` | `entities.ips[0]` |
+
+**모든 변수는 `defaults`에 기본값이 있어야 합니다.** 시나리오가 비어 있어도
+치환이 되어야 하며, 치환 실패는 에러입니다(자리표시자가 그대로 실려
+파서가 없는 경로를 찾는 것을 막습니다).
+
+`time_range`는 쓰지 마세요. 시나리오에서 자동으로 붙습니다.
+
+### followups — 후속 기법
+
+시나리오에 없는 기법의 아티팩트를 Tier 2로 걸어 둘 수 있습니다.
+
+```yaml
+followups:
+  - technique: T1543.003
+    artifact: evtx:System
+    tier: 2
+    trigger: Tier1에서 서비스 관련 정황 발견 시
+    rationale: 서비스 기반 지속성
+```
+
+분석가는 웹셸을 찾으면 관행적으로 서비스 지속성도 확인합니다. 그 판단
+순서를 데이터로 옮긴 것입니다. `reason.technique`에는 **후속 기법 ID**가
+들어가므로, 보고서를 읽는 사람이 왜 이걸 봐야 하는지 알 수 있습니다.
+
+남용하지 마세요. 후속을 많이 걸수록 `deferred`가 길어지고 보고서의
+"분석 범위 한계"가 읽히지 않습니다.
+
+## 아티팩트 카탈로그 (`_artifacts.yaml`)
+
+**이 파일에 없는 아티팩트는 존재하지 않는 것과 같습니다.** 선별될 수도,
+제외될 수도 없고, 보고서의 "분석 범위 한계"에도 나타나지 않습니다.
+
+새 아티팩트를 지원하려면 파서보다 이 파일을 **먼저** 고칩니다.
+
+```yaml
+  prefetch:
+    parser: null
+    os: [windows]
+    supported: false
+    exclude_reason: Windows Server 기본 설정에서 비활성화되어 수집 불가
+```
+
+`supported: false`면 `exclude_reason`이 **필수**입니다. 그 문장이 최종
+보고서에 그대로 실리기 때문입니다.
+
+`mapping_table_version`은 매핑을 채워 나가면서 재현율이 어떻게 변하는지
+추적하는 값입니다. 의미 있게 바뀔 때마다 올리고, `03_selection.json`에
+기록되므로 나중에 어느 버전으로 선별했는지 복원할 수 있습니다.
+
+## 선별 결과가 만들어지는 순서
+
+1. 시나리오의 각 기법에 대해 매핑을 찾는다. 없으면 `errors.jsonl`에
+   `empty_result` / `skip`으로 기록하고 넘어간다 — **매핑 결손 데이터**다
+2. 요청된 아티팩트 중 카탈로그가 읽을 수 없다고 한 것은 건너뛴다
+3. Tier 1 → `selected`, Tier 2 → `deferred`
+4. **이미 Tier 1로 읽는 아티팩트는 `deferred`에서 뺀다** — 보고서에
+   "안 봤다"고 적히면 사실과 다르다
+5. 카탈로그를 훑어 `excluded`를 만든다
+   - 읽을 수 없는 것 → 카탈로그의 사유
+   - 아무도 요청하지 않은 것 → `식별된 기법에 매핑된 아티팩트가 아님`
+
+### 같은 아티팩트가 여러 번 나올 수 있습니다
+
+두 기법이 각자의 이유로 `$MFT`를 Tier 1로 요청하면 `selected`에 **두 항목**이
+들어갑니다. 합치지 않는 이유는 기법마다 "왜 필요한지"를 보존하기 위해서입니다.
+
+**04단계 계약**: `parse.py`는 `selected`를 아티팩트별로 묶고 `scope`를
+합집합으로 읽습니다. 같은 아티팩트를 두 번 파싱하지 않습니다.
+
+## 알려진 한계
+
+### 웹 스택별 변형
+
+`windows/T1505.003.yaml`은 IIS 확장자(`.aspx` `.asp` `.ashx` `.asmx`)만
+봅니다. Windows에서도 PHP/JSP는 돌지만 웹루트와 스택이 달라 같은 매핑으로
+덮을 수 없습니다.
+
+XAMPP나 Tomcat 환경을 다루게 되면 별도 매핑 변형이 필요합니다. 지금은
+**해당 환경의 웹셸을 놓칩니다.** 재현율 측정에서 드러날 지점입니다.
+
+### `{web_root}`를 `entities.paths[0]`에서 가져오는 것
+
+02단계가 웹 침해 시나리오에서 웹루트를 첫 경로로 올린다는 관찰에 기댄
+가정입니다. 사용자가 웹루트가 아닌 경로를 먼저 언급하면 엉뚱한 곳을 봅니다.
+
+`defaults`만 쓰는 쪽이 안전해 보이지만 더 위험합니다. 비표준 경로에 설치된
+서버를 통째로 놓치는데, **잘못된 곳을 보면 결과가 비어 있어 알아채지만
+안 본 것은 드러나지 않기 때문입니다.**
+
+## 새 기법을 추가하는 절차
+
+1. `src/common/attack.py`의 `KNOWN_TECHNIQUES`에 ID와 이름을 넣는다
+   (없으면 02단계가 스키마 위반으로 기각한다)
+2. `mappings/<os>/<기법ID>.yaml`을 만든다
+3. 필요한 아티팩트가 카탈로그에 없으면 `_artifacts.yaml`에 먼저 추가한다
+4. `python -m pytest tests/test_mapping_loader.py` 로 로드되는지 확인한다
+
+`tests/test_mapping_loader.py`는 모든 매핑에 대해 Tier 2의 `trigger` 유무,
+변수의 기본값 유무, 카탈로그 등록 여부를 자동으로 확인합니다. 새 파일도
+따로 손대지 않아도 검사 대상에 들어갑니다.

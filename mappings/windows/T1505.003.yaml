@@ -1,0 +1,31 @@
+technique: T1505.003
+name: "Server Software Component: Web Shell"
+os: windows
+
+artifacts:
+  - name: $MFT
+    tier: 1
+    scope_template:
+      path_prefix: ["{web_root}"]
+      # IIS가 실행하는 확장자만 둔다. .php/.jsp는 Windows에서도 돌지만
+      # 그 경우 웹루트와 스택이 달라 별도 매핑이 필요하다.
+      # docs/mapping-guide.md "웹 스택별 변형" 참조.
+      extensions: [".aspx", ".asp", ".ashx", ".asmx"]
+    rationale: 웹셸 파일 생성 흔적
+
+  - name: $UsnJrnl
+    tier: 2
+    trigger: Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시
+    rationale: 웹셸 파일 삭제/재생성 이력
+
+followups:
+  # 웹셸로 초기 침투에 성공한 공격자가 다음에 하는 일. 기법 자체는
+  # 시나리오에 없지만 분석가는 관행적으로 함께 본다.
+  - technique: T1543.003
+    artifact: evtx:System
+    tier: 2
+    trigger: Tier1에서 서비스 관련 정황 발견 시
+    rationale: 서비스 기반 지속성
+
+defaults:
+  web_root: 'C:\inetpub\wwwroot'

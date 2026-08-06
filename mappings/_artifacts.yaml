@@ -1,0 +1,48 @@
+# 아티팩트 카탈로그 — 이 도구가 아는 아티팩트의 전부.
+#
+# 여기 없는 아티팩트는 선별될 수도, 제외될 수도 없다. 즉 보고서의
+# "분석 범위 한계"에도 나타나지 않는다. 새 아티팩트를 지원하려면
+# 파서보다 이 파일을 먼저 고친다.
+#
+# supported: false 인 항목은 항상 excluded로 전달된다. 보지 않기로 한
+# 것과 그 이유를 남기는 것이 이 설계의 핵심이므로, 아무도 요청하지
+# 않았더라도 목록에서 빼지 않는다.
+
+mapping_table_version: "0.3"
+
+artifacts:
+  $MFT:
+    parser: mft
+    os: [windows]
+    supported: true
+    description: NTFS 마스터 파일 테이블. 파일 생성·삭제·타임스탬프.
+
+  $UsnJrnl:
+    parser: usnjrnl
+    os: [windows]
+    supported: true
+    description: USN 저널. 파일 변경 이력.
+
+  evtx:Security:
+    parser: evtx
+    os: [windows]
+    supported: true
+    description: 보안 이벤트 로그. 계정·로그온·권한.
+
+  evtx:System:
+    parser: evtx
+    os: [windows]
+    supported: true
+    description: 시스템 이벤트 로그. 서비스·드라이버.
+
+  prefetch:
+    parser: null
+    os: [windows]
+    supported: false
+    exclude_reason: Windows Server 기본 설정에서 비활성화되어 수집 불가
+
+  $LogFile:
+    parser: null
+    os: [windows]
+    supported: false
+    exclude_reason: 본 버전 미지원 (파싱 모듈 범위 외)
