@@ -45,7 +45,15 @@ python benchmark/validator_check.py
 | `schemas/` 6개 | 확정 (동결 대상) |
 | `src/common/` | 구현 완료 — `io` `schema` `errors` `refs` `attack` |
 | C-001 목업 세트 | 작성 완료 |
-| 02~07 단계 | 미착수 |
+| **06 근거 검증** | **구현 완료** — 체커 3종 + `--checkers` 조합 |
+| 02·03·04·05·07 단계 | 미착수 |
+
+```bash
+python -m src.stage06_verify.verify \
+  --findings benchmark/datasets/C-001-webshell/mock/05_findings.json \
+  --parsed   benchmark/datasets/C-001-webshell/mock/04_parsed/ \
+  --out      /tmp/06_verified.json
+```
 
 ### 먼저 읽을 것
 
