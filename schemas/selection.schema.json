@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "selection.schema.json",
+  "title": "03_selection.json — 아티팩트 선별 결과",
+  "description": "무엇을 볼지, 무엇을 보지 않을지에 대한 결정. excluded는 최종 보고서까지 그대로 전달된다. '보지 않기로 한 것과 그 이유'를 남기는 것이 이 설계의 핵심이므로 빈 배열이어도 필드는 생략하지 않는다.",
+  "type": "object",
+  "required": ["case_id", "stage", "schema_version", "generated_at", "generator", "mapping_table_version", "selected", "deferred", "excluded", "stats"],
+  "additionalProperties": false,
+  "$defs": {
+    "reason": {
+      "type": "object",
+      "required": ["technique", "rationale"],
+      "additionalProperties": false,
+      "properties": {
+        "technique": { "type": "string", "pattern": "^T\\d{4}(\\.\\d{3})?$" },
+        "rationale": { "type": "string", "minLength": 1 }
+      }
+    },
+    "time_range": {
+      "type": "object",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "properties": {
+        "start": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" },
+        "end": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
+      }
+    }
+  },
+  "properties": {
+    "case_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+    "stage": { "const": "03_select" },
+    "schema_version": { "const": "1.0" },
+    "generated_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" },
+    "generator": { "type": "string", "minLength": 1 },
+    "mapping_table_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "매핑 테이블을 채워 나가면서 재현율이 어떻게 변하는지 추적하려면 어느 버전으로 선별했는지가 필요하다."
+    },
+    "selected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifact", "tier", "scope", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "artifact": { "type": "string", "minLength": 1 },
+          "tier": { "type": "integer", "minimum": 1, "maximum": 2 },
+          "scope": {
+            "type": "object",
+            "description": "범위 한정 읽기의 조건. 파서가 이 값만 보고 어디를 읽을지 정한다. 아티팩트마다 쓰는 키가 달라 additionalProperties를 막지 않는다.",
+            "properties": {
+              "path_prefix": { "type": "array", "items": { "type": "string" } },
+              "extensions": { "type": "array", "items": { "type": "string", "pattern": "^\\." } },
+              "event_ids": { "type": "array", "items": { "type": "integer" } },
+              "time_range": { "$ref": "#/$defs/time_range" }
+            }
+          },
+          "reason": { "$ref": "#/$defs/reason" }
+        }
+      }
+    },
+    "deferred": {
+      "type": "array",
+      "description": "Tier 2. 본 버전에서는 루프백을 구현하지 않으므로 실제로 파싱되지 않는다. 기록만 남기고 보고서의 '분석 범위 한계'로 전달한다.",
+      "items": {
+        "type": "object",
+        "required": ["artifact", "tier", "trigger", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "artifact": { "type": "string", "minLength": 1 },
+          "tier": { "type": "integer", "minimum": 1, "maximum": 2 },
+          "trigger": { "type": "string", "minLength": 1 },
+          "reason": { "$ref": "#/$defs/reason" }
+        }
+      }
+    },
+    "excluded": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifact", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "artifact": { "type": "string", "minLength": 1 },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "selected/deferred의 reason과 달리 여기서는 평문 문자열이다. 제외 사유는 기법과 무관한 경우가 많다(수집 불가, 미지원)."
+          }
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": ["selected_count", "deferred_count", "excluded_count"],
+      "additionalProperties": false,
+      "properties": {
+        "selected_count": { "type": "integer", "minimum": 0 },
+        "deferred_count": { "type": "integer", "minimum": 0 },
+        "excluded_count": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

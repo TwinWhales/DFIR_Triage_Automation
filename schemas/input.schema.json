@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "input.schema.json",
+  "title": "01_input.json — 원본 입력",
+  "description": "가공 없이 보존한다. 재실행 시 진입점이므로 절대 덮어쓰지 않는다. generator는 유일하게 선택 항목인데, 사람이나 수집 스크립트가 만드는 파일이라 생성 주체를 적을 수 없는 경우가 있기 때문이다.",
+  "type": "object",
+  "required": ["case_id", "stage", "schema_version", "generated_at", "source_type", "raw", "evidence"],
+  "additionalProperties": false,
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "description": "cases/<case_id>/ 경로에 그대로 쓰이므로 경로 구분자와 점을 금지한다. 상위 디렉터리 탈출을 막기 위함이다."
+    },
+    "stage": { "const": "01_input" },
+    "schema_version": { "const": "1.0" },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+      "description": "UTC Z 표기로 고정한다. 오프셋 표기를 섞으면 단계별 소요 시간 계산이 틀어진다."
+    },
+    "generator": { "type": "string", "minLength": 1 },
+    "source_type": {
+      "enum": ["natural_language", "edr_alert"],
+      "description": "normalize.py가 이 값을 보고 LLM 경로와 alert_adapter 경로로 분기한다."
+    },
+    "raw": {
+      "type": ["string", "object"],
+      "description": "EDR 알럿의 내부 구조는 제품마다 다르므로 스키마로 강제하지 않는다. 정규화 단계에서 흡수한다."
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["root", "os_hint", "artifacts_available"],
+      "additionalProperties": false,
+      "properties": {
+        "root": { "type": "string", "minLength": 1 },
+        "os_hint": { "type": "string", "minLength": 1 },
+        "artifacts_available": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "source_type": { "const": "natural_language" } }, "required": ["source_type"] },
+      "then": { "properties": { "raw": { "type": "string", "minLength": 1 } } }
+    },
+    {
+      "if": { "properties": { "source_type": { "const": "edr_alert" } }, "required": ["source_type"] },
+      "then": { "properties": { "raw": { "type": "object" } } }
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "parsed_record.schema.json",
+  "title": "04_parsed/*.jsonl — 레코드 한 줄",
+  "description": "JSONL 한 줄을 검증한다. 파일 전체가 아니다.\n\n아티팩트별 필드가 다르지만 속성 선언은 전부 최상위에 모아 두고 if/then은 required만 늘린다. if/then 안에 additionalProperties를 쓰면 다른 분기에서 선언한 속성까지 거부하는데, JSON Schema에서 가장 흔히 밟는 함정이다.",
+  "type": "object",
+  "required": ["ref", "artifact", "record_num", "offset", "flags"],
+  "additionalProperties": false,
+  "$defs": {
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
+  },
+  "properties": {
+    "ref": {
+      "type": "string",
+      "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS)#(0|[1-9]\\d*)$",
+      "description": "앞자리 0을 허용하지 않는다. MFT#012345와 MFT#12345가 같은 레코드를 가리키면서 문자열로 다르면 06단계의 집합 대조가 통과해야 할 것을 기각한다."
+    },
+    "artifact": { "type": "string", "minLength": 1 },
+    "record_num": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "아티팩트 내부의 고유 번호를 그대로 쓴다. ref의 숫자 부분과 반드시 같아야 하며, 이 대조는 스키마가 아니라 테스트가 본다."
+    },
+    "offset": {
+      "type": "string",
+      "pattern": "^0x[0-9A-Fa-f]+$",
+      "description": "원본 바이트 위치. 기존 파서를 쓰지 않고 직접 구현하는 이유가 이 필드다. tools/hexdump_record.py가 이 값으로 원본을 되짚는다."
+    },
+    "flags": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "룰 기반으로 부여한다. LLM에 전달할 레코드를 추리는 필터로 쓰이므로 어휘를 고정한다.",
+      "items": {
+        "enum": [
+          "timestamp_mismatch",
+          "deleted",
+          "zero_timestamp",
+          "account_created",
+          "privileged_group_add",
+          "outside_time_range"
+        ]
+      }
+    },
+
+    "path": { "type": "string" },
+    "allocated": { "type": "boolean" },
+    "is_directory": { "type": "boolean" },
+    "size": { "type": "integer", "minimum": 0 },
+    "si_ctime": { "$ref": "#/$defs/timestamp" },
+    "si_mtime": { "$ref": "#/$defs/timestamp" },
+    "si_atime": { "$ref": "#/$defs/timestamp" },
+    "si_btime": { "$ref": "#/$defs/timestamp" },
+    "fn_ctime": { "$ref": "#/$defs/timestamp" },
+    "fn_mtime": { "$ref": "#/$defs/timestamp" },
+    "fn_atime": {
+      "$ref": "#/$defs/timestamp",
+      "description": "$FN에도 atime이 있으나 현재 파서는 기록하지 않는다. 나중에 추가할 때 schema_version을 올리지 않아도 되도록 자리만 열어 둔다."
+    },
+    "fn_btime": { "$ref": "#/$defs/timestamp" },
+
+    "event_id": { "type": "integer", "minimum": 0 },
+    "timestamp": { "$ref": "#/$defs/timestamp" },
+    "channel": { "type": "string", "minLength": 1 },
+    "computer": { "type": "string", "minLength": 1 },
+    "fields": {
+      "type": "object",
+      "description": "이벤트 ID마다 키가 달라 구조를 강제하지 않는다. claims는 fields.TargetUserName 같은 점 표기로 이 안을 가리킨다."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "artifact": { "const": "$MFT" } }, "required": ["artifact"] },
+      "then": {
+        "required": ["path", "allocated", "is_directory", "size", "si_ctime", "si_mtime", "si_atime", "si_btime", "fn_ctime", "fn_mtime", "fn_btime"]
+      }
+    },
+    {
+      "if": { "properties": { "artifact": { "pattern": "^evtx:" } }, "required": ["artifact"] },
+      "then": {
+        "required": ["event_id", "timestamp", "channel", "computer", "fields"]
+      }
+    }
+  ]
+}

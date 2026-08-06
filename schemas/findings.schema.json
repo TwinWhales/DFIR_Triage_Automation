@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "findings.schema.json",
+  "title": "05_findings.json — sLLM 해석 결과",
+  "description": "모든 문장에 refs가 필수다. statement는 자연어라 기계 검증이 불가능하므로, 문장이 주장하는 사실을 claims 삼중항으로 따로 분해하게 한다. 검증기는 claims만 대조한다.",
+  "type": "object",
+  "required": ["case_id", "stage", "schema_version", "generated_at", "generator", "input_refs", "findings", "timeline"],
+  "additionalProperties": false,
+  "$defs": {
+    "ref": { "type": "string", "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS)#(0|[1-9]\\d*)$" },
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
+  },
+  "properties": {
+    "case_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+    "stage": { "const": "05_interpret" },
+    "schema_version": { "const": "1.0" },
+    "generated_at": { "$ref": "#/$defs/timestamp" },
+    "generator": { "type": "string", "minLength": 1 },
+    "input_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/ref" },
+      "description": "LLM에 실제로 전달한 레코드 목록. 06단계가 '전달하지 않은 레코드를 참조했는가'를 검사하는 근거이며, 이것이 가장 흔한 환각 유형이다."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "statement", "refs", "claims", "technique", "severity"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^F\\d+$" },
+          "statement": { "type": "string", "minLength": 1 },
+          "refs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/ref" } },
+          "claims": {
+            "type": "array",
+            "description": "빈 배열이면 06단계에서 unverifiable로 분류된다. 종합 판단 문장이 여기 해당한다.",
+            "items": {
+              "type": "object",
+              "required": ["ref", "field", "value"],
+              "additionalProperties": false,
+              "properties": {
+                "ref": { "$ref": "#/$defs/ref" },
+                "field": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "레코드의 필드명. 중첩은 점 표기(fields.TargetUserName)."
+                },
+                "value": {
+                  "type": ["string", "number", "boolean"],
+                  "description": "타입을 좁히지 않는다. 크기를 4821로 쓰든 \"4821\"로 쓰든 사실 자체는 맞으므로, 표기 차이를 스키마 위반으로 잡으면 환각률이 표기 문제로 부풀려진다. 타입 정규화는 comparators.py가 맡는다."
+                }
+              }
+            }
+          },
+          "technique": {
+            "type": ["string", "null"],
+            "pattern": "^T\\d{4}(\\.\\d{3})?$",
+            "description": "종합 판단 문장은 특정 기법에 귀속되지 않으므로 null을 허용한다."
+          },
+          "severity": { "enum": ["high", "medium", "low", "info"] }
+        }
+      }
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ts", "event", "refs"],
+        "additionalProperties": false,
+        "properties": {
+          "ts": { "$ref": "#/$defs/timestamp" },
+          "event": { "type": "string", "minLength": 1 },
+          "refs": { "type": "array", "items": { "$ref": "#/$defs/ref" } }
+        }
+      }
+    }
+  }
+}

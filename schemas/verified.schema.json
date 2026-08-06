@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "verified.schema.json",
+  "title": "06_verified.json — 근거 검증 결과",
+  "description": "부분 통과는 두지 않는다. claims 중 하나라도 틀린 문장은 신뢰할 수 없다. unverifiable을 제3의 판정으로 둔 이유는 종합 판단 문장 때문이다. 기각하면 요약이 사라지고 통과시키면 구멍이 생긴다.",
+  "type": "object",
+  "required": ["case_id", "stage", "schema_version", "generated_at", "generator", "tolerance", "passed", "rejected", "unverifiable", "stats"],
+  "additionalProperties": false,
+  "$defs": {
+    "finding_id": { "type": "string", "pattern": "^F\\d+$" }
+  },
+  "properties": {
+    "case_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+    "stage": { "const": "06_verify" },
+    "schema_version": { "const": "1.0" },
+    "generated_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" },
+    "generator": { "type": "string", "minLength": 1 },
+    "tolerance": {
+      "type": "object",
+      "required": ["timestamp_seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "timestamp_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "문자열 완전 일치를 요구하면 03:14:22 대 03:14:22.1234567Z 같은 절삭 표기에서 대량 오탐이 난다. 검증기가 과엄격해지는 것을 막는 장치이므로 실제 사용값을 결과 파일에 남긴다."
+        }
+      }
+    },
+    "passed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "checks", "checks_passed"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/finding_id" },
+          "checks": { "type": "integer", "minimum": 0 },
+          "checks_passed": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "rejected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "reason", "detail"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/finding_id" },
+          "reason": {
+            "enum": ["ref_not_found", "value_mismatch", "ref_not_in_input", "field_not_found"],
+            "description": "환각 유형별 분포가 발표 수치가 되므로 어휘를 고정한다. field_not_found는 스펙 예시에 없으나, 존재하는 레코드의 없는 필드를 주장한 경우를 value_mismatch로 뭉뚱그리면 유형 분포가 왜곡되어 따로 둔다."
+          },
+          "detail": { "type": "object" }
+        }
+      }
+    },
+    "unverifiable": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/finding_id" },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": ["total_findings", "passed", "rejected", "unverifiable", "hallucination_rate"],
+      "additionalProperties": false,
+      "properties": {
+        "total_findings": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "rejected": { "type": "integer", "minimum": 0 },
+        "unverifiable": { "type": "integer", "minimum": 0 },
+        "hallucination_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "rejected / (passed + rejected). unverifiable은 분모에서 뺀다 — 검증 대상이 아니었던 문장을 환각으로 셀 수 없다."
+        }
+      }
+    }
+  }
+}
