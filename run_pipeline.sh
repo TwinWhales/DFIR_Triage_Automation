@@ -11,6 +11,11 @@
 #   ./run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 #       benchmark/datasets/C-001-webshell/mock
 #
+# evidence_root 는 **볼륨 루트**다. KAPE 출력이면 <수집폴더>/C 이지
+# <수집폴더>가 아니다. 볼륨이 여럿이면 케이스를 나눠 각각 돌린다
+# (C-001-C, C-001-D). 도구가 어느 볼륨인지 추측하지 않게 하려는 것이고,
+# 덤으로 ref 가 유일해진다.
+#
 # 04단계 파서는 아직 구현되지 않았다. --skip-existing 이 붙어 있으므로
 # cases/<id>/04_parsed/ 에 산출물이 미리 있으면 건너뛴다.
 # tools/make_case.py --seed-parsed 로 채울 수 있다.

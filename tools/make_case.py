@@ -4,10 +4,21 @@
 넣어 둔다. 04단계 파서가 구현되기 전까지 나머지 단계를 관통시키려면
 ``--seed-parsed``가 필요하다.
 
+**한 케이스는 한 볼륨입니다.** ``--evidence``는 볼륨 루트를 가리킵니다.
+볼륨이 여럿이면 케이스를 나누고 접미사로 구분합니다::
+
+    python tools/make_case.py --case-id C-001-C --evidence /mnt/kape/C --raw "..."
+    python tools/make_case.py --case-id C-001-D --evidence /mnt/kape/D --raw "..."
+
+도구가 어느 볼륨인지 추측하지 않게 하려는 것입니다. 추측하고 기록으로
+때우는 것보다 추측할 상황을 안 만드는 편이 낫습니다. 덤으로 ``ref``가
+유일해집니다 — 두 볼륨을 한 번에 읽으면 ``MFT#12345``가 양쪽에 존재해
+06단계가 어느 레코드를 검증했는지 알 수 없게 됩니다.
+
 사용법::
 
     # 자연어 입력으로 새 케이스
-    python tools/make_case.py --case-id C-003 --evidence /mnt/evidence/WEB03 \\
+    python tools/make_case.py --case-id C-003 --evidence /mnt/evidence/WEB03/C \\
         --raw "웹서버에서 이상한 파일이 발견됐습니다"
 
     # 벤치마크 데이터셋에서 (파싱 산출물까지 채움)
@@ -50,8 +61,16 @@ def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python tools/make_case.py", description="신규 케이스 디렉터리를 만든다."
     )
-    parser.add_argument("--case-id", required=True)
-    parser.add_argument("--evidence", required=True, help="증거 루트 경로")
+    parser.add_argument(
+        "--case-id",
+        required=True,
+        help="볼륨이 여럿이면 접미사로 나눈다 (C-001-C, C-001-D)",
+    )
+    parser.add_argument(
+        "--evidence",
+        required=True,
+        help="증거 **볼륨 루트**. KAPE 출력이면 <수집폴더>/C 이지 <수집폴더>가 아니다",
+    )
     parser.add_argument("--cases-dir", default="cases", help="기본 %(default)s")
     parser.add_argument("--raw", default=None, help="자연어 서술")
     parser.add_argument("--input", default=None, help="기존 01_input.json을 복사")

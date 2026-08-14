@@ -110,55 +110,153 @@ def test_any_timestamp_inside_the_window_keeps_the_record():
 # ============================================================ evidence
 
 
+def _write(path, data=b"x"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
 @pytest.fixture
-def collected(tmp_path):
-    """수집 도구가 원본 경로 구조를 유지해 뽑아 놓은 모양."""
-    deep = tmp_path / "C" / "Windows" / "System32" / "winevt" / "Logs"
-    deep.mkdir(parents=True)
-    (deep / "Security.evtx").write_bytes(b"evtx")
-    (tmp_path / "C").mkdir(exist_ok=True)
-    (tmp_path / "C" / "$MFT").write_bytes(b"FILE")
-    return tmp_path
+def volume(tmp_path):
+    """볼륨 구조를 보존해 뽑은 결과. --evidence 가 가리켜야 할 자리."""
+    root = tmp_path / "C"
+    _write(root / "$MFT", b"FILE")
+    _write(root / "Windows/System32/winevt/Logs/Security.evtx", b"evtx")
+    _write(root / "Windows/System32/config/SYSTEM", b"hive")
+    return root
 
 
-def test_file_source_finds_artifacts_anywhere_under_the_root(collected):
-    source = evidence.FileSource(collected)
-    with source.open("$MFT") as stream:
-        assert stream.read() == b"FILE"
+@pytest.fixture
+def flat(tmp_path):
+    """필요한 파일만 모아 둔 폴더."""
+    root = tmp_path / "extracted"
+    _write(root / "$MFT", b"FILE")
+    _write(root / "Security.evtx", b"evtx")
+    return root
+
+
+# ------------------------------------------------- 제자리로 찾는가
+
+
+def test_artifacts_are_found_at_their_place_in_the_volume(volume):
+    source = evidence.FileSource(volume)
+    for artifact in ("$MFT", "evtx:Security", "registry:SYSTEM"):
+        assert source.locate(artifact).method == "volume_path", artifact
+
+
+def test_a_flat_folder_still_works(flat):
+    source = evidence.FileSource(flat)
+    assert source.locate("$MFT").method in {"volume_path", "root_file"}
+    assert source.locate("evtx:Security").method == "root_file"
     with source.open("evtx:Security") as stream:
         assert stream.read() == b"evtx"
 
 
-def test_file_source_lists_what_it_can_read(collected):
-    assert set(evidence.FileSource(collected).available()) == {"$MFT", "evtx:Security"}
+def test_a_lookalike_in_downloads_does_not_win(volume):
+    # SYSTEM은 흔한 파일명이다. 이름만으로 찾으면 사용자 다운로드 폴더의
+    # 동명 파일이 하이브를 선점해 **엉뚱한 데이터를 증거로 보고**한다.
+    _write(volume / "Users/admin/Downloads/SYSTEM", b"WRONG")
+
+    found = evidence.FileSource(volume).locate("registry:SYSTEM")
+    assert found.path == volume / "Windows/System32/config/SYSTEM"
+    with evidence.FileSource(volume).open("registry:SYSTEM") as stream:
+        assert stream.read() == b"hive"
 
 
-def test_missing_artifact_is_reported_not_silently_empty(collected):
-    # 수집 누락은 "봤는데 없었다"가 아니라 "아예 못 봤다"이므로 구별해야 한다.
-    source = evidence.FileSource(collected)
-    with pytest.raises(evidence.ArtifactNotFound, match=r"\$UsnJrnl"):
-        source.open("$UsnJrnl")
-
-
-def test_filename_matching_ignores_case(tmp_path):
-    (tmp_path / "security.evtx").write_bytes(b"x")
-    assert "evtx:Security" in evidence.FileSource(tmp_path).available()
+def test_path_resolution_ignores_case(tmp_path):
+    # 추출 결과를 리눅스에서 분석하면 파일시스템이 대소문자를 구별한다.
+    root = tmp_path / "C"
+    _write(root / "windows/system32/config/system", b"hive")
+    assert evidence.FileSource(root).locate("registry:SYSTEM") is not None
 
 
 def test_alternate_usnjrnl_names_are_recognised(tmp_path):
     # 콜론이 파일명에 못 들어가 수집 도구마다 이름이 다르다.
-    (tmp_path / "$J").write_bytes(b"x")
-    assert "$UsnJrnl" in evidence.FileSource(tmp_path).available()
+    root = tmp_path / "C"
+    _write(root / "$Extend/$J")
+    assert "$UsnJrnl" in evidence.FileSource(root).available()
 
 
-def test_path_of_reports_where_it_read_from(collected):
-    source = evidence.FileSource(collected)
-    assert source.path_of("$MFT").name == "$MFT"
-    assert source.path_of("registry:SYSTEM") is None
+# ----------------------------------------------- 재귀 검색 (마지막 수단)
 
 
-def test_open_source_picks_file_source_for_a_directory(collected):
-    assert isinstance(evidence.open_source(collected), evidence.FileSource)
+def test_search_is_only_a_fallback_and_records_that_fact(tmp_path):
+    root = tmp_path / "C"
+    _write(root / "odd/place/SYSTEM", b"hive")
+    found = evidence.FileSource(root).locate("registry:SYSTEM")
+    assert found.method == "search"
+
+
+def test_available_does_not_pay_for_a_full_walk(tmp_path):
+    # available()은 빠른 경로만 본다. 목록을 보려고 폴더 전체를 훑는 것은
+    # 10만 개짜리 추출 폴더에서 감당이 안 된다.
+    root = tmp_path / "C"
+    _write(root / "odd/place/SYSTEM", b"hive")
+    assert evidence.FileSource(root).available() == []
+    assert evidence.FileSource(root).locate("registry:SYSTEM") is not None
+
+
+def test_search_prefers_the_shallower_candidate(tmp_path):
+    # rglob은 깊이 우선이라 깊은 것이 먼저 나온다. 정렬하지 않으면
+    # 같은 증거가 머신마다 다른 결과를 낸다.
+    root = tmp_path / "C"
+    _write(root / "a/deep/deeper/SYSTEM", b"deep")
+    _write(root / "b/SYSTEM", b"shallow")
+
+    found = evidence.FileSource(root).locate("registry:SYSTEM")
+    assert found.path.read_bytes() == b"shallow"
+    assert found.alternates == (root / "a/deep/deeper/SYSTEM",)
+
+
+def test_search_result_is_stable_across_runs(tmp_path):
+    root = tmp_path / "C"
+    for name in ("z/SYSTEM", "a/SYSTEM", "m/SYSTEM"):
+        _write(root / name)
+    first = evidence.FileSource(root).locate("registry:SYSTEM")
+    second = evidence.FileSource(root).locate("registry:SYSTEM")
+    assert first.path == second.path
+
+
+# ------------------------------------------------------- 볼륨 지정 안내
+
+
+def test_pointing_at_the_collection_root_explains_what_to_do(tmp_path):
+    # 사용자가 가장 실수하기 쉬운 지점. 혼란스러운 결과 대신 행동 가능한
+    # 메시지를 낸다.
+    _write(tmp_path / "C" / "$MFT")
+    _write(tmp_path / "D" / "$MFT")
+
+    with pytest.raises(evidence.NotAVolumeRoot) as e:
+        evidence.open_source(tmp_path)
+    message = str(e.value)
+    assert "C, D" in message
+    assert str(tmp_path / "C") in message
+    assert "C-001-C" in message  # 케이스를 나누라는 안내
+
+
+def test_a_real_volume_root_opens_without_complaint(volume):
+    assert isinstance(evidence.open_source(volume), evidence.FileSource)
+
+
+def test_volume_candidates_recognise_common_encodings(tmp_path):
+    for name in ("C", "D%3A", "E_"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "Windows").mkdir()  # 볼륨 이름이 아니다
+    assert evidence.volume_candidates(tmp_path) == ["C", "D%3A", "E_"]
+
+
+# ------------------------------------------------------------- 그 외
+
+
+def test_missing_artifact_is_reported_not_silently_empty(volume):
+    # 수집 누락은 "봤는데 없었다"가 아니라 "아예 못 봤다"이므로 구별해야 한다.
+    with pytest.raises(evidence.ArtifactNotFound, match=r"\$UsnJrnl"):
+        evidence.FileSource(volume).open("$UsnJrnl")
+
+
+def test_not_found_message_names_the_expected_place(volume):
+    with pytest.raises(evidence.ArtifactNotFound, match="Extend"):
+        evidence.FileSource(volume).open("$UsnJrnl")
 
 
 def test_open_source_explains_that_images_are_unsupported(tmp_path):
@@ -174,16 +272,15 @@ def test_open_source_rejects_a_missing_path(tmp_path):
 
 
 def test_volume_source_says_what_still_needs_building(tmp_path):
-    stream = (tmp_path / "x.dd")
+    stream = tmp_path / "x.dd"
     stream.write_bytes(b"\x00")
     with stream.open("rb") as fh:
-        source = evidence.VolumeSource(fh)
         with pytest.raises(NotImplementedError, match="미구현"):
-            source.open("$MFT")
+            evidence.VolumeSource(fh).open("$MFT")
 
 
-def test_every_catalogued_artifact_has_a_filename_layout():
-    # 카탈로그에 있는데 파일명 후보가 없으면 FileSource가 영원히 못 찾는다.
+def test_every_catalogued_artifact_has_a_layout():
+    # 카탈로그에 있는데 자리 정의가 없으면 FileSource가 영원히 못 찾는다.
     from src.stage03_select import mapping_loader
 
     catalog = mapping_loader.load_catalog(REPO_ROOT / "mappings")
@@ -195,3 +292,5 @@ def test_every_catalogued_artifact_has_a_filename_layout():
     assert readable
     for name in readable:
         assert name in evidence.FILE_LAYOUT, name
+        assert evidence.FILE_LAYOUT[name].relative_paths
+        assert evidence.FILE_LAYOUT[name].filenames

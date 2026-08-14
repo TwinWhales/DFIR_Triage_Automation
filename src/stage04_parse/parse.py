@@ -153,6 +153,7 @@ def parse_artifact(
             "src/stage04_parse/parsers/__init__.py 의 PARSERS 참조."
         )
 
+    located = source.locate(artifact)
     scope = Scope.from_selection(scope_dict)
     filename = OUTPUT_FILENAMES[artifact]
     counter = _Counter()
@@ -163,13 +164,22 @@ def parse_artifact(
             counter(flagging.apply_all(parser.parse(stream, scope), scope)),
         )
 
-    return {
+    entry: dict[str, Any] = {
         "artifact": artifact,
         "path": filename,
         "record_count": written,
         "flagged_count": counter.flagged,
         "parse_errors": 0,
     }
+    if located is not None:
+        # 어느 파일에서 읽었는지 남긴다. 나중에 "이 결과가 어디서 나왔나"를
+        # 되짚을 수 있어야 하고, method가 search면 제자리에 없던 것이므로
+        # 한 번 확인해 볼 값이다.
+        entry["source_path"] = str(located.path)
+        entry["source_method"] = located.method
+        if located.alternates:
+            entry["source_alternates"] = [str(p) for p in located.alternates]
+    return entry
 
 
 def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
@@ -228,6 +238,11 @@ def main(argv: "list[str] | None" = None) -> int:
 
     try:
         source = evidence.open_source(args.evidence)
+    except evidence.NotAVolumeRoot as e:
+        # 사용자 입력 문제다. 안내를 그대로 보여 주고 errors.jsonl은
+        # 건드리지 않는다 — 파이프라인 실패 통계에 섞을 일이 아니다.
+        print(f"[{STAGE}] {e}", file=sys.stderr)
+        return 2
     except evidence.EvidenceError as e:
         log.abort(STAGE, "parse_error", {"message": str(e)})
 
