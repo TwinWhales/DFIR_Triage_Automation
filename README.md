@@ -30,8 +30,19 @@ python tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01
 
 ```bash
 python benchmark/evaluate.py --dataset benchmark/datasets/C-001-webshell
+```
+
+수치만 내지 않고 **어느 단계에서 놓쳤는지**를 가릅니다. 정답 레코드마다
+`파싱 → 전달 → 인용 → 검증통과` 네 단계를 따로 세므로, 고칠 곳이 파서인지
+매핑인지 프롬프트인지 바로 보입니다.
+
+```bash
 python benchmark/validator_check.py
 ```
+
+검증기가 과엄격해지는 것을 막는 장치입니다. 사람이 옳다고 판단한 문장
+33건을 넣어 몇 건이 통과하는지 봅니다. 하나라도 기각되면 환각률이 실제
+환각이 아니라 표기 차이를 세고 있다는 뜻입니다.
 
 ---
 
@@ -51,6 +62,12 @@ python benchmark/validator_check.py
 | 05 sLLM 해석 | 구현 완료 — 레코드 추림은 실동작, LLM은 **스텁** |
 | 06 근거 검증 | 구현 완료 — 체커 3종 + `--checkers` 조합 |
 | 07 결과 보고 | 구현 완료 — Jinja2 템플릿 (LLM 미사용) |
+| **평가 (`benchmark/`)** | **구현 완료** — 단계별 진단 + 검증기 오탐 확인 |
+
+수치를 낼 준비는 끝났지만 **정답 데이터가 없습니다.** 지금 있는
+`ground_truth.json`은 스펙 예시에서 역산한 것이라 자기채점이고,
+`evaluate.py`가 그 사실을 경고로 띄웁니다. 발표에 쓸 수치는 사람이
+실제 증거를 보고 만든 정답에서 나와야 합니다.
 
 ### 한 실행은 한 볼륨
 

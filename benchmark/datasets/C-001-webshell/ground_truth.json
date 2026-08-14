@@ -2,7 +2,7 @@
   "case_id": "C-001",
   "schema_version": "1.0",
   "description": "웹셸 업로드를 통한 초기 침투 후 로컬 특권 계정 생성으로 지속성 확보",
-  "authored_by": "human",
+  "authored_by": "spec-example (docs/pipeline-io-spec.md 예시에서 역산. 실제 증거를 분석해 정한 정답이 아니므로 채점에 쓸 수 없음)",
   "target_os": "windows",
   "expected_techniques": ["T1505.003", "T1136.001"],
   "expected_time_range": {
@@ -16,5 +16,5 @@
     { "ref": "EVTX-SEC#40915", "why": "svc_backup의 Administrators 그룹 추가 (4732)" }
   ],
   "acceptable_artifacts": ["$UsnJrnl", "evtx:System"],
-  "notes": "acceptable_artifacts는 선별되어도 오탐으로 간주하지 않는 항목. 재현율 계산의 분모는 required_artifacts."
+  "notes": "acceptable_artifacts는 선별되어도 오탐으로 간주하지 않는 항목. 재현율 계산의 분모는 required_artifacts. 이 파일은 배선 확인용이며, 발표에 쓸 수치는 사람이 실제 증거를 보고 만든 정답에서 나와야 한다."
 }

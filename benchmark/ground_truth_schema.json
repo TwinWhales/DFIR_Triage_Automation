@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ground_truth_schema.json",
+  "title": "ground_truth.json — 케이스 정답",
+  "description": "이 케이스에서 반드시 찾아야 할 것을 사람이 미리 기록한다. 도구가 만들지 않는다. 자기가 만든 정답을 자기가 맞히면 채점이 아니다.",
+  "type": "object",
+  "required": ["case_id", "schema_version", "authored_by", "target_os", "expected_techniques", "required_artifacts", "required_refs"],
+  "additionalProperties": false,
+  "properties": {
+    "case_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+    "schema_version": { "const": "1.0" },
+    "description": { "type": "string" },
+    "authored_by": {
+      "type": "string",
+      "minLength": 1,
+      "description": "누가 정답을 정했는가. 파이프라인 산출물에서 역산한 정답은 채점에 쓸 수 없으므로 출처를 남긴다."
+    },
+    "target_os": { "enum": ["windows", "linux"] },
+
+    "expected_techniques": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^T\\d{4}(\\.\\d{3})?$" },
+      "description": "02단계가 식별해야 할 기법. 재현율이 낮을 때 원인이 모델인지 매핑인지 가르는 기준이 된다."
+    },
+    "expected_time_range": {
+      "type": "object",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "description": "실제 사건이 일어난 범위. 02단계가 추론한 범위가 이것을 덮는지 본다.",
+      "properties": {
+        "start": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" },
+        "end": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
+      }
+    },
+
+    "required_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "증거가 실제로 담긴 아티팩트. **선별 재현율의 분모다.** 하나라도 selected에 없으면 그만큼 놓친 것이다."
+    },
+    "acceptable_artifacts": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "선별되어도 오탐으로 치지 않는 항목. 분모에는 넣지 않는다."
+    },
+
+    "required_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "반드시 찾아야 할 개별 레코드. 선별은 맞았는데 파싱이 못 잡았는지, 파싱은 됐는데 LLM이 언급하지 않았는지를 가른다.",
+      "items": {
+        "type": "object",
+        "required": ["ref", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "ref": { "type": "string", "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|REG-SYS|REG-SW)#(0|[1-9]\\d*)$" },
+          "why": {
+            "type": "string",
+            "minLength": 1,
+            "description": "이 레코드가 왜 증거인가. 놓쳤을 때 무엇을 놓친 것인지 보고서에 적을 수 있어야 한다."
+          }
+        }
+      }
+    },
+
+    "notes": { "type": "string" }
+  }
+}
