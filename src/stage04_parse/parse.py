@@ -93,16 +93,21 @@ def group_by_artifact(selection: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {artifact: merge_scopes(scopes) for artifact, scopes in grouped.items()}
 
 
-def write_manifest(out_dir: Path, case_id: str, files: list[dict[str, Any]]) -> Path:
+def write_manifest(
+    out_dir: Path, case_id: str, files: list[dict[str, Any]], implementation: str = "native"
+) -> Path:
     """``_manifest.json``을 쓴다.
 
     ``record_count``는 실제 줄 수와 반드시 같아야 한다. 이 값으로
     "몇 건을 읽었는가"를 보고하고, 테스트가 파일과 대조한다.
+
+    ``generator``에 어느 파서 구현으로 돌렸는지 남긴다. 참조 구현은
+    임시이므로, 산출물만 보고 구분할 수 있어야 한다.
     """
     manifest = io.new_document(
         case_id,
         STAGE,
-        io.make_generator("parse.py"),
+        io.make_generator("parse.py", implementation),
         files=files,
         total_records=sum(entry["record_count"] for entry in files),
         flagged_records=sum(entry["flagged_count"] for entry in files),
@@ -139,19 +144,31 @@ def parse_artifact(
     scope_dict: dict[str, Any],
     source: evidence.EvidenceSource,
     out_dir: Path,
+    *,
+    implementation: str = "native",
 ) -> dict[str, Any]:
     """아티팩트 하나를 파싱해 JSONL로 쓰고 매니페스트 항목을 돌려준다.
 
     파서가 만든 레코드에 ``flagging``이 플래그를 붙인 뒤 기록됩니다.
     파서는 플래그를 신경 쓰지 않아도 됩니다.
     """
-    parser = parsers.get(artifact)
+    parser = parsers.get(artifact, implementation)
     if parser is None:
-        raise LookupError(
-            f"{artifact}: 파서가 등록되지 않았습니다 "
-            f"(등록된 것: {', '.join(parsers.registered()) or '없음'}). "
-            "src/stage04_parse/parsers/__init__.py 의 PARSERS 참조."
+        other = "reference" if implementation == "native" else "native"
+        hint = (
+            f" (참조 구현으로는 가능: --parser {other})"
+            if parsers.get(artifact, other) is not None
+            else ""
         )
+        raise LookupError(
+            f"{artifact}: {implementation} 파서가 등록되지 않았습니다"
+            f"{hint}. src/stage04_parse/parsers/__init__.py 참조."
+        )
+
+    # $MFT에는 드라이브 문자가 없다. 한 실행은 한 볼륨이므로 증거 경로에서
+    # 유추해 넘긴다. 경로 접두어 비교가 이 값에 의존한다.
+    if hasattr(parser, "volume_letter"):
+        parser.volume_letter = evidence.volume_letter(source)
 
     located = source.locate(artifact)
     scope = Scope.from_selection(scope_dict)
@@ -194,6 +211,15 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         "--skip-existing",
         action="store_true",
         help="산출물이 이미 있으면 건너뛴다. 파싱이 가장 오래 걸리므로 실험 반복에 필수",
+    )
+    parser.add_argument(
+        "--parser",
+        choices=parsers.IMPLEMENTATIONS,
+        default="native",
+        help=(
+            "파서 구현. 기본 %(default)s. reference 는 third_party/ 기반 임시 구현이며 "
+            "자체 파서 완성 전까지의 대체물이자 이후의 대조군이다"
+        ),
     )
     parser.add_argument("--errors", default=None)
     return parser.parse_args(argv)
@@ -249,7 +275,9 @@ def main(argv: "list[str] | None" = None) -> int:
     files: list[dict[str, Any]] = []
     for artifact, scope_dict in sorted(targets.items()):
         try:
-            entry = parse_artifact(artifact, scope_dict, source, out_dir)
+            entry = parse_artifact(
+                artifact, scope_dict, source, out_dir, implementation=args.parser
+            )
         except LookupError as e:
             # 파서 미구현. 실패가 아니라 지원 범위 밖이며, 보고서의
             # "분석 범위 한계"로 이어져야 할 정보다.
@@ -287,18 +315,21 @@ def main(argv: "list[str] | None" = None) -> int:
             {
                 "message": (
                     f"파싱된 아티팩트가 없습니다 (요청: {', '.join(sorted(targets))}). "
-                    f"등록된 파서: {', '.join(parsers.registered()) or '없음'}. "
+                    f"등록된 {args.parser} 파서: "
+                    f"{', '.join(parsers.registered(args.parser)) or '없음'}. "
+                    f"참조 구현: {', '.join(parsers.registered('reference')) or '없음'}. "
                     f"목업으로 관통 실행하려면 {out_dir} 에 산출물을 넣고 "
                     "--skip-existing 을 붙이십시오."
                 )
             },
         )
 
-    write_manifest(out_dir, selection["case_id"], files)
+    write_manifest(out_dir, selection["case_id"], files, implementation=args.parser)
+    note = " — 임시 참조 구현" if args.parser == "reference" else ""
     print(
         f"{out_dir}: {len(files)}개 아티팩트, "
         f"총 {sum(f['record_count'] for f in files)}건 "
-        f"(증거: {source.describe()})"
+        f"(증거: {source.describe()}, 파서: {args.parser}{note})"
     )
     return 0
 

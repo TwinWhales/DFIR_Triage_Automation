@@ -58,7 +58,7 @@ python benchmark/validator_check.py
 | C-001 목업 세트 | 작성 완료 |
 | 02 시나리오 정규화 | 구현 완료 — 알럿 어댑터는 실동작, LLM은 **스텁** |
 | 03 아티팩트 선별 | 구현 완료 — 매핑 5개 + 카탈로그 |
-| **04 파싱** | **입력 처리만** — 바이트 파서 미구현 |
+| **04 파싱** | 자체 파서 미구현. **참조 구현으로 동작** (`--parser reference`) |
 | 05 sLLM 해석 | 구현 완료 — 레코드 추림은 실동작, LLM은 **스텁** |
 | 06 근거 검증 | 구현 완료 — 체커 3종 + `--checkers` 조합 |
 | 07 결과 보고 | 구현 완료 — Jinja2 템플릿 (LLM 미사용) |
@@ -87,11 +87,24 @@ cases/C-001-D/   ← 데이터 볼륨
 
 **파이프라인은 01→07 전 구간이 관통됩니다.** 다만 두 가지가 아직 대체물입니다.
 
-- **04 파싱** — `parsers/`의 바이트 레벨 구현이 비어 있습니다. `--skip-existing`으로
-  건너뛰고 목업 산출물을 씁니다.
+- **04 파싱** — 자체 파서(`parsers/mft.py`)가 비어 있습니다. 그동안
+  `--parser reference`가 실제 `$MFT`를 읽습니다
+  ([analyzeMFT](third_party/README.md) 기반, MIT). 자체 파서가 나오면
+  **대조군**으로 남습니다.
 - **02·05의 LLM** — `--llm stub`이 기록된 응답을 재생합니다. 프롬프트 조립,
   응답 파싱, 스키마 검증, 재시도까지 실제 경로를 그대로 지나가고 네트워크
   호출만 대체됩니다.
+
+두 파서 구현을 맞춰 보려면:
+
+```bash
+python -m src.stage04_parse.parse ... --parser reference --out /tmp/ref
+python -m src.stage04_parse.parse ... --parser native    --out /tmp/native
+python tools/compare_mft.py --ours /tmp/native/mft.jsonl --reference /tmp/ref/mft.jsonl --full
+```
+
+MFTECmd 없이 `pytest` 안에서도 돌아가므로 자체 파서를 만드는 동안
+**매번 즉시 채점**할 수 있습니다.
 
 ### 관통 실행해 보기
 

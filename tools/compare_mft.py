@@ -8,12 +8,21 @@
 삼는 것**은 별개입니다. "우리 파서가 MFTECmd와 1,842건 전부 일치했다"는
 발표에서 신뢰도를 크게 올립니다.
 
-사용법::
+대조 상대는 둘 중 하나입니다.
+
+**MFTECmd** — 외부 도구. 최종 검증용::
 
     MFTECmd.exe -f "C:\\evidence\\$MFT" --csv out --csvf mft.csv
-
     python tools/compare_mft.py --ours cases/C-001/04_parsed/mft.jsonl \\
                                --mftecmd out/mft.csv
+
+**참조 구현** — ``--parser reference`` 로 뽑은 우리 형식 JSONL.
+MFTECmd를 설치하지 않아도 되고 ``pytest`` 안에서 돌아가므로, 자체 파서를
+만드는 동안 **매번 즉시 채점**할 수 있습니다::
+
+    python -m src.stage04_parse.parse ... --parser reference --out /tmp/ref
+    python -m src.stage04_parse.parse ... --parser native    --out /tmp/native
+    python tools/compare_mft.py --ours /tmp/native/mft.jsonl --reference /tmp/ref/mft.jsonl
 
 **우리 파서는 선별된 범위만 냅니다.** 레코드 수까지 대조하려면 범위를
 비우고(``scope`` 없이) 돌린 결과를 쓰고 ``--full``을 붙이십시오.
@@ -77,6 +86,8 @@ class Mismatch:
 class Report:
     ours_count: int = 0
     theirs_count: int = 0
+    #: 대조 상대의 이름. 요약에 그대로 쓴다.
+    against: str = "대조군"
     #: MFTECmd에는 있는데 우리에게 없는 레코드. ``--full``에서만 오류.
     missing_from_ours: list[int] = field(default_factory=list)
     #: 우리에게만 있는 레코드. **항상 오류** — 없는 것을 지어낸 것이다.
@@ -92,10 +103,10 @@ class Report:
     def summary(self) -> str:
         """``docs/artifact-notes.md``에 그대로 붙일 수 있는 형태."""
         lines = [
-            f"- 우리 레코드 {self.ours_count}건 / MFTECmd {self.theirs_count}건",
+            f"- 우리 레코드 {self.ours_count}건 / {self.against} {self.theirs_count}건",
             f"- 값 불일치 {len(self.mismatches)}건",
             f"- 우리에만 있는 레코드 {len(self.extra_in_ours)}건",
-            f"- MFTECmd에만 있는 레코드 {len(self.missing_from_ours)}건"
+            f"- {self.against}에만 있는 레코드 {len(self.missing_from_ours)}건"
             + ("" if self.full else " (선별 범위 밖이면 정상)"),
         ]
         by_field: dict[str, int] = {}
@@ -187,9 +198,12 @@ def compare(
     *,
     tolerance_seconds: float = DEFAULT_TOLERANCE_SECONDS,
     full: bool = False,
+    against: str = "대조군",
 ) -> Report:
     """두 결과를 대조한다. 레코드 번호로 짝을 맞춘다."""
-    report = Report(ours_count=len(ours), theirs_count=len(theirs), full=full)
+    report = Report(
+        ours_count=len(ours), theirs_count=len(theirs), full=full, against=against
+    )
     report.extra_in_ours = sorted(set(ours) - set(theirs))
     report.missing_from_ours = sorted(set(theirs) - set(ours))
 
@@ -215,7 +229,12 @@ def main(argv: "list[str] | None" = None) -> int:
         description="우리 $MFT 파서 출력을 MFTECmd 결과와 대조한다.",
     )
     parser.add_argument("--ours", required=True, help="04_parsed/mft.jsonl 경로")
-    parser.add_argument("--mftecmd", required=True, help="MFTECmd --csv 출력 파일")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--mftecmd", help="MFTECmd --csv 출력 파일")
+    source.add_argument(
+        "--reference",
+        help="참조 구현으로 뽑은 mft.jsonl. MFTECmd 없이 즉시 대조할 때",
+    )
     parser.add_argument(
         "--full",
         action="store_true",
@@ -227,13 +246,16 @@ def main(argv: "list[str] | None" = None) -> int:
 
     io.configure_console()
 
+    theirs = load_mftecmd(args.mftecmd) if args.mftecmd else load_ours(args.reference)
     report = compare(
         load_ours(args.ours),
-        load_mftecmd(args.mftecmd),
+        theirs,
         tolerance_seconds=args.tolerance_seconds,
         full=args.full,
+        against="MFTECmd" if args.mftecmd else "참조 구현",
     )
 
+    print(f"대조 상대: {args.mftecmd or args.reference}")
     print(report.summary())
     if report.mismatches:
         print(f"\n불일치 예시 (최대 {args.show}건):")

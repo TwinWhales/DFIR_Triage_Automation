@@ -350,6 +350,21 @@ class VolumeSource:
         raise NotImplementedError("VolumeSource 미구현")
 
 
+def volume_letter(source: "EvidenceSource | str | os.PathLike[str]") -> str:
+    """증거 경로에서 드라이브 문자를 유추한다.
+
+    ``$MFT``에는 드라이브 문자가 없습니다. 한 실행은 한 볼륨이므로
+    ``.../C`` 나 ``.../C%3A`` 같은 폴더 이름이 곧 볼륨입니다.
+
+    유추할 수 없으면 ``C:``로 둡니다. 틀려도 경로 접두어 비교에서 결과가
+    비어 나오므로 드러납니다 — 조용히 잘못된 값이 되지는 않습니다.
+    """
+    root = getattr(source, "root", source)
+    name = os.path.basename(str(root).rstrip("/\\"))
+    letter = name[:1].upper()
+    return f"{letter}:" if letter.isalpha() and len(name) <= 4 else "C:"
+
+
 def volume_candidates(root: Path) -> list[str]:
     """볼륨으로 보이는 하위 폴더 이름. 안내 메시지에 쓴다."""
     try:
