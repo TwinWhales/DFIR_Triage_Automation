@@ -7,6 +7,11 @@ venv/
 cases/*
 !cases/.gitkeep
 
+# 증거는 커밋하지 않는다. 실제 사건 데이터가 들어 있고 용량이 크다.
+# 이미지뿐 아니라 추출 결과(FTK Imager의 [root]/ 등)도 마찬가지다.
+evidence/*
+!evidence/.gitkeep
+
 benchmark/datasets/*/evidence/
 benchmark/results/*
 !benchmark/results/.gitkeep

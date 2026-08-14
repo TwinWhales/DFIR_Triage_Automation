@@ -59,6 +59,7 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1059.001": "Command and Scripting Interpreter: PowerShell",
     "T1059.003": "Command and Scripting Interpreter: Windows Command Shell",
     "T1070.001": "Indicator Removal: Clear Windows Event Logs",
+    "T1070.004": "Indicator Removal: File Deletion",
     "T1078.003": "Valid Accounts: Local Accounts",
     "T1112": "Modify Registry",
     "T1218.011": "System Binary Proxy Execution: Rundll32",

@@ -41,6 +41,23 @@ mft_record.py     MftRecord — 레코드 바이트 하나를 파싱
 대조 결과에서 섹터 경계 근처 값이 어긋나면 이것이 원인일 수 있습니다
 (`docs/artifact-notes.md` 참조).
 
+### 파일 크기가 `$FN`에서 나옵니다
+
+`MftRecord.filesize`는 `$FILE_NAME`의 real_size입니다. 그 값은 **이름이
+만들어진 시점의 크기**라 나중에 쓰인 파일은 대부분 0입니다. 실제 이미지
+57개 문서 중 56개가 0이었습니다.
+
+→ 어댑터가 `$DATA` 속성을 직접 읽습니다. 고친 뒤 57/57이 추출 파일의
+   실제 크기와 일치했습니다.
+
+### 정상 레코드에 경고 로그를 냅니다
+
+`validators.py`가 1024바이트 레코드의 584바이트 `$INDEX_ROOT`를 보고
+`Large attribute detected` 경고를 냅니다. 실제 문제가 아니며 파싱 진행
+상황을 가립니다.
+
+→ 어댑터가 `third_party.analyzeMFT` 로거 수준을 올려 잠급니다.
+
 ### 경로 재구성은 쓰지 않습니다
 
 `mft_analyzer.py`의 `build_filepath`는 가져오지 않았습니다. 우리는

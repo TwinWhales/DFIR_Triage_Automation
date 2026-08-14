@@ -42,7 +42,7 @@
 
 | 아티팩트 | 사유 |
 |---|---|
-| prefetch | Windows Server 기본 설정에서 비활성화되어 수집 불가 |
+| prefetch | 본 버전 파싱 모듈 미지원 (Windows Server에서는 기본 비활성화되어 수집되지 않는 경우도 많음) |
 | $LogFile | 본 버전 미지원 (파싱 모듈 범위 외) |
 | $UsnJrnl | Tier 2 조건 미충족 (Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시) |
 | evtx:System | Tier 2 조건 미충족 (Tier1에서 서비스 관련 정황 발견 시) |
@@ -52,4 +52,4 @@
 본 보고서는 자동 생성되었으며 수사상 참고 자료입니다. 포렌식 감정 결과나
 전문가 의견이 아니며, 해석의 타당성은 분석가 검토가 필요합니다.
 
-생성: 2026-08-06T04:08:06Z / report.py
+생성: 2026-08-14T06:37:30Z / report.py

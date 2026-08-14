@@ -10,20 +10,43 @@
       "artifact": "$MFT",
       "tier": 1,
       "scope": {
-        "path_prefix": ["C:\\inetpub\\wwwroot"],
-        "extensions": [".aspx", ".asp", ".ashx", ".asmx"],
-        "time_range": { "start": "2026-07-18T00:00:00Z", "end": "2026-07-22T23:59:59Z" }
+        "path_prefix": [
+          "C:\\inetpub\\wwwroot"
+        ],
+        "extensions": [
+          ".aspx",
+          ".asp",
+          ".ashx",
+          ".asmx"
+        ],
+        "time_range": {
+          "start": "2026-07-18T00:00:00Z",
+          "end": "2026-07-22T23:59:59Z"
+        }
       },
-      "reason": { "technique": "T1505.003", "rationale": "웹셸 파일 생성 흔적" }
+      "reason": {
+        "technique": "T1505.003",
+        "rationale": "웹셸 파일 생성 흔적"
+      }
     },
     {
       "artifact": "evtx:Security",
       "tier": 1,
       "scope": {
-        "event_ids": [4720, 4728, 4732],
-        "time_range": { "start": "2026-07-18T00:00:00Z", "end": "2026-07-22T23:59:59Z" }
+        "event_ids": [
+          4720,
+          4728,
+          4732
+        ],
+        "time_range": {
+          "start": "2026-07-18T00:00:00Z",
+          "end": "2026-07-22T23:59:59Z"
+        }
       },
-      "reason": { "technique": "T1136.001", "rationale": "계정 생성 및 권한 그룹 추가" }
+      "reason": {
+        "technique": "T1136.001",
+        "rationale": "계정 생성 및 권한 그룹 추가"
+      }
     }
   ],
   "deferred": [
@@ -31,19 +54,25 @@
       "artifact": "$UsnJrnl",
       "tier": 2,
       "trigger": "Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시",
-      "reason": { "technique": "T1505.003", "rationale": "웹셸 파일 삭제/재생성 이력" }
+      "reason": {
+        "technique": "T1505.003",
+        "rationale": "웹셸 파일 삭제/재생성 이력"
+      }
     },
     {
       "artifact": "evtx:System",
       "tier": 2,
       "trigger": "Tier1에서 서비스 관련 정황 발견 시",
-      "reason": { "technique": "T1543.003", "rationale": "서비스 기반 지속성" }
+      "reason": {
+        "technique": "T1543.003",
+        "rationale": "서비스 기반 지속성"
+      }
     }
   ],
   "excluded": [
     {
       "artifact": "prefetch",
-      "reason": "Windows Server 기본 설정에서 비활성화되어 수집 불가"
+      "reason": "본 버전 파싱 모듈 미지원 (Windows Server에서는 기본 비활성화되어 수집되지 않는 경우도 많음)"
     },
     {
       "artifact": "$LogFile",

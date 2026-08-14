@@ -103,7 +103,7 @@ def test_unverifiable_statements_are_quoted_verbatim(docs):
 
 def test_scope_limits_merge_excluded_and_unfired_deferred(docs):
     limits = {entry["artifact"]: entry["reason"] for entry in _context(docs)["limits"]}
-    assert "수집 불가" in limits["prefetch"]
+    assert "미지원" in limits["prefetch"]
     assert "Tier 2 조건 미충족" in limits["$UsnJrnl"]
     assert "Tier 2 조건 미충족" in limits["evtx:System"]
 

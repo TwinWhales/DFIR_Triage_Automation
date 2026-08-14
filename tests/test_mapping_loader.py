@@ -90,7 +90,7 @@ def test_unsupported_without_a_reason_is_refused(tmp_path):
 
 def test_all_shipped_mappings_load(mappings):
     assert set(mappings) == {
-        "T1505.003", "T1136.001", "T1543.003", "T1053.005", "T1070.006"
+        "T1505.003", "T1136.001", "T1543.003", "T1053.005", "T1070.004", "T1070.006"
     }
 
 
@@ -286,8 +286,18 @@ def test_the_same_request_is_deferred_when_nothing_selects_it(scenario, catalog,
 def test_unsupported_artifacts_are_always_excluded(scenario, catalog, mappings):
     got, _ = select(scenario, catalog, mappings)
     excluded = {e["artifact"]: e["reason"] for e in got["excluded"]}
-    assert "수집 불가" in excluded["prefetch"]
+    assert "미지원" in excluded["prefetch"]
     assert "미지원" in excluded["$LogFile"]
+
+
+def test_exclusion_reasons_hold_regardless_of_windows_variant(catalog):
+    # 제외 사유는 보고서에 그대로 실린다. "Windows Server 기본 비활성화"라고
+    # 적었더니 Windows 10 케이스 보고서에 그대로 나가 사실과 달라졌다.
+    # 1차 사유는 OS 변종과 무관해야 한다.
+    for name, spec in catalog.artifacts.items():
+        reason = spec.unusable_reason("windows")
+        if reason is not None and not spec.supported:
+            assert "미지원" in reason, f"{name}: {reason}"
 
 
 def test_artifacts_nobody_asked_for_are_still_reported(scenario, catalog, mappings):

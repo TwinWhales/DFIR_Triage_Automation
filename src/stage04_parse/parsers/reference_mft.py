@@ -36,7 +36,7 @@ fixup 적용                     ―
 
 from __future__ import annotations
 
-import os
+import logging
 from typing import Any, BinaryIO, Iterator
 
 # 절대 경로로 부른다. third_party 는 src 바깥이라 상대 import 로는 닿지 않는다.
@@ -47,6 +47,11 @@ from ..structs import mft_record as structs
 from .base import ParseError, Scope
 
 __all__ = ["ReferenceMftParser", "ROOT_RECORD_NUMBER", "DEFAULT_RECORD_SIZE"]
+
+# 원본이 정상 레코드에도 "Large attribute detected" 경고를 낸다
+# ($INDEX_ROOT 584바이트를 1024 레코드에서 "크다"고 판정). 실제 문제가
+# 아니고 파싱 진행 상황을 가리므로 낮춘다. 원본을 고치지 않는 방법이다.
+logging.getLogger("third_party.analyzeMFT").setLevel(logging.ERROR)
 
 #: 볼륨 루트(``.``)의 MFT 레코드 번호. 경로 재구성이 여기서 멈춘다.
 ROOT_RECORD_NUMBER = 5
@@ -101,9 +106,38 @@ class ReferenceMftParser:
             return DEFAULT_RECORD_SIZE
         return allocated if allocated in _VALID_RECORD_SIZES else DEFAULT_RECORD_SIZE
 
+    @staticmethod
+    def _data_size(data: bytes) -> int | None:
+        """``$DATA``의 실제 크기. 없으면 ``None``.
+
+        원본의 ``filesize``는 ``$FN``에서 읽은 값인데, 그것은 **이름이
+        만들어진 시점의 크기**라 나중에 쓰인 파일은 0으로 남습니다.
+        39KB 문서를 0바이트로 보고하는 것은 증거 레코드로서 틀린 값입니다.
+
+        이름 없는 ``$DATA``만 봅니다. 이름 있는 것은 대체 데이터
+        스트림(ADS)이고 본 버전의 범위 밖입니다.
+        """
+        try:
+            header = structs.RecordHeader.unpack(data)
+        except structs.StructError:
+            return None
+
+        offset = header.first_attribute_offset
+        while offset < len(data):
+            try:
+                attribute = structs.AttributeHeader.unpack(data, offset)
+            except structs.StructError:
+                return None
+            if attribute.type == structs.AttributeType.DATA and not attribute.name:
+                return (
+                    attribute.real_size if attribute.non_resident else attribute.content_length
+                )
+            offset += attribute.length
+        return None
+
     def _records(
         self, stream: BinaryIO, record_size: int
-    ) -> Iterator[tuple[int, int, MftRecord]]:
+    ) -> Iterator[tuple[int, int, bytes, MftRecord]]:
         """``(순번, 오프셋, 파싱된 레코드)``를 흘려보낸다.
 
         시그니처가 다르거나 fixup이 깨진 레코드는 건너뜁니다. 손상된
@@ -125,7 +159,7 @@ class ReferenceMftParser:
             except structs.StructError:
                 continue
             try:
-                yield position - 1, offset, MftRecord(fixed)
+                yield position - 1, offset, fixed, MftRecord(fixed)
             except Exception:  # noqa: BLE001 — 남의 코드가 무엇을 던질지 모른다
                 continue
 
@@ -134,7 +168,7 @@ class ReferenceMftParser:
     ) -> dict[int, tuple[str, int]]:
         """1회차. ``레코드번호 → (이름, 부모번호)``."""
         index: dict[int, tuple[str, int]] = {}
-        for position, _offset, record in self._records(stream, record_size):
+        for position, _offset, _raw, record in self._records(stream, record_size):
             number = self._record_number(record, position)
             name = record.filename or ""
             if name:
@@ -149,7 +183,7 @@ class ReferenceMftParser:
         index: dict[int, tuple[str, int]],
     ) -> Iterator[dict[str, Any]]:
         """2회차. 범위에 드는 레코드를 우리 형식으로 낸다."""
-        for position, offset, record in self._records(stream, record_size):
+        for position, offset, raw, record in self._records(stream, record_size):
             number = self._record_number(record, position)
             if not record.filename:
                 continue  # 이름 없는 레코드는 경로를 만들 수 없다
@@ -160,6 +194,10 @@ class ReferenceMftParser:
 
             si = self._times(record.si_times)
             fn = self._times(record.fn_times)
+            # $DATA를 우선한다. 원본의 filesize는 $FN 값이라 대개 0이다.
+            size = self._data_size(raw)
+            if size is None:
+                size = int(record.filesize or 0)
 
             yield {
                 "ref": refs.make_ref(self.artifact, number),
@@ -169,7 +207,7 @@ class ReferenceMftParser:
                 "path": path,
                 "allocated": bool(record.flags & structs.RecordFlags.IN_USE),
                 "is_directory": bool(record.flags & structs.RecordFlags.DIRECTORY),
-                "size": int(record.filesize or 0),
+                "size": int(size),
                 "si_btime": si["crtime"],
                 "si_ctime": si["ctime"],
                 "si_mtime": si["mtime"],

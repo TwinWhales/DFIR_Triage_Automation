@@ -46,9 +46,23 @@ FLAGS = (
 )
 
 #: ``$STANDARD_INFORMATION`` / ``$FILE_NAME``의 대응하는 타임스탬프 쌍.
-#: 순서가 서로 맞아야 한다.
+#: 순서가 서로 맞아야 한다. ``zero_timestamp``와 시간 범위 판정에 쓴다.
 SI_FIELDS = ("si_btime", "si_ctime", "si_mtime")
 FN_FIELDS = ("fn_btime", "fn_ctime", "fn_mtime")
+
+#: ``timestamp_mismatch`` 판정에 쓰는 쌍. **생성 시각만 본다.**
+#:
+#: 처음에는 세 쌍을 모두 봤는데 실제 이미지에서 154건 중 91건(59%)이
+#: 걸렸다. 전부 오탐이었다.
+#:
+#: 원인: 파일을 복사하면 ``$SI``의 ctime·mtime은 원본에서 보존되고
+#: ``$FN``은 새 디렉터리 항목이 만들어진 시각으로 설정된다. 그래서
+#: ``si_ctime < fn_ctime``이 **정상적으로** 성립한다.
+#:
+#: "파일이 자기 이름 항목보다 먼저 존재할 수 없다"는 논리는 **생성
+#: 시각에만** 적용된다. 같은 이미지에서 생성 시각 비교는 0건이 걸렸다.
+#: 측정 기록은 ``docs/artifact-notes.md`` 참조.
+MISMATCH_PAIRS = (("si_btime", "fn_btime"),)
 
 #: ``_flags.yaml``을 읽지 못했을 때 쓰는 값.
 DEFAULT_PRIVILEGED_GROUPS = frozenset(
@@ -183,19 +197,23 @@ def _has_zero_timestamp(record: dict[str, Any], times: dict[str, datetime | None
 
 
 def _timestamp_mismatch(times: dict[str, datetime | None]) -> bool:
-    """``$SI``가 ``$FN``보다 이른 쌍이 있는가.
+    """``$SI`` 생성 시각이 ``$FN``보다 이른가.
 
-    **방향이 중요합니다.** 단순 불일치로 잡으면 이름이 바뀐 파일이 전부
-    걸립니다 — ``$FN``은 rename 시점에 갱신되므로 정상적으로도 달라집니다.
+    **방향과 대상이 모두 중요합니다.**
 
-    반대로 ``$SI``가 ``$FN``보다 **이른** 것은 자연적으로 생기기 어렵습니다.
-    파일이 자기 이름 항목보다 먼저 존재할 수 없기 때문입니다. 타임스탬프
-    조작 도구는 대개 ``$SI``만 과거로 되돌리므로 이 형태가 남습니다.
+    방향 — 단순 불일치로 잡으면 이름이 바뀐 파일이 전부 걸립니다.
+    ``$FN``은 rename 시점에 갱신되므로 정상적으로도 달라집니다. 반대로
+    ``$SI``가 더 이른 것은 파일이 자기 이름 항목보다 먼저 존재했다는
+    뜻이라 자연적으로 생기기 어렵습니다.
 
-    ``$FN``은 커널이 갱신해 일반 도구로 바꾸기 어렵다는 점이 이 판정의
-    근거입니다. 자세한 조사 메모는 ``docs/artifact-notes.md``에 누적합니다.
+    대상 — **생성 시각만** 봅니다. ctime·mtime까지 보면 파일 복사가 전부
+    걸립니다(실측 59%). ``MISMATCH_PAIRS``의 주석에 근거가 있습니다.
+
+    타임스탬프 조작 도구는 대개 ``$SI``만 과거로 되돌리는데, ``$FN``은
+    커널이 갱신해 일반 도구로 바꾸기 어렵습니다. 그 비대칭이 이 판정의
+    근거입니다.
     """
-    for si_field, fn_field in zip(SI_FIELDS, FN_FIELDS):
+    for si_field, fn_field in MISMATCH_PAIRS:
         si, fn = times.get(si_field), times.get(fn_field)
         if si is not None and fn is not None and si < fn:
             return True

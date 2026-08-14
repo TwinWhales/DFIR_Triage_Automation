@@ -121,7 +121,7 @@ def test_an_excluded_artifact_reports_the_reason(case_dir, truth, tmp_path):
 
     row = next(r for r in result["selection"]["detail"] if r["artifact"] == "prefetch")
     assert row["status"] == "excluded"
-    assert "수집 불가" in row["why"]
+    assert "미지원" in row["why"]
 
 
 def test_an_artifact_the_tool_never_heard_of_is_distinguished(case_dir, truth, tmp_path):

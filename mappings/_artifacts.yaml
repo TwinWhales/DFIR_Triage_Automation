@@ -40,11 +40,14 @@ artifacts:
     supported: true
     description: 시스템 이벤트 로그. 서비스·드라이버.
 
+  # 제외 사유는 OS 변종과 무관하게 참이어야 한다. 처음에는 "Windows
+  # Server 기본 비활성화"라고 적었는데, Windows 10 케이스 보고서에
+  # 그대로 실려 사실과 달라졌다. 미지원이라는 사실이 1차 사유다.
   prefetch:
     parser: null
     os: [windows]
     supported: false
-    exclude_reason: Windows Server 기본 설정에서 비활성화되어 수집 불가
+    exclude_reason: 본 버전 파싱 모듈 미지원 (Windows Server에서는 기본 비활성화되어 수집되지 않는 경우도 많음)
 
   $LogFile:
     parser: null

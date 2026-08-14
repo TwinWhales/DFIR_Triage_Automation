@@ -73,10 +73,10 @@ def test_reproduces_the_flags_in_the_mock(filename):
 # ================================================== timestamp_mismatch
 
 
-def test_si_earlier_than_fn_is_a_mismatch():
+def test_si_created_earlier_than_fn_is_a_mismatch():
     # 파일이 자기 이름 항목보다 먼저 존재할 수 없다. 조작 도구는 대개
     # $SI만 과거로 되돌리므로 이 형태가 남는다.
-    record = _mft(si_ctime="2026-07-20T03:00:00Z", fn_ctime="2026-07-21T09:00:00Z")
+    record = _mft(si_btime="2026-07-20T03:00:00Z", fn_btime="2026-07-21T09:00:00Z")
     assert "timestamp_mismatch" in flagging.apply(record)["flags"]
 
 
@@ -91,9 +91,23 @@ def test_identical_timestamps_are_not_a_mismatch():
     assert "timestamp_mismatch" not in flagging.apply(_mft())["flags"]
 
 
-def test_mismatch_is_checked_on_every_si_fn_pair():
-    record = _mft(si_mtime="2026-07-20T03:00:00Z", fn_mtime="2026-07-25T03:00:00Z")
-    assert "timestamp_mismatch" in flagging.apply(record)["flags"]
+def test_a_copied_file_is_not_a_mismatch():
+    # 실제 이미지에서 발견한 오탐 패턴. 파일을 복사하면 $SI의 ctime·mtime은
+    # 원본에서 보존되고 $FN은 새 디렉터리 항목이 만들어진 시각이 된다.
+    # 생성 시각만 같으면 조작이 아니다.
+    #
+    # 이 쌍까지 보던 초기 룰은 실제 이미지 154건 중 91건(59%)을 걸렀고
+    # 전부 오탐이었다. 필터로 쓸 수 없는 비율이다.
+    record = _mft(
+        si_btime="2026-07-24T00:28:07Z", fn_btime="2026-07-24T00:28:07Z",
+        si_ctime="2026-07-23T08:51:16Z", fn_ctime="2026-07-24T00:28:07Z",
+        si_mtime="2026-07-23T08:51:16Z", fn_mtime="2026-07-24T00:28:07Z",
+    )
+    assert flagging.apply(record)["flags"] == []
+
+
+def test_only_creation_times_drive_the_mismatch_rule():
+    assert flagging.MISMATCH_PAIRS == (("si_btime", "fn_btime"),)
 
 
 def test_si_and_fn_field_lists_line_up():
