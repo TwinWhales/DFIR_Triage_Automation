@@ -25,8 +25,17 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, schema
+from . import evidence, flagging, parsers
+from .parsers.base import Scope
 
-__all__ = ["STAGE", "group_by_artifact", "merge_scopes", "write_manifest", "main"]
+__all__ = [
+    "STAGE",
+    "group_by_artifact",
+    "merge_scopes",
+    "write_manifest",
+    "parse_artifact",
+    "main",
+]
 
 STAGE = "04_parse"
 
@@ -36,6 +45,8 @@ OUTPUT_FILENAMES: dict[str, str] = {
     "$UsnJrnl": "usnjrnl.jsonl",
     "evtx:Security": "evtx_security.jsonl",
     "evtx:System": "evtx_system.jsonl",
+    "registry:SYSTEM": "registry_system.jsonl",
+    "registry:SOFTWARE": "registry_software.jsonl",
 }
 
 #: 합집합으로 넓히는 범위 키. 여기 없는 키는 첫 값을 쓴다.
@@ -104,6 +115,63 @@ def _already_parsed(out_dir: Path) -> bool:
     return (out_dir / "_manifest.json").is_file() and any(out_dir.glob("*.jsonl"))
 
 
+class _Counter:
+    """레코드를 흘려보내며 개수를 센다.
+
+    스트리밍을 유지하려고 이렇게 합니다. 리스트로 모아서 세면 ``$MFT``
+    수십만 건이 전부 메모리에 올라갑니다.
+    """
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.flagged = 0
+
+    def __call__(self, records: "Any") -> "Any":
+        for record in records:
+            self.total += 1
+            if record.get("flags"):
+                self.flagged += 1
+            yield record
+
+
+def parse_artifact(
+    artifact: str,
+    scope_dict: dict[str, Any],
+    source: evidence.EvidenceSource,
+    out_dir: Path,
+) -> dict[str, Any]:
+    """아티팩트 하나를 파싱해 JSONL로 쓰고 매니페스트 항목을 돌려준다.
+
+    파서가 만든 레코드에 ``flagging``이 플래그를 붙인 뒤 기록됩니다.
+    파서는 플래그를 신경 쓰지 않아도 됩니다.
+    """
+    parser = parsers.get(artifact)
+    if parser is None:
+        raise LookupError(
+            f"{artifact}: 파서가 등록되지 않았습니다 "
+            f"(등록된 것: {', '.join(parsers.registered()) or '없음'}). "
+            "src/stage04_parse/parsers/__init__.py 의 PARSERS 참조."
+        )
+
+    scope = Scope.from_selection(scope_dict)
+    filename = OUTPUT_FILENAMES[artifact]
+    counter = _Counter()
+
+    with source.open(artifact) as stream:
+        written = io.write_jsonl(
+            out_dir / filename,
+            counter(flagging.apply_all(parser.parse(stream, scope), scope)),
+        )
+
+    return {
+        "artifact": artifact,
+        "path": filename,
+        "record_count": written,
+        "flagged_count": counter.flagged,
+        "parse_errors": 0,
+    }
+
+
 def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python -m src.stage04_parse.parse",
@@ -158,18 +226,66 @@ def main(argv: "list[str] | None" = None) -> int:
             },
         )
 
-    # 여기부터가 parsers/ 담당 구간이다. 아티팩트별로 targets[artifact]의
-    # scope를 넘겨 레코드를 만들고, flagging.py로 flags를 붙인 뒤
-    # OUTPUT_FILENAMES[artifact] 에 JSONL로 쓰고 write_manifest를 부른다.
+    try:
+        source = evidence.open_source(args.evidence)
+    except evidence.EvidenceError as e:
+        log.abort(STAGE, "parse_error", {"message": str(e)})
+
+    files: list[dict[str, Any]] = []
+    for artifact, scope_dict in sorted(targets.items()):
+        try:
+            entry = parse_artifact(artifact, scope_dict, source, out_dir)
+        except LookupError as e:
+            # 파서 미구현. 실패가 아니라 지원 범위 밖이며, 보고서의
+            # "분석 범위 한계"로 이어져야 할 정보다.
+            log.record(
+                STAGE,
+                "empty_result",
+                {"field": "selected[].artifact", "value": artifact, "message": str(e)},
+                action="skip",
+            )
+            print(f"[{STAGE}] 건너뜀 — {e}", file=sys.stderr)
+            continue
+        except evidence.ArtifactNotFound as e:
+            # 선별은 요청했는데 증거에 없다. 수집 누락이다.
+            log.record(
+                STAGE,
+                "empty_result",
+                {"field": "selected[].artifact", "value": artifact, "message": str(e)},
+                action="skip",
+            )
+            print(f"[{STAGE}] 증거 없음 — {e}", file=sys.stderr)
+            continue
+        except (OSError, ValueError) as e:
+            log.abort(STAGE, "parse_error", {"value": artifact, "message": str(e)})
+
+        files.append(entry)
+        print(
+            f"  {artifact}: {entry['record_count']}건 "
+            f"(플래그 {entry['flagged_count']}건) → {entry['path']}"
+        )
+
+    if not files:
+        log.abort(
+            STAGE,
+            "empty_result",
+            {
+                "message": (
+                    f"파싱된 아티팩트가 없습니다 (요청: {', '.join(sorted(targets))}). "
+                    f"등록된 파서: {', '.join(parsers.registered()) or '없음'}. "
+                    f"목업으로 관통 실행하려면 {out_dir} 에 산출물을 넣고 "
+                    "--skip-existing 을 붙이십시오."
+                )
+            },
+        )
+
+    write_manifest(out_dir, selection["case_id"], files)
     print(
-        f"[{STAGE}] 파서가 아직 구현되지 않았습니다.\n"
-        f"  요청된 아티팩트: {', '.join(f'{a} {s}' for a, s in sorted(targets.items()))}\n"
-        f"  증거 루트: {args.evidence}\n"
-        f"  목업으로 관통 실행하려면 {out_dir} 에 04_parsed 산출물을 넣고\n"
-        f"  --skip-existing 을 붙이십시오.",
-        file=sys.stderr,
+        f"{out_dir}: {len(files)}개 아티팩트, "
+        f"총 {sum(f['record_count'] for f in files)}건 "
+        f"(증거: {source.describe()})"
     )
-    return 2
+    return 0
 
 
 if __name__ == "__main__":

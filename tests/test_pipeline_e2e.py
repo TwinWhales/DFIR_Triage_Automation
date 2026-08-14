@@ -90,20 +90,36 @@ def test_parse_skips_when_output_already_exists(tmp_path):
     assert code == 0
 
 
-def test_parse_reports_clearly_that_it_is_unimplemented(tmp_path, capsys):
-    code = parse_mod.main(
-        [
-            "--in", str(MOCK / "03_selection.json"),
-            "--out", str(tmp_path / "04_parsed"),
-            "--evidence", str(tmp_path),
-        ]
-    )
-    assert code == 2
-    err = capsys.readouterr().err
-    assert "구현되지 않았습니다" in err
-    assert "--skip-existing" in err
-    # 미구현은 파이프라인 실패가 아니므로 통계에 섞지 않는다.
-    assert not (tmp_path / "errors.jsonl").exists()
+def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
+    # 파서가 하나도 등록되지 않은 현재 상태. 아티팩트마다 왜 못 읽었는지를
+    # 남기고 중단한다. 조용히 빈 산출물을 만들면 05단계가 그걸 정상으로
+    # 읽어 원인 파악이 불가능해진다.
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+
+    with pytest.raises(SystemExit) as e:
+        parse_mod.main(
+            [
+                "--in", str(MOCK / "03_selection.json"),
+                "--out", str(tmp_path / "04_parsed"),
+                "--evidence", str(evidence_dir),
+            ]
+        )
+    assert e.value.code == 1
+
+    logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    skipped = {entry["detail"]["value"] for entry in logged if entry["action"] == "skip"}
+    assert skipped == {"$MFT", "evtx:Security"}
+    assert logged[-1]["action"] == "abort"
+    assert "--skip-existing" in logged[-1]["detail"]["message"]
+
+
+def test_parse_skips_artifacts_without_a_registered_parser(tmp_path):
+    # 파서 등록이 유일한 확장 지점이라는 것을 고정한다.
+    from src.stage04_parse import parsers
+
+    assert parsers.get("$MFT") is None
+    assert parsers.registered() == []
 
 
 # ============================================================ 관통 실행

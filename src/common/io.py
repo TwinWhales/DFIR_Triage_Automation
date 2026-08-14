@@ -29,6 +29,7 @@ __all__ = [
     "HeaderError",
     "utc_now",
     "parse_timestamp",
+    "normalize_path",
     "make_generator",
     "new_document",
     "check_header",
@@ -133,6 +134,21 @@ def make_generator(script: str, model: str | None = None) -> str:
     return f"{script} / {model}" if model else script
 
 
+def normalize_path(value: str) -> str:
+    """경로를 비교 가능한 형태로 만든다. 대소문자와 구분자를 정규화한다.
+
+    NTFS는 대소문자를 구별하지 않고, 같은 경로가 ``\\``와 ``/`` 양쪽으로
+    표기된다. 이것은 정책이 아니라 **파일시스템의 사실**이므로 04단계의
+    범위 매칭과 06단계의 값 비교가 같은 규칙을 써야 한다.
+
+    끝의 구분자도 떼어 ``C:\\dir``과 ``C:/dir/``를 같게 본다.
+    """
+    normalized = value.replace("\\", "/").lower()
+    stripped = normalized.rstrip("/")
+    # "/" 하나만 있던 경우까지 빈 문자열로 만들지는 않는다.
+    return stripped or normalized
+
+
 def new_document(case_id: str, stage: str, generator: str, **body: Any) -> dict[str, Any]:
     """공통 헤더가 앞에 오는 새 문서를 만든다.
 
@@ -222,10 +238,25 @@ def read_jsonl(path: str | os.PathLike[str]) -> Iterator[dict[str, Any]]:
 
 
 def write_jsonl(path: str | os.PathLike[str], records: Iterable[dict[str, Any]]) -> int:
-    """JSONL을 원자적으로 쓰고 기록한 레코드 수를 돌려준다."""
-    lines = [json.dumps(r, ensure_ascii=False) for r in records]
-    _atomic_write(Path(path), "".join(f"{ln}\n" for ln in lines))
-    return len(lines)
+    """JSONL을 원자적으로 쓰고 기록한 레코드 수를 돌려준다.
+
+    한 줄씩 흘려 쓴다. ``$MFT``는 레코드가 수십만 건이라 전부 문자열로
+    모으면 수백 MB가 된다. 원자성은 임시 파일 + rename으로 유지한다.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp")
+    written = 0
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            for record in records:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                written += 1
+        os.replace(tmp, target)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    return written
 
 
 def append_jsonl(path: str | os.PathLike[str], record: dict[str, Any]) -> None:

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..common.io import parse_timestamp
+from ..common.io import normalize_path, parse_timestamp
 
 __all__ = [
     "parse_timestamp",
@@ -42,6 +42,10 @@ class FieldMissing(LookupError):
 #: 경로로 취급할 필드. 이름으로 판단한다. 값의 생김새로 추측하면
 #: ``C:\Users``처럼 보이는 계정명 같은 것에서 오작동한다.
 PATH_FIELDS = frozenset({"path", "target_path", "source_path", "image_path"})
+
+# normalize_path와 parse_timestamp는 common에 있다. 04단계의 범위 매칭이
+# 같은 함수를 쓰기 때문이다. NTFS 대소문자 무시는 검증 정책이 아니라
+# 파일시스템의 사실이므로 두 단계가 갈라지면 안 된다.
 
 
 def normalize_path(value: str) -> str:
