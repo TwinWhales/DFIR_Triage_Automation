@@ -78,7 +78,13 @@ python tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \
 1. `work-guide.md` — 설계 전제와 팀 분담
 2. `schemas/README.md` — 데이터 계약, **스펙에 없어서 정한 것 8건**
 3. `benchmark/datasets/C-001-webshell/README.md` — 목업 사용법
-4. `docs/mapping-guide.md` — 매핑 테이블 작성 규칙 (선별 담당)
+
+담당별로 이어서 읽을 것:
+
+| 담당 | 문서 |
+|---|---|
+| LLM 파이프라인 (02·05) | `docs/llm-handover.md` |
+| 선별·매핑 (03) | `docs/mapping-guide.md` |
 
 ### 착수하는 사람에게
 

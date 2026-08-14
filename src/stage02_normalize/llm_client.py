@@ -21,7 +21,11 @@ __all__ = ["DEFAULT_MODEL", "NormalizeClient", "SCENARIO_BODY_FIELDS"]
 
 #: 정규화는 짧은 구조화 출력이라 7B 양자화로 충분하다는 가정에서 출발한다.
 #: 모델별 비교 실험의 기준선이다.
-DEFAULT_MODEL = "qwen2.5-7b-instruct-q4"
+#:
+#: **Ollama 태그를 그대로 쓴다.** ``ollama pull``에 넣을 수 있는 문자열이어야
+#: 하고, 이 값이 산출물의 ``generator``에 기록되어 실험 조건을 복원한다.
+#: 양자화 수준까지 태그에 들어 있어야 Q4/Q8 비교가 결과 파일만으로 구분된다.
+DEFAULT_MODEL = "qwen2.5:7b-instruct-q4_K_M"
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 

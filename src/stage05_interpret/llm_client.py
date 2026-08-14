@@ -20,7 +20,10 @@ __all__ = ["DEFAULT_MODEL", "FINDINGS_BODY_FIELDS", "InterpretClient"]
 
 #: 해석은 정규화보다 무거운 작업이다. 같은 7B로 시작하되 모델별 비교
 #: 실험에서 이 단계만 키웠을 때의 효과를 따로 측정한다.
-DEFAULT_MODEL = "qwen2.5-7b-instruct-q4"
+#:
+#: ``ollama pull``에 넣을 수 있는 태그를 그대로 쓴다. 02단계와 값이 같아도
+#: 상수를 공유하지 않는 것은, 이 단계만 큰 모델로 바꾸는 실험이 잦기 때문이다.
+DEFAULT_MODEL = "qwen2.5:7b-instruct-q4_K_M"
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 
