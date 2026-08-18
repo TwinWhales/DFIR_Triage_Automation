@@ -6,10 +6,11 @@
 ## 파서 구현
 
 ``$MFT`` 메인 파서는 ``mft`` (analyzeMFT 기반, MIT) 입니다.
-``parse.py``는 기본적으로 ``native`` 테이블을 쓰고 ``$MFT``는 이 파서로
-해석됩니다. ``--parser reference``도 같은 파서를 가리킵니다.
+``$UsnJrnl`` 파서는 ``usnjrnl`` (전부 자체 구현) 입니다.
+``parse.py``는 기본적으로 ``native`` 테이블을 쓰고, ``--parser reference``도
+같은 인스턴스를 가리킵니다 — 아티팩트마다 구현이 하나씩뿐입니다.
 
-다른 아티팩트($UsnJrnl, evtx 등) 파서를 추가하면 아래 ``PARSERS``에 한 줄
+다른 아티팩트(evtx 등) 파서를 추가하면 아래 ``PARSERS``에 한 줄
 등록하면 됩니다.
 
 등록되지 않은 아티팩트가 선별되면 ``parse.py``가 그 사실을
@@ -66,6 +67,18 @@ except ImportError as e:  # pragma: no cover - vendored 코드가 없는 경우
     if not (e.name or "").startswith("third_party"):
         raise
     _log.warning("$MFT 파서를 등록하지 못했습니다 (vendored 코드 없음): %s", e)
+
+
+# $UsnJrnl 은 vendored 코드에 기대지 않는다. 전부 우리 구현이라
+# import 가 실패하면 그건 우리 잘못이므로 감싸지 않는다.
+from .usnjrnl import UsnJrnlParser  # noqa: E402 — $MFT 등록 블록 뒤라야 한다
+
+# 구현이 하나뿐이므로 $MFT 와 같이 양쪽 테이블에 같은 인스턴스를 넣는다.
+# reference 쪽을 비워 두면 ``--parser reference`` 로 돌렸을 때 USN 만
+# 조용히 빠진 보고서가 나온다.
+_usn_parser = UsnJrnlParser()
+PARSERS["$UsnJrnl"] = _usn_parser
+REFERENCE_PARSERS["$UsnJrnl"] = _usn_parser
 
 
 IMPLEMENTATIONS = ("native", "reference")

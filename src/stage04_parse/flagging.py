@@ -40,6 +40,7 @@ FLAGS = (
     "timestamp_mismatch",
     "deleted",
     "zero_timestamp",
+    "file_created",
     "account_created",
     "privileged_group_add",
     "outside_time_range",
@@ -123,6 +124,8 @@ def apply(
 
     if artifact == "$MFT":
         found.extend(_mft_flags(record))
+    if artifact == "$UsnJrnl":
+        found.extend(_usn_flags(record))
     if artifact.startswith("evtx:"):
         found.extend(_evtx_flags(record, groups))
     if scope is not None and _outside_time_range(record, scope):
@@ -218,6 +221,35 @@ def _timestamp_mismatch(times: dict[str, datetime | None]) -> bool:
         if si is not None and fn is not None and si < fn:
             return True
     return False
+
+
+# -------------------------------------------------------------- $UsnJrnl
+
+
+#: USN 변경 사유 → 플래그. 사유 이름은 ``structs/usn_record.py``의
+#: ``UsnReason`` 소문자 이름과 같아야 한다.
+USN_REASON_FLAGS = {
+    "file_delete": "deleted",
+    "file_create": "file_created",
+}
+
+
+def _usn_flags(record: dict[str, Any]) -> list[str]:
+    """변경 사유에서 플래그를 뽑는다.
+
+    한 레코드가 여러 사유를 동시에 들 수 있습니다. 파일을 만들고 바로
+    지우면 ``file_create``와 ``file_delete``가 같은 레코드에 함께 옵니다
+    (드물지만 임시 파일에서 실제로 나옵니다). 둘 다 붙입니다 — 하나를
+    골라 버리면 그 순간을 되짚을 수 없습니다.
+
+    ``zero_timestamp``는 붙이지 않습니다. USN 파서는 시각을 읽지 못하면
+    ``timestamp`` 키 자체를 빼므로, ``$MFT``처럼 "0이 들어 있다"를
+    판정할 대상이 없습니다.
+    """
+    reasons = record.get("reason") or []
+    if not isinstance(reasons, list):
+        return []
+    return [flag for reason, flag in USN_REASON_FLAGS.items() if reason in reasons]
 
 
 # ------------------------------------------------------------------ EVTX

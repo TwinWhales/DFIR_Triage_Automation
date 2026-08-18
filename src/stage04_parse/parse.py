@@ -4,9 +4,10 @@
 않는다. 소형 모델에 파싱까지 맡기면 환각이 데이터 계층에서 발생해
 검증 자체가 불가능해진다.
 
-**현재 상태: 파서 미구현.** 입력 처리(선별 결과 병합, 매니페스트 계약,
-``--skip-existing``)는 완성되어 있고 ``parsers/``의 바이트 레벨 구현만
-비어 있다. 목업 ``04_parsed/``를 미리 넣어 두고 ``--skip-existing``으로
+**현재 상태: ``$MFT``와 ``$UsnJrnl`` 구현됨, evtx 미구현.** 등록된
+파서 목록은 ``parsers/__init__.py``가 들고 있다. 파서가 없는 아티팩트가
+선별되면 ``errors.jsonl``에 남기고 건너뛴다 — 조용히 빈 결과를 내지
+않는다. evtx 목업 ``04_parsed/``를 미리 넣어 두고 ``--skip-existing``으로
 건너뛰면 나머지 단계를 관통시킬 수 있다.
 
 사용법::
@@ -181,12 +182,16 @@ def parse_artifact(
             counter(flagging.apply_all(parser.parse(stream, scope), scope)),
         )
 
+    # 파서가 집계를 내놓으면 받는다. 읽지 못하고 건너뛴 구간이 있는데
+    # 매니페스트에 0으로 남으면, 저널의 빈 구간을 "아무 일도 없었다"로
+    # 읽게 된다. 집계를 내놓지 않는 파서는 0이다.
+    stats = getattr(parser, "stats", None) or {}
     entry: dict[str, Any] = {
         "artifact": artifact,
         "path": filename,
         "record_count": written,
         "flagged_count": counter.flagged,
-        "parse_errors": 0,
+        "parse_errors": int(stats.get("parse_errors", 0)),
     }
     if located is not None:
         # 어느 파일에서 읽었는지 남긴다. 나중에 "이 결과가 어디서 나왔나"를

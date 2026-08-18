@@ -19,7 +19,7 @@
     "record_num": {
       "type": "integer",
       "minimum": 0,
-      "description": "아티팩트 내부의 고유 번호를 그대로 쓴다. ref의 숫자 부분과 반드시 같아야 하며, 이 대조는 스키마가 아니라 테스트가 본다."
+      "description": "아티팩트 내부의 고유 번호를 그대로 쓴다. ref의 숫자 부분과 반드시 같아야 하며, 이 대조는 스키마가 아니라 테스트가 본다. $MFT는 MFT 레코드 번호, $UsnJrnl은 USN 값이다 — USN은 저널 스트림 안의 자기 오프셋이라 그 자체로 고유하다."
     },
     "offset": {
       "type": "string",
@@ -35,6 +35,7 @@
           "timestamp_mismatch",
           "deleted",
           "zero_timestamp",
+          "file_created",
           "account_created",
           "privileged_group_add",
           "outside_time_range"
@@ -58,6 +59,33 @@
     },
     "fn_btime": { "$ref": "#/$defs/timestamp" },
 
+    "name": {
+      "type": "string",
+      "description": "$UsnJrnl 레코드의 파일 이름. **경로가 아니다.** USN 레코드에는 이름만 있고, 전체 경로를 얻으려면 parent_entry로 $MFT를 되짚어야 한다. path와 구분해 두어야 보고서가 경로를 아는 것처럼 말하지 않는다."
+    },
+    "reason": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "USN_REASON_* 비트마스크를 편 것. 모르는 비트는 unknown_0x######## 로 남긴다 — 조용히 버리면 새 플래그가 생겼을 때 아무도 모른다."
+    },
+    "source": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "USN_SOURCE_* 비트마스크를 편 것. 값이 있으면 사람이 아니라 복제·백업 소프트웨어가 만든 변경이다."
+    },
+    "file_entry": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "파일 참조의 MFT 엔트리 번호. MFT#<file_entry> 로 $MFT 레코드와 상호 참조한다."
+    },
+    "file_sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "파일 참조의 시퀀스 번호. $MFT 레코드의 시퀀스와 다르면 그 엔트리는 재사용된 것이며 지금의 레코드는 그때 그 파일이 아니다."
+    },
+    "parent_entry": { "type": "integer", "minimum": 0 },
+    "parent_sequence": { "type": "integer", "minimum": 0 },
+
     "event_id": { "type": "integer", "minimum": 0 },
     "timestamp": { "$ref": "#/$defs/timestamp" },
     "channel": { "type": "string", "minLength": 1 },
@@ -72,6 +100,13 @@
       "if": { "properties": { "artifact": { "const": "$MFT" } }, "required": ["artifact"] },
       "then": {
         "required": ["path", "allocated", "is_directory", "size", "si_ctime", "si_mtime", "si_atime", "si_btime", "fn_ctime", "fn_mtime", "fn_btime"]
+      }
+    },
+    {
+      "if": { "properties": { "artifact": { "const": "$UsnJrnl" } }, "required": ["artifact"] },
+      "then": {
+        "$comment": "timestamp는 required가 아니다. FILETIME이 0이거나 읽을 수 없으면 키를 빼고 낸다 — null은 스키마가 막고, 레코드를 버리면 그 이상함 자체가 증거인 경우를 놓친다.",
+        "required": ["name", "reason", "source", "file_entry", "file_sequence", "parent_entry", "parent_sequence", "is_directory"]
       }
     },
     {

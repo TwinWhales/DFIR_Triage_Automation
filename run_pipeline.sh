@@ -16,9 +16,9 @@
 # (C-001-C, C-001-D). 도구가 어느 볼륨인지 추측하지 않게 하려는 것이고,
 # 덤으로 ref 가 유일해진다.
 #
-# 04단계 파서는 아직 구현되지 않았다. --skip-existing 이 붙어 있으므로
-# cases/<id>/04_parsed/ 에 산출물이 미리 있으면 건너뛴다.
-# tools/make_case.py --seed-parsed 로 채울 수 있다.
+# 04단계는 $MFT 와 $UsnJrnl 만 파싱한다. evtx 파서는 아직 없다.
+# --skip-existing 이 붙어 있으므로 cases/<id>/04_parsed/ 에 산출물이
+# 미리 있으면 건너뛴다. tools/make_case.py --seed-parsed 로 채울 수 있다.
 
 set -euo pipefail
 

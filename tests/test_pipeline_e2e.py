@@ -115,12 +115,18 @@ def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
 
 
 def test_parse_skips_artifacts_without_a_registered_parser(tmp_path):
-    # 파서 등록이 유일한 확장 지점이라는 것을 고정한다. $MFT 는 메인 파서가
-    # 등록돼 있고, 아직 파서가 없는 아티팩트는 None 이라 parse 가 건너뛴다.
+    # 파서 등록이 유일한 확장 지점이라는 것을 고정한다. 구현된 아티팩트는
+    # 인스턴스가 나오고, 아직 파서가 없는 것은 None 이라 parse 가 건너뛴다.
+    #
+    # 미구현 쪽으로 evtx 를 쓴다. 구현되면 이 테스트가 깨지는데, 그때
+    # 고쳐야 할 것은 여기가 아니라 mappings/_artifacts.yaml 의
+    # supported 값이다 — 카탈로그와 파서가 어긋난 채로 두면 보고서가
+    # "분석했다"고 말하면서 실제로는 아무것도 읽지 않는다.
     from src.stage04_parse import parsers
 
     assert parsers.get("$MFT") is not None
-    assert parsers.get("$UsnJrnl") is None
+    assert parsers.get("$UsnJrnl") is not None
+    assert parsers.get("evtx:Security") is None
 
 
 # ============================================================ 관통 실행

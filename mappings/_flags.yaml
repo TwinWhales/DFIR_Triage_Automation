@@ -14,8 +14,23 @@ flags:
     note: 타임스탬프 조작(T1070.006)의 대표 흔적. $FN은 사용자 도구로 바꾸기 어렵다.
 
   deleted:
-    artifacts: [$MFT]
-    condition: MFT 레코드 미할당 상태
+    artifacts: [$MFT, $UsnJrnl]
+    condition: MFT 레코드 미할당 상태 / USN 사유에 file_delete
+    note: |
+      두 아티팩트가 같은 이름을 쓰는 이유는 뜻이 같기 때문이다. $MFT는
+      "지금 지워져 있다"는 상태고 $UsnJrnl은 "지워졌다"는 사건이다.
+      Tier 2 유예 조건이 이 플래그를 보므로 이름이 갈라지면 안 된다.
+
+  file_created:
+    artifacts: [$UsnJrnl]
+    condition: USN 사유에 file_create
+    note: |
+      웹셸 설치(T1505.003)처럼 "없던 파일이 생겼다"가 핵심인 기법에서
+      $MFT보다 강한 증거다. $MFT는 생성 시각만 남고 조작될 수 있는데,
+      저널은 사건 자체를 순서대로 적는다.
+
+      범위를 좁히지 않으면 많이 걸린다 — 바쁜 볼륨에서는 파일 생성이
+      수만 건이다. 03단계가 extensions 로 좁혀 주는 것을 전제한다.
 
   zero_timestamp:
     artifacts: [$MFT]
