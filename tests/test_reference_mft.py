@@ -259,12 +259,13 @@ def test_a_disagreeing_implementation_is_caught(tmp_path, parser):
 # ================================================== 등록과 격리
 
 
-def test_the_reference_parser_is_registered_separately():
+def test_the_mft_parser_is_the_main_parser():
     from src.stage04_parse import parsers
 
-    # 자체 구현으로는 아직 아무것도 없고, 참조로는 $MFT가 있다.
-    assert parsers.get("$MFT", "native") is None
-    assert parsers.get("$MFT", "reference") is not None
+    # $MFT 메인 파서는 native 로 등록돼 있고, --parser reference 는 같은
+    # 인스턴스를 가리킨다.
+    assert parsers.get("$MFT", "native") is not None
+    assert parsers.get("$MFT", "reference") is parsers.get("$MFT", "native")
 
 
 def test_an_unknown_implementation_is_refused():

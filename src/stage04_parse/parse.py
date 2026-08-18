@@ -217,8 +217,8 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         choices=parsers.IMPLEMENTATIONS,
         default="native",
         help=(
-            "파서 구현. 기본 %(default)s. reference 는 third_party/ 기반 임시 구현이며 "
-            "자체 파서 완성 전까지의 대체물이자 이후의 대조군이다"
+            "파서 구현. 기본 %(default)s. $MFT 메인 파서는 reference_mft"
+            "(analyzeMFT 기반)이며 native/reference 양쪽에서 동일하게 쓰인다"
         ),
     )
     parser.add_argument("--errors", default=None)

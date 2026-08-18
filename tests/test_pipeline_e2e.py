@@ -115,11 +115,12 @@ def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
 
 
 def test_parse_skips_artifacts_without_a_registered_parser(tmp_path):
-    # 파서 등록이 유일한 확장 지점이라는 것을 고정한다.
+    # 파서 등록이 유일한 확장 지점이라는 것을 고정한다. $MFT 는 메인 파서가
+    # 등록돼 있고, 아직 파서가 없는 아티팩트는 None 이라 parse 가 건너뛴다.
     from src.stage04_parse import parsers
 
-    assert parsers.get("$MFT") is None
-    assert parsers.registered() == []
+    assert parsers.get("$MFT") is not None
+    assert parsers.get("$UsnJrnl") is None
 
 
 # ============================================================ 관통 실행
