@@ -4,7 +4,7 @@
 읽는 것 이상의 판단이 필요 없는 변환(FILETIME, fixup)뿐입니다.
 
 레코드를 순회하고, 속성을 걸어 다니고, 부모를 따라 전체 경로를 만드는
-로직은 ``parsers/reference_mft.py``에 있습니다. 구조 정의를 분리해 두면
+로직은 ``parsers/mft.py``에 있습니다. 구조 정의를 분리해 두면
 NTFS 스펙 문서와 1:1로 대조할 수 있습니다.
 
 .. warning::
@@ -318,7 +318,7 @@ class AttributeHeader:
 
     본 버전은 **상주 속성만 우선** 처리합니다(``work-guide.md`` 3.3).
     ``$DATA``가 비상주면 런리스트를 해석해야 하는데, 그 로직은
-    ``parsers/reference_mft.py``(analyzeMFT 위임)의 몫입니다. 압축·희소
+    ``parsers/mft.py``(analyzeMFT 위임)의 몫입니다. 압축·희소
     파일은 범위 밖이며 ``docs/limitations.md``에 남깁니다.
     """
 

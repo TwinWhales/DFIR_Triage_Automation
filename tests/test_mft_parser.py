@@ -1,464 +1,284 @@
-"""$MFT 구조 정의와 MFTECmd 대조 하네스 테스트.
+"""$MFT 메인 파서 테스트 (``parsers/mft.py``, analyzeMFT 기반).
 
-메인 파서(``parsers/reference_mft.py``)가 딛고 서는 바닥을 고정합니다 —
-구조 오프셋, fixup 처리, FILETIME 변환, 그리고 정확도를 채점하는 장치.
+바닥이 되는 구조 정의와 대조 하네스는 ``test_mft_structs.py``가 봅니다.
+여기서는 파서가 그 위에서 무엇을 내는지를 고정합니다.
 
-``build_record()``는 합성 MFT 레코드를 만듭니다. **실제 증거 없이도
-구조 파싱을 검증할 수 있습니다.** 무엇이 들어 있는지 우리가 알고
-있으므로 정답이 확실합니다.
+특히 고정하는 것은 **원본의 두 한계를 어댑터가 우회하는가**입니다.
+fixup 미적용과 타임스탬프 float 정밀도 — 둘 다 조용히 틀리는 유형이라
+테스트가 없으면 아무도 모릅니다.
 """
 
 from __future__ import annotations
 
-import struct
-from datetime import datetime, timezone
+import datetime as dt
+import io as _io
+from pathlib import Path
 
 import pytest
 
-from src.stage04_parse.structs import mft_record as m
-from tools import compare_mft
+from src.common import schema
+from src.stage04_parse import evidence, flagging
+from src.stage04_parse.parsers import mft
+from src.stage04_parse.parsers.base import Scope
+from tests.test_mft_structs import build_record
 
-# ==================================================== 합성 레코드 생성기
+UTC = dt.timezone.utc
+RECORD_SIZE = 1024
 
 
-def _filetime(moment: datetime) -> int:
-    """datetime → FILETIME(100ns 단위).
+def build_mft(records: dict[int, dict], slots: int | None = None) -> bytes:
+    """레코드 번호 = 파일 내 위치가 되도록 빈 슬롯을 채운 가짜 ``$MFT``.
 
-    ``total_seconds()``를 쓰면 안 된다. float는 유효숫자가 15~16자리인데
-    FILETIME은 18자리라 마이크로초가 조용히 틀어진다. 정수로만 계산한다.
+    실제 ``$MFT``도 그렇습니다. 그래서 오프셋이 ``번호 × 레코드크기``로
+    나옵니다.
     """
-    delta = moment - datetime(1601, 1, 1, tzinfo=timezone.utc)
-    return (delta.days * 86_400 + delta.seconds) * 10_000_000 + delta.microseconds * 10
-
-
-def _resident_attribute(type_: int, content: bytes, attribute_id: int = 0) -> bytes:
-    """상주 속성 하나를 만든다. 헤더 0x18 + 내용, 8바이트 정렬."""
-    header_size = 0x18
-    length = header_size + len(content)
-    padding = (-length) % 8
-    length += padding
-
-    header = struct.pack(
-        "<IIBBHHH", type_, length, 0, 0, 0, 0, attribute_id
-    ) + struct.pack("<IHBB", len(content), header_size, 0, 0)
-    return header + content + b"\x00" * padding
-
-
-def build_record(
-    *,
-    record_number: int = 12345,
-    name: str = "shell.aspx",
-    parent_record: int = 5,
-    si_times: dict[str, datetime] | None = None,
-    fn_times: dict[str, datetime] | None = None,
-    in_use: bool = True,
-    is_directory: bool = False,
-    real_size: int = 4821,
-    namespace: int = 1,
-    total_size: int = 1024,
-    sector_size: int = 512,
-) -> bytes:
-    """fixup까지 적용된 FILE 레코드를 만든다.
-
-    파서는 이걸 받아 ``apply_fixups`` → 헤더 → 속성 순회 순으로 읽습니다.
-    """
-    default = datetime(2026, 7, 20, 3, 14, 22, tzinfo=timezone.utc)
-    si = {k: default for k in ("btime", "mtime", "ctime", "atime")} | (si_times or {})
-    fn = {k: default for k in ("btime", "mtime", "ctime", "atime")} | (fn_times or {})
-
-    si_content = struct.pack(
-        "<QQQQI",
-        _filetime(si["btime"]),
-        _filetime(si["mtime"]),
-        _filetime(si["ctime"]),
-        _filetime(si["atime"]),
-        0x20,
-    ) + b"\x00" * 0x24
-
-    encoded = name.encode("utf-16-le")
-    fn_content = (
-        struct.pack(
-            "<QQQQQQQII",
-            parent_record | (1 << 48),
-            _filetime(fn["btime"]),
-            _filetime(fn["mtime"]),
-            _filetime(fn["ctime"]),
-            _filetime(fn["atime"]),
-            (real_size + 4095) // 4096 * 4096,
-            real_size,
-            0x20,
-            0,
-        )
-        + bytes([len(name), namespace])
-        + encoded
-    )
-
-    attributes = (
-        _resident_attribute(m.AttributeType.STANDARD_INFORMATION, si_content, 0)
-        + _resident_attribute(m.AttributeType.FILE_NAME, fn_content, 1)
-        # 섹터 경계(510바이트)를 넘기려는 채움용 $DATA. fixup이 실제
-        # 데이터를 덮는 상황을 만든다.
-        + _resident_attribute(m.AttributeType.DATA, b"A" * 400, 2)
-        + struct.pack("<I", m.END_OF_ATTRIBUTES)
-    )
-
-    usa_offset = 0x30
-    usa_count = total_size // sector_size + 1
-    first_attribute_offset = (usa_offset + usa_count * 2 + 7) // 8 * 8
-
-    flags = (m.RecordFlags.IN_USE if in_use else 0) | (
-        m.RecordFlags.DIRECTORY if is_directory else 0
-    )
-
-    data = bytearray(total_size)
-    data[0:4] = m.FILE_SIGNATURE
-    struct.pack_into(
-        "<HHQHHHHIIQHHI",
-        data,
-        0x04,
-        usa_offset,
-        usa_count,
-        0,
-        1,
-        1,
-        first_attribute_offset,
-        int(flags),
-        first_attribute_offset + len(attributes),
-        total_size,
-        0,
-        3,
-        0,
-        record_number,
-    )
-    data[first_attribute_offset : first_attribute_offset + len(attributes)] = attributes
+    total = slots if slots is not None else max(records) + 1
+    blob = bytearray()
+    for number in range(total):
+        spec = records.get(number)
+        blob += build_record(record_number=number, **spec) if spec else bytes(RECORD_SIZE)
+    return bytes(blob)
 
-    # 섹터 끝 2바이트를 USN으로 덮고 원본을 배열에 보관한다.
-    usn = b"\x07\x00"
-    data[usa_offset : usa_offset + 2] = usn
-    for index in range(1, usa_count):
-        end = index * sector_size - 2
-        data[usa_offset + index * 2 : usa_offset + index * 2 + 2] = data[end : end + 2]
-        data[end : end + 2] = usn
 
-    return bytes(data)
+#: 웹루트 아래 웹셸이 있는 최소 볼륨.
+WEBSHELL_TREE = {
+    5: {"name": ".", "parent_record": 5, "is_directory": True},
+    6: {"name": "inetpub", "parent_record": 5, "is_directory": True},
+    7: {"name": "wwwroot", "parent_record": 6, "is_directory": True},
+    8: {"name": "upload", "parent_record": 7, "is_directory": True},
+    9: {
+        "name": "shell.aspx",
+        "parent_record": 8,
+        "si_times": {k: dt.datetime(2026, 7, 20, 3, 14, 22, tzinfo=UTC) for k in ("btime", "ctime", "mtime", "atime")},
+        "fn_times": {k: dt.datetime(2026, 7, 21, 9, 2, 11, tzinfo=UTC) for k in ("btime", "ctime", "mtime")},
+    },
+    10: {"name": "notes.txt", "parent_record": 8},
+}
 
 
-# ============================================================ FILETIME
+@pytest.fixture
+def parser():
+    return mft.MftParser(volume_letter="C:")
 
 
-def test_filetime_round_trips():
-    moment = datetime(2026, 7, 20, 3, 14, 22, tzinfo=timezone.utc)
-    assert m.filetime_to_datetime(_filetime(moment)) == moment
+def parse(parser, mft: bytes, scope=None) -> list[dict]:
+    return list(parser.parse(_io.BytesIO(mft), Scope.from_selection(scope)))
 
 
-def test_filetime_keeps_sub_second_precision():
-    moment = datetime(2026, 7, 20, 3, 14, 22, 123456, tzinfo=timezone.utc)
-    assert m.filetime_to_datetime(_filetime(moment)) == moment
+# ================================================================ 기본
 
 
-@pytest.mark.parametrize("value", [0, -1, 0x7FFF_FFFF_FFFF_FFFF + 1])
-def test_unusable_filetime_becomes_none(value):
-    # 조작 도구가 넣은 쓰레기 값이 예외를 던져 파싱 전체를 멈추면 안 된다.
-    # 그런 레코드는 zero_timestamp 플래그로 표시된다.
-    assert m.filetime_to_datetime(value) is None
+def test_the_parser_does_not_set_flags_itself(parser):
+    # 룰을 한 곳(flagging.py)에 모아야 어휘가 갈라지지 않는다.
+    # base.py 가 정한 계약이다.
+    assert all("flags" not in record for record in parse(parser, build_mft(WEBSHELL_TREE)))
 
 
-# ============================================================== fixup
+def test_records_validate_after_flagging(parser):
+    # parse.py 는 항상 flagging 을 거쳐 쓴다. 스키마가 보는 것은 그 결과다.
+    for record in flagging.apply_all(parse(parser, build_mft(WEBSHELL_TREE))):
+        schema.validate(record, "parsed_record")
 
 
-def test_fixups_restore_the_bytes_the_usn_overwrote():
-    # 이걸 안 되돌리면 512바이트마다 2바이트가 엉뚱한 값이다. 레코드
-    # 대부분은 멀쩡해서 원인을 찾기 어렵다.
-    raw = build_record()
-    assert raw[510:512] == b"\x07\x00"  # USN으로 덮인 상태
+def test_full_path_is_rebuilt_through_the_parent_chain(parser):
+    records = {r["record_num"]: r for r in parse(parser, build_mft(WEBSHELL_TREE))}
+    assert records[9]["path"] == "C:\\inetpub\\wwwroot\\upload\\shell.aspx"
 
-    fixed = m.apply_fixups(raw)
-    assert fixed[510:512] != b"\x07\x00"
-    assert bytes(fixed[510:512]) == b"AA"  # 채움용 $DATA의 내용
 
+def test_offset_is_the_position_in_the_mft(parser):
+    # 원본 바이트 위치를 남기는 것이 이 프로젝트의 핵심 주장이다.
+    records = {r["record_num"]: r for r in parse(parser, build_mft(WEBSHELL_TREE))}
+    assert records[9]["offset"] == f"0x{9 * RECORD_SIZE:X}"
+    assert records[10]["offset"] == f"0x{10 * RECORD_SIZE:X}"
 
-def test_a_wrong_usn_is_reported():
-    raw = bytearray(build_record())
-    raw[510:512] = b"\xff\xff"
-    with pytest.raises(m.FixupError, match="USN 불일치"):
-        m.apply_fixups(bytes(raw))
 
+def test_unused_slots_are_skipped(parser):
+    # 빈 슬롯이 레코드로 나오면 재현율 분모가 오염된다.
+    records = parse(parser, build_mft(WEBSHELL_TREE, slots=40))
+    assert {r["record_num"] for r in records} == {5, 6, 7, 8, 9, 10}
 
-def test_a_truncated_record_is_rejected():
-    with pytest.raises(m.StructError):
-        m.apply_fixups(b"FILE" + b"\x00" * 8)
 
+def test_the_volume_letter_is_configurable(parser):
+    parser.volume_letter = "D:"
+    records = {r["record_num"]: r for r in parse(parser, build_mft(WEBSHELL_TREE))}
+    assert records[9]["path"].startswith("D:\\")
 
-def test_fixups_do_not_mutate_the_input():
-    raw = build_record()
-    before = bytes(raw)
-    m.apply_fixups(raw)
-    assert raw == before
 
+def test_a_non_seekable_stream_is_refused(parser):
+    class Pipe:
+        def seekable(self):
+            return False
 
-# ======================================================== 레코드 헤더
+    with pytest.raises(Exception, match="되감을 수 있는"):
+        list(parser.parse(Pipe(), Scope.from_selection(None)))
 
 
-def test_header_reads_the_declared_fields():
-    header = m.RecordHeader.unpack(m.apply_fixups(build_record(record_number=12345)))
-    assert header.signature == m.FILE_SIGNATURE
-    assert header.record_number == 12345
-    assert header.in_use
-    assert not header.is_directory
-    assert not header.is_extension
+# =============================================== 원본의 한계를 우회하는가
 
 
-def test_deleted_record_is_not_in_use():
-    header = m.RecordHeader.unpack(m.apply_fixups(build_record(in_use=False)))
-    assert not header.in_use
+def test_fixups_are_applied_before_handing_bytes_over(parser):
+    # analyzeMFT는 업데이트 시퀀스를 읽기만 하고 되돌리지 않는다.
+    # 우회하지 않으면 섹터 경계(오프셋 510, 1022)의 2바이트가 깨진 채
+    # 파싱된다. 레코드 대부분은 멀쩡해서 원인을 찾기 어렵다.
+    long_name = "a" * 200 + ".aspx"
+    tree = dict(WEBSHELL_TREE)
+    tree[11] = {"name": long_name, "parent_record": 8}
 
+    records = {r["record_num"]: r for r in parse(parser, build_mft(tree))}
+    assert records[11]["path"].endswith(long_name)
 
-def test_directory_flag():
-    header = m.RecordHeader.unpack(m.apply_fixups(build_record(is_directory=True)))
-    assert header.is_directory
 
+def test_timestamp_microseconds_survive(parser):
+    # WindowsTime.get_unix_time()은 float 나눗셈이라 마이크로초가 틀어진다.
+    # 어댑터가 low/high에서 정수로 다시 계산한다.
+    moment = dt.datetime(2026, 7, 20, 3, 14, 22, 123456, tzinfo=UTC)
+    tree = dict(WEBSHELL_TREE)
+    tree[9] = {**WEBSHELL_TREE[9], "si_times": {"btime": moment, "ctime": moment, "mtime": moment, "atime": moment}}
 
-def test_a_foreign_signature_is_rejected():
-    with pytest.raises(m.StructError, match="시그니처"):
-        m.RecordHeader.unpack(b"XXXX" + b"\x00" * 0x40)
+    records = {r["record_num"]: r for r in parse(parser, build_mft(tree))}
+    assert records[9]["si_btime"].startswith("2026-07-20T03:14:22.123456")
 
 
-def test_chkdsk_marked_records_are_recognised():
-    raw = bytearray(build_record())
-    raw[0:4] = m.BAAD_SIGNATURE
-    assert m.RecordHeader.unpack(bytes(raw)).signature == m.BAAD_SIGNATURE
+def test_zeroed_timestamps_become_null_not_1601(parser):
+    tree = dict(WEBSHELL_TREE)
+    tree[9] = {**WEBSHELL_TREE[9], "si_times": {"btime": dt.datetime(1601, 1, 1, tzinfo=UTC)}}
+    records = {r["record_num"]: r for r in parse(parser, build_mft(tree))}
+    assert records[9]["si_btime"] is None
 
 
-# ============================================================ 속성 순회
+# ==================================================== scope 를 지키는가
 
 
-def _attributes(data: bytes) -> list[m.AttributeHeader]:
-    header = m.RecordHeader.unpack(data)
-    found: list[m.AttributeHeader] = []
-    offset = header.first_attribute_offset
-    while offset < len(data):
-        try:
-            attribute = m.AttributeHeader.unpack(data, offset)
-        except m.StructError:
-            break
-        found.append(attribute)
-        offset += attribute.length
-    return found
+def test_scope_narrows_by_path_and_extension(parser):
+    scope = {"path_prefix": ["C:\\inetpub\\wwwroot"], "extensions": [".aspx"]}
+    records = parse(parser, build_mft(WEBSHELL_TREE), scope)
+    assert {r["record_num"] for r in records} == {9}
 
 
-def test_every_attribute_is_reachable_by_walking_lengths():
-    found = _attributes(m.apply_fixups(build_record()))
-    assert [a.type for a in found] == [
-        m.AttributeType.STANDARD_INFORMATION,
-        m.AttributeType.FILE_NAME,
-        m.AttributeType.DATA,
-    ]
-    assert all(not a.non_resident for a in found)
+def test_a_directory_outside_the_prefix_is_dropped(parser):
+    tree = dict(WEBSHELL_TREE)
+    tree[11] = {"name": "elsewhere.aspx", "parent_record": 5}
+    scope = {"path_prefix": ["C:\\inetpub\\wwwroot"], "extensions": [".aspx"]}
+    assert {r["record_num"] for r in parse(parser, build_mft(tree), scope)} == {9}
 
 
-def test_attribute_lengths_are_eight_byte_aligned():
-    # 정렬이 어긋나면 다음 속성 오프셋이 틀어져 순회가 통째로 깨진다.
-    for attribute in _attributes(m.apply_fixups(build_record())):
-        assert attribute.length % 8 == 0
+def test_an_empty_scope_takes_everything(parser):
+    assert len(parse(parser, build_mft(WEBSHELL_TREE), {})) == 6
 
 
-def test_unknown_attribute_type_still_reports_a_name():
-    data = m.apply_fixups(build_record())
-    attribute = m.AttributeHeader.unpack(data, m.RecordHeader.unpack(data).first_attribute_offset)
-    assert attribute.type_name == "STANDARD_INFORMATION"
+# ================================================= 플래그가 붙는가
 
 
-# =============================================== $SI / $FN 내용
+def test_the_webshell_is_flagged_from_real_bytes(parser):
+    # $SI가 $FN보다 이르다 — 타임스탬프 조작 정황. 파싱부터 판정까지
+    # 실제 바이트에서 나오는지 확인한다.
+    records = list(flagging.apply_all(parse(parser, build_mft(WEBSHELL_TREE))))
+    by_number = {r["record_num"]: r for r in records}
+    assert "timestamp_mismatch" in by_number[9]["flags"]
+    assert by_number[10]["flags"] == []
 
 
-def _content(data: bytes, type_: int) -> bytes:
-    attribute = next(a for a in _attributes(data) if a.type == type_)
-    assert attribute.content_offset is not None
-    return data[attribute.content_offset : attribute.content_offset + attribute.content_length]
+def test_records_outside_the_window_are_marked_not_dropped(parser):
+    # 시간 추론이 틀렸을 때 되짚으려면 레코드가 남아 있어야 한다.
+    old = dt.datetime(2020, 1, 1, tzinfo=UTC)
+    tree = dict(WEBSHELL_TREE)
+    tree[10] = {"name": "old.aspx", "parent_record": 8,
+                "si_times": {k: old for k in ("btime", "ctime", "mtime", "atime")}}
+    scope_dict = {"time_range": {"start": "2026-07-18T00:00:00Z", "end": "2026-07-22T23:59:59Z"}}
+    scope = Scope.from_selection(scope_dict)
 
+    records = list(flagging.apply_all(parse(parser, build_mft(tree), scope_dict), scope))
+    by_number = {r["record_num"]: r for r in records}
+    assert "outside_time_range" in by_number[10]["flags"]
 
-def test_standard_information_timestamps():
-    created = datetime(2026, 7, 20, 3, 14, 22, tzinfo=timezone.utc)
-    data = m.apply_fixups(build_record(si_times={"btime": created}))
-    si = m.StandardInformation.unpack(_content(data, m.AttributeType.STANDARD_INFORMATION))
-    assert si.btime == created
 
+# ==================================================== 고아 레코드
 
-def test_file_name_carries_the_name_and_parent():
-    data = m.apply_fixups(build_record(name="shell.aspx", parent_record=12300))
-    fn = m.FileName.unpack(_content(data, m.AttributeType.FILE_NAME))
-    assert fn.name == "shell.aspx"
-    # 하위 48비트만 레코드 번호다. 마스킹을 빼먹으면 부모를 못 찾는다.
-    assert fn.parent_record_number == 12300
-    assert fn.parent_sequence_number == 1
 
+def test_an_orphan_record_still_comes_out(parser):
+    # 부모가 재할당된 삭제 파일. 경로가 없다고 버리면 삭제 흔적을
+    # 통째로 놓친다.
+    tree = dict(WEBSHELL_TREE)
+    tree[12] = {"name": "deleted.aspx", "parent_record": 9999, "in_use": False}
 
-def test_non_ascii_names_survive():
-    data = m.apply_fixups(build_record(name="한글파일.aspx"))
-    assert m.FileName.unpack(_content(data, m.AttributeType.FILE_NAME)).name == "한글파일.aspx"
+    records = {r["record_num"]: r for r in parse(parser, build_mft(tree))}
+    assert 12 in records
+    assert records[12]["path"].endswith("deleted.aspx")
+    assert records[12]["allocated"] is False
 
 
-def test_dos_short_names_are_identifiable():
-    # 경로를 만들 때 DOS 이름을 고르면 PROGRA~1 같은 값이 나온다.
-    data = m.apply_fixups(build_record(name="PROGRA~1", namespace=2))
-    assert m.FileName.unpack(_content(data, m.AttributeType.FILE_NAME)).is_dos_short_name
+# ================================================== 볼륨 문자 유추
 
-    data = m.apply_fixups(build_record(name="Program Files", namespace=1))
-    assert not m.FileName.unpack(_content(data, m.AttributeType.FILE_NAME)).is_dos_short_name
 
+@pytest.mark.parametrize(
+    "path,expected",
+    [("/mnt/kape/C", "C:"), ("/mnt/kape/D%3A", "D:"), ("/mnt/kape/E_", "E:")],
+)
+def test_volume_letter_is_inferred_from_the_evidence_path(path, expected):
+    assert evidence.volume_letter(path) == expected
 
-def test_si_and_fn_can_disagree():
-    # 이 불일치가 타임스탬프 조작의 신호다.
-    data = m.apply_fixups(
-        build_record(
-            si_times={"ctime": datetime(2026, 7, 20, 3, 14, 22, tzinfo=timezone.utc)},
-            fn_times={"ctime": datetime(2026, 7, 21, 9, 2, 11, tzinfo=timezone.utc)},
-        )
-    )
-    si = m.StandardInformation.unpack(_content(data, m.AttributeType.STANDARD_INFORMATION))
-    fn = m.FileName.unpack(_content(data, m.AttributeType.FILE_NAME))
-    assert si.ctime is not None and fn.ctime is not None and si.ctime < fn.ctime
 
+def test_an_unrecognisable_path_falls_back_to_c(tmp_path):
+    # 틀려도 경로 접두어 비교에서 결과가 비어 나오므로 드러난다.
+    assert evidence.volume_letter(tmp_path / "extracted_artifacts") == "C:"
 
-# ================================================= MFTECmd 대조 하네스
 
+# ============================================ 두 구현 대조 하네스
 
-def _write_csv(path, rows):
-    columns = [
-        "EntryNumber", "ParentPath", "FileName",
-        "Created0x10", "LastModified0x10", "LastRecordChange0x10", "LastAccess0x10",
-        "Created0x30", "LastModified0x30", "LastRecordChange0x30",
-    ]
-    lines = [",".join(columns)]
-    for row in rows:
-        lines.append(",".join(str(row.get(c, "")) for c in columns))
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-
-def _mftecmd_row(entry=12345, parent=".\\inetpub\\wwwroot\\upload", name="shell.aspx",
-                 created="2026-07-20 03:14:22.1234567"):
-    return {
-        "EntryNumber": entry,
-        "ParentPath": parent,
-        "FileName": name,
-        "Created0x10": created,
-        "LastModified0x10": created,
-        "LastRecordChange0x10": created,
-        "LastAccess0x10": created,
-        "Created0x30": created,
-        "LastModified0x30": created,
-        "LastRecordChange0x30": created,
-    }
-
-
-def _ours_row(record_num=12345, path="C:\\inetpub\\wwwroot\\upload\\shell.aspx",
-              created="2026-07-20T03:14:22.1234567Z"):
-    return {
-        "ref": f"MFT#{record_num}", "artifact": "$MFT", "record_num": record_num,
-        "offset": "0x1E000", "path": path, "allocated": True, "is_directory": False,
-        "size": 4821,
-        "si_btime": created, "si_ctime": created, "si_mtime": created, "si_atime": created,
-        "fn_btime": created, "fn_ctime": created, "fn_mtime": created, "flags": [],
-    }
-
-
-def test_drive_letter_difference_is_not_a_mismatch():
-    # MFTECmd는 $MFT만 읽으므로 드라이브 문자를 모른다. 그대로 비교하면
-    # 모든 레코드가 불일치로 나온다.
-    assert compare_mft.normalize_path("C:\\inetpub\\wwwroot\\x.aspx") == compare_mft.normalize_path(
-        ".\\inetpub\\wwwroot\\x.aspx"
-    )
-
-
-def test_matching_output_passes(tmp_path):
+def test_comparing_a_parser_against_itself_passes(tmp_path, parser):
     from src.common import io
+    from tools import compare_mft
 
-    ours = tmp_path / "mft.jsonl"
-    io.write_jsonl(ours, [_ours_row()])
-    csv_path = tmp_path / "mft.csv"
-    _write_csv(csv_path, [_mftecmd_row()])
+    records = parse(parser, build_mft(WEBSHELL_TREE))
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    io.write_jsonl(a, records)
+    io.write_jsonl(b, records)
 
-    report = compare_mft.compare(
-        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path), full=True
-    )
+    report = compare_mft.compare(compare_mft.load_ours(a), compare_mft.load_ours(b), full=True)
     assert report.passed(), report.summary()
 
 
-def test_a_wrong_timestamp_is_caught(tmp_path):
+def test_a_disagreeing_implementation_is_caught(tmp_path, parser):
     from src.common import io
+    from tools import compare_mft
 
-    ours = tmp_path / "mft.jsonl"
-    io.write_jsonl(ours, [_ours_row(created="2026-07-19T22:00:00Z")])
-    csv_path = tmp_path / "mft.csv"
-    _write_csv(csv_path, [_mftecmd_row()])
+    records = parse(parser, build_mft(WEBSHELL_TREE))
+    wrong = [dict(r) for r in records]
+    wrong[0]["si_btime"] = "2020-01-01T00:00:00Z"
 
-    report = compare_mft.compare(
-        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path)
-    )
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    io.write_jsonl(a, records)
+    io.write_jsonl(b, wrong)
+
+    report = compare_mft.compare(compare_mft.load_ours(a), compare_mft.load_ours(b))
     assert not report.passed()
-    assert {mismatch.field for mismatch in report.mismatches} >= {"si_btime"}
+    assert report.mismatches[0].field == "si_btime"
 
 
-def test_a_wrong_path_is_caught(tmp_path):
-    from src.common import io
-
-    ours = tmp_path / "mft.jsonl"
-    io.write_jsonl(ours, [_ours_row(path="C:\\wrong\\shell.aspx")])
-    csv_path = tmp_path / "mft.csv"
-    _write_csv(csv_path, [_mftecmd_row()])
-
-    report = compare_mft.compare(
-        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path)
-    )
-    assert [mismatch.field for mismatch in report.mismatches] == ["path"]
+# ================================================== 등록과 격리
 
 
-def test_a_record_we_invented_always_fails(tmp_path):
-    from src.common import io
+def test_the_mft_parser_is_the_main_parser():
+    from src.stage04_parse import parsers
 
-    ours = tmp_path / "mft.jsonl"
-    io.write_jsonl(ours, [_ours_row(record_num=99999)])
-    csv_path = tmp_path / "mft.csv"
-    _write_csv(csv_path, [_mftecmd_row()])
-
-    report = compare_mft.compare(
-        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path)
-    )
-    assert report.extra_in_ours == [99999]
-    assert not report.passed()
+    # $MFT 메인 파서는 native 로 등록돼 있고, --parser reference 는 같은
+    # 인스턴스를 가리킨다.
+    assert parsers.get("$MFT", "native") is not None
+    assert parsers.get("$MFT", "reference") is parsers.get("$MFT", "native")
 
 
-def test_scoped_output_is_not_penalised_for_missing_records(tmp_path):
-    # 우리 파서는 선별된 범위만 낸다. --full이 아니면 정상이다.
-    from src.common import io
+def test_an_unknown_implementation_is_refused():
+    from src.stage04_parse import parsers
 
-    ours = tmp_path / "mft.jsonl"
-    io.write_jsonl(ours, [_ours_row()])
-    csv_path = tmp_path / "mft.csv"
-    _write_csv(csv_path, [_mftecmd_row(), _mftecmd_row(entry=12346, name="index.aspx")])
-
-    loaded = (compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path))
-    assert compare_mft.compare(*loaded).passed()
-    assert not compare_mft.compare(*loaded, full=True).passed()
+    with pytest.raises(ValueError, match="알 수 없는 구현"):
+        parsers.get("$MFT", "vibes")
 
 
-def test_a_missing_column_names_what_it_found(tmp_path):
-    csv_path = tmp_path / "mft.csv"
-    csv_path.write_text("EntryNumber,FileName\n1,x\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="TIMESTAMP_COLUMNS"):
-        compare_mft.load_mftecmd(csv_path)
-
-
-def test_summary_is_pasteable_into_notes(tmp_path):
-    from src.common import io
-
-    ours = tmp_path / "mft.jsonl"
-    io.write_jsonl(ours, [_ours_row()])
-    csv_path = tmp_path / "mft.csv"
-    _write_csv(csv_path, [_mftecmd_row()])
-
-    summary = compare_mft.compare(
-        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path), full=True
-    ).summary()
-    assert "판정: 통과" in summary
-    assert summary.startswith("- ")
+def test_vendored_code_keeps_its_licence():
+    # MIT의 의무다. 지우면 안 된다.
+    root = Path(__file__).resolve().parents[1] / "third_party/analyzeMFT"
+    licence = (root / "LICENSE").read_text(encoding="utf-8")
+    assert "MIT" in licence
+    assert "Copyright" in licence
+    assert (root / "NOTICE.md").is_file()

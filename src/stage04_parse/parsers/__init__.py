@@ -5,7 +5,7 @@
 
 ## 파서 구현
 
-``$MFT`` 메인 파서는 ``reference_mft`` (analyzeMFT 기반, MIT) 입니다.
+``$MFT`` 메인 파서는 ``mft`` (analyzeMFT 기반, MIT) 입니다.
 ``parse.py``는 기본적으로 ``native`` 테이블을 쓰고 ``$MFT``는 이 파서로
 해석됩니다. ``--parser reference``도 같은 파서를 가리킵니다.
 
@@ -18,6 +18,8 @@
 """
 
 from __future__ import annotations
+
+import logging
 
 from .base import ParseError, Parser, Scope
 
@@ -32,11 +34,13 @@ __all__ = [
     "registered",
 ]
 
+_log = logging.getLogger(__name__)
+
 
 #: 메인 파서. 아티팩트 이름 → 파서 인스턴스.
 #:
 #: 이름은 ``mappings/_artifacts.yaml``과 정확히 같아야 합니다.
-#: ``$MFT``는 아래 등록 블록에서 ``reference_mft``로 채워집니다.
+#: ``$MFT``는 아래 등록 블록에서 ``mft.MftParser``로 채워집니다.
 PARSERS: dict[str, Parser] = {}
 
 
@@ -45,17 +49,23 @@ PARSERS: dict[str, Parser] = {}
 REFERENCE_PARSERS: dict[str, Parser] = {}
 
 try:
-    from .reference_mft import ReferenceMftParser
+    from .mft import MftParser
 
-    # reference_mft 를 $MFT 메인 파서로 확정한다. 같은 인스턴스를 native /
-    # reference 양쪽에 등록해 기본 파이프라인과 ``--parser reference`` 가
-    # 모두 이 파서를 쓰게 한다.
-    _mft_parser = ReferenceMftParser()
+    # $MFT 파서를 native / reference 양쪽에 같은 인스턴스로 등록한다.
+    # 기본 파이프라인과 ``--parser reference`` 가 모두 이 파서를 쓴다.
+    _mft_parser = MftParser()
     PARSERS["$MFT"] = _mft_parser
     REFERENCE_PARSERS["$MFT"] = _mft_parser
-except ImportError:  # pragma: no cover - vendored 코드가 없는 경우
-    # third_party/ 를 지웠다면 $MFT 파서 없이 동작한다.
-    pass
+except ImportError as e:  # pragma: no cover - vendored 코드가 없는 경우
+    # third_party/ 를 지웠다면 $MFT 파서 없이 동작한다. 그 경우만 봐준다.
+    #
+    # 예전에는 여기서 모든 ImportError 를 조용히 삼켰다. 파서 파일 이름이
+    # 바뀌었을 때 등록소가 통째로 비었는데도 아무 소리가 나지 않았고,
+    # 04단계가 그것을 "파서 미구현"으로 분류해 $MFT 없는 보고서를 정상
+    # 종료로 냈다. 우리 쪽 오타는 소리를 내야 한다.
+    if not (e.name or "").startswith("third_party"):
+        raise
+    _log.warning("$MFT 파서를 등록하지 못했습니다 (vendored 코드 없음): %s", e)
 
 
 IMPLEMENTATIONS = ("native", "reference")

@@ -217,7 +217,7 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         choices=parsers.IMPLEMENTATIONS,
         default="native",
         help=(
-            "파서 구현. 기본 %(default)s. $MFT 메인 파서는 reference_mft"
+            "파서 구현. 기본 %(default)s. $MFT 메인 파서는 parsers/mft.py"
             "(analyzeMFT 기반)이며 native/reference 양쪽에서 동일하게 쓰인다"
         ),
     )
@@ -325,7 +325,10 @@ def main(argv: "list[str] | None" = None) -> int:
         )
 
     write_manifest(out_dir, selection["case_id"], files, implementation=args.parser)
-    note = " — 임시 참조 구현" if args.parser == "reference" else ""
+    # native/reference 는 $MFT 에 한해 같은 인스턴스를 가리킨다. 산출물만
+    # 보고 어느 쪽으로 돌렸는지 구분할 수 있게 매니페스트에는 남기되,
+    # 콘솔에서 다른 파서인 것처럼 보이게 하지는 않는다.
+    note = " — native와 동일" if args.parser == "reference" else ""
     print(
         f"{out_dir}: {len(files)}개 아티팩트, "
         f"총 {sum(f['record_count'] for f in files)}건 "

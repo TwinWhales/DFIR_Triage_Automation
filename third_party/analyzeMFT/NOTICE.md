@@ -23,7 +23,7 @@ mft_record.py     MftRecord — 레코드 바이트 하나를 파싱
 
 **없습니다.** 원본 그대로입니다.
 
-필요한 조정은 전부 `src/stage04_parse/parsers/reference_mft.py` 어댑터에서
+필요한 조정은 전부 `src/stage04_parse/parsers/mft.py` 어댑터에서
 합니다. 그래야 "우리가 고친 것"과 "원본"이 섞이지 않습니다.
 
 ## 알고 쓰는 한계

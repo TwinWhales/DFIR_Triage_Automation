@@ -40,7 +40,7 @@ from ...common import refs
 from ..structs import mft_record as structs
 from .base import ParseError, Scope
 
-__all__ = ["ReferenceMftParser", "ROOT_RECORD_NUMBER", "DEFAULT_RECORD_SIZE"]
+__all__ = ["MftParser", "ROOT_RECORD_NUMBER", "DEFAULT_RECORD_SIZE"]
 
 # 원본이 정상 레코드에도 "Large attribute detected" 경고를 낸다
 # ($INDEX_ROOT 584바이트를 1024 레코드에서 "크다"고 판정). 실제 문제가
@@ -56,15 +56,15 @@ DEFAULT_RECORD_SIZE = 1024
 _VALID_RECORD_SIZES = (512, 1024, 2048, 4096)
 
 
-class ReferenceMftParser:
+class MftParser:
     """``$MFT`` 파일을 읽어 우리 레코드 형식으로 낸다.
 
     **두 번 순회합니다.** 전체 경로를 만들려면 부모 레코드의 이름을 알아야
     하는데, 부모가 뒤에 나올 수 있기 때문입니다. 1회차는 이름·부모만 모으고
     2회차에 범위에 드는 레코드를 냅니다.
 
-    자체 파서는 이보다 나은 방법을 쓸 수 있습니다. 임시 구현이라 정확성을
-    우선했습니다.
+    더 나은 방법이 있을 수 있지만, 두 번 순회하는 쪽이 경로 재구성의
+    정확성을 확실히 보장합니다.
     """
 
     artifact = "$MFT"
