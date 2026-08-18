@@ -8,22 +8,23 @@
 
 | 디렉터리 | 원본 | 라이선스 | 용도 |
 |---|---|---|---|
-| `analyzeMFT/` | [analyzeMFT](https://github.com/rowingdude/analyzeMFT) 3.1.1 | MIT | **임시** 참조 $MFT 파서 |
+| `analyzeMFT/` | [analyzeMFT](https://github.com/rowingdude/analyzeMFT) 3.1.1 | MIT | `$MFT` 메인 파서의 레코드 바이트 → 속성 해석 |
 
-## 왜 두는가
+## 무엇을 맡기나
 
-자체 $MFT 파서가 완성될 때까지의 **임시 대체물**입니다. 세 가지를
-동시에 줍니다.
+`$MFT` 메인 파서(`src/stage04_parse/parsers/reference_mft.py`)는
+하이브리드입니다. **레코드 바이트를 속성으로 해석하는 일만** analyzeMFT에
+맡기고, 파일 순회·오프셋 계산·fixup·타임스탬프 정수 변환·경로 재구성·
+`scope` 필터는 우리 코드(`reference_mft.py` + `structs/mft_record.py`)가
+합니다.
 
-- 파서가 없어도 팀이 실제 증거로 작업할 수 있다
-- 자체 파서가 나오면 **대조군**이 된다 (MFTECmd 없이 `pytest` 안에서)
-- 발표에서 "자체 구현이 참조 구현과 N건 전부 일치"를 보일 수 있다
+MIT 라이선스라 상용·비상용 모두 자유롭게 쓸 수 있고, 의무는 저작권·라이선스
+고지 유지뿐입니다(아래 규칙 3).
 
 ## 규칙
 
 1. **여기 있는 파일은 되도록 고치지 않는다.** 필요한 조정은
    `src/stage04_parse/parsers/reference_mft.py` 어댑터에서 한다.
 2. 고쳐야 하면 해당 파일 상단에 **무엇을 왜 고쳤는지** 적는다.
-3. 원본 `LICENSE`와 저작권 고지를 지운다거나 옮기지 않는다.
-4. 자체 파서가 완성되면 **이 디렉터리를 지운다.** 임시라는 사실을
-   잊지 않기 위해 여기 적어 둔다.
+3. 원본 `LICENSE`와 저작권 고지(`NOTICE.md`)를 지운다거나 옮기지 않는다.
+   메인 파서가 이 코드에 의존하므로 디렉터리는 유지된다.
