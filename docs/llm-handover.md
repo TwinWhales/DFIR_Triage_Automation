@@ -122,7 +122,7 @@ python -m src.stage03_select.select       --in 02_scenario.json --out 03_selecti
 이유가 셋입니다.
 
 1. **팀원이 서로를 기다리지 않습니다.** 파일 계약만 정해두면 앞 단계가
-   없어도 목업 입력으로 개발할 수 있습니다. 실제로 04 파서가 없는 지금도
+   없어도 목업 입력으로 개발할 수 있습니다. 실제로 evtx 파서가 없는 지금도
    05~07이 돌아갑니다.
 2. **중간 산출물이 남아 디버깅이 쉽습니다.** 어디서 틀어졌는지 파일을
    열어보면 됩니다.
@@ -354,12 +354,13 @@ python -m src.stage03_select.select       --in 02_scenario.json --out 03_selecti
 | 01 입력 | ✅ | `tools/make_case.py` |
 | **02 정규화** | ⚠️ **LLM만 스텁** | 알럿 경로는 완성, 재시도 루프 완성 |
 | 03 선별 | ✅ 완전 구현 | 매핑 5개 + 아티팩트 카탈로그 |
-| **04 파싱** | ⛔ **미구현** | 입력 처리만. 바이트 파서 없음 |
+| **04 파싱** | ⚠️ **부분 구현** | `$MFT`·`$UsnJrnl` 완성, evtx 없음 |
 | **05 해석** | ⚠️ **LLM만 스텁** | 레코드 추림은 완성 |
 | 06 검증 | ✅ 완전 구현 | 체커 3종 |
 | 07 보고 | ✅ 완전 구현 | 템플릿, LLM 미사용 |
 
-파이프라인은 **01→07 전 구간이 관통합니다.** 테스트 253건 통과.
+파이프라인은 **01→07 전 구간이 관통합니다.** 테스트 427건 통과.
+알려진 한계는 `docs/limitations.md`에 모아 두었습니다.
 다만 두 가지가 대체물입니다.
 
 ### 5-2. "스텁"이 무슨 뜻인가
@@ -410,8 +411,8 @@ python -m venv .venv
   --seed-parsed benchmark/datasets/C-001-webshell/mock/04_parsed
 ```
 
-`--seed-parsed`는 04 파서가 없어서 파싱 결과를 미리 넣어 두는 것입니다.
-파서가 완성되면 이 옵션은 사라집니다.
+`--seed-parsed`는 파서가 없는 아티팩트(evtx)의 파싱 결과를 미리 넣어 두는
+것입니다. `$MFT`·`$UsnJrnl`은 실제로 파싱되므로 필요 없습니다.
 
 ```bash
 PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
@@ -698,7 +699,7 @@ src/
 │   └── prompts/
 │
 ├── stage03_select/      선별 (다른 담당)
-├── stage04_parse/       파싱 (다른 담당, 미구현)
+├── stage04_parse/       파싱 (다른 담당, $MFT·$UsnJrnl 완성 / evtx 미구현)
 ├── stage06_verify/      검증 (완성)
 └── stage07_report/      보고 (완성)
 ```
