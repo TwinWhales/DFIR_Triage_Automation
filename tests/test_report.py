@@ -30,9 +30,9 @@ def docs():
     }
 
 
-def _context(docs, records=None):
+def _context(docs, records=None, manifest=None):
     return build_context(
-        docs["verified"], docs["findings"], docs["selection"], docs["scenario"], records
+        docs["verified"], docs["findings"], docs["selection"], docs["scenario"], records, manifest
     )
 
 
@@ -79,10 +79,17 @@ def test_rejected_count_is_still_reported(docs):
 
 
 def test_the_fixed_sections_are_always_present(docs):
-    # 미검증 항목과 분석 범위 한계가 이 도구의 신뢰성 근거다.
+    # 미검증 항목과 분석 범위가 이 도구의 신뢰성 근거다.
     # 자동 생성에서 누락되지 않아야 한다.
     text = render(_context(docs))
-    for heading in ("## 개요", "## 확인된 사항", "## 미검증 항목", "## 분석 범위 한계"):
+    for heading in (
+        "## 개요",
+        "## 확인된 사항",
+        "## 미검증 항목",
+        "## 분석 범위",
+        "### 확인한 아티팩트",
+        "### 확인하지 못한 아티팩트",
+    ):
         assert heading in text
 
 
@@ -93,7 +100,7 @@ def test_sections_survive_an_empty_case(docs):
     docs["selection"]["deferred"] = []
     text = render(_context(docs))
     assert "## 미검증 항목" in text and "없습니다" in text
-    assert "## 분석 범위 한계" in text
+    assert "## 분석 범위" in text
 
 
 def test_unverifiable_statements_are_quoted_verbatim(docs):
@@ -104,8 +111,161 @@ def test_unverifiable_statements_are_quoted_verbatim(docs):
 def test_scope_limits_merge_excluded_and_unfired_deferred(docs):
     limits = {entry["artifact"]: entry["reason"] for entry in _context(docs)["limits"]}
     assert "미지원" in limits["prefetch"]
-    assert "Tier 2 조건 미충족" in limits["$UsnJrnl"]
-    assert "Tier 2 조건 미충족" in limits["evtx:System"]
+    # Tier 2 루프백이 없으므로 조건을 **평가한 적이 없다.** "조건 미충족"은
+    # 평가했는데 안 걸린 것처럼 읽혀 사실과 다르다(docs/limitations.md 3).
+    for artifact in ("$UsnJrnl", "evtx:System"):
+        assert "미평가" in limits[artifact]
+        assert "조건 미충족" not in limits[artifact]
+
+
+# ==================================== 04가 읽지 못한 것이 보고서에 실리는가
+#
+# docs/limitations.md 4-1. 고치기 전에는 04단계가 건너뛴 아티팩트가
+# errors.jsonl 에만 남고 보고서에는 **언급조차 되지 않았다.** 실제 증거로
+# 재현했을 때 보고서는 "카탈로그의 모든 아티팩트를 확인했습니다"라고
+# 적었다 — 누락이 아니라 거짓 진술이었다.
+
+
+def _manifest(files=(), skipped=()):
+    return {"files": list(files), "skipped": list(skipped)}
+
+
+def test_an_artifact_stage_04_could_not_read_appears_in_the_report(docs):
+    manifest = _manifest(
+        files=[{"artifact": "$MFT", "record_count": 3}],
+        skipped=[
+            {
+                "artifact": "evtx:Security",
+                "reason": "artifact_not_found",
+                "message": "Windows/System32/winevt/Logs/Security.evtx 를 찾지 못함",
+            }
+        ],
+    )
+    limits = {e["artifact"]: e["reason"] for e in _context(docs, manifest=manifest)["limits"]}
+    assert "evtx:Security" in limits, "04가 못 읽은 아티팩트가 보고서에서 사라졌다"
+    assert "수집 누락" in limits["evtx:Security"]
+
+
+def test_skip_reasons_are_distinguished(docs):
+    """사유마다 분석가가 할 일이 다르다. 뭉뚱그리면 조치를 정할 수 없다."""
+    manifest = _manifest(
+        skipped=[
+            {"artifact": "evtx:Security", "reason": "artifact_not_found", "message": "없음"},
+            {"artifact": "$UsnJrnl", "reason": "empty_artifact", "message": "0바이트"},
+            {"artifact": "registry:SYSTEM", "reason": "parser_missing", "message": "미등록"},
+        ]
+    )
+    limits = {e["artifact"]: e["reason"] for e in _context(docs, manifest=manifest)["limits"]}
+    assert "수집 누락" in limits["evtx:Security"]
+    assert "추출 확인" in limits["$UsnJrnl"]
+    assert "미지원" in limits["registry:SYSTEM"]
+
+
+def test_parser_missing_does_not_leak_source_paths_into_the_report(docs):
+    """분석가가 읽는 문서에 소스 파일 경로를 싣지 않는다."""
+    manifest = _manifest(
+        skipped=[
+            {
+                "artifact": "registry:SYSTEM",
+                "reason": "parser_missing",
+                "message": "src/stage04_parse/parsers/__init__.py 참조.",
+            }
+        ]
+    )
+    limits = {e["artifact"]: e["reason"] for e in _context(docs, manifest=manifest)["limits"]}
+    assert "__init__.py" not in limits["registry:SYSTEM"]
+
+
+def test_a_selected_artifact_with_no_record_anywhere_is_still_reported(docs):
+    """04가 기록을 빠뜨려도 차집합이 잡는다. 조용히 사라지는 것보다 낫다."""
+    docs["selection"]["selected"] = [{"artifact": "$MFT", "scope": {}}]
+    limits = {e["artifact"]: e["reason"] for e in _context(docs, manifest=_manifest())["limits"]}
+    assert "$MFT" in limits
+    assert "사유를 남기지 않" in limits["$MFT"]
+
+
+def test_no_manifest_means_no_guessing(docs):
+    """--parsed 없이 부르면 04가 뭘 했는지 모른다. 모르는 것을 단정하지 않는다."""
+    limits = {e["artifact"] for e in _context(docs)["limits"]}
+    assert "$MFT" not in limits
+
+
+# ======================================== 무엇을 봤는지도 적히는가
+
+
+def test_examined_artifacts_are_listed_with_their_size(docs):
+    manifest = _manifest(files=[{"artifact": "$MFT", "record_count": 306857}])
+    (row,) = _context(docs, manifest=manifest)["examined"]
+    assert row["artifact"] == "$MFT"
+    assert row["records"] == "306,857건"
+
+
+def test_zero_records_counts_as_examined_not_as_a_limit(docs):
+    """파싱은 됐는데 범위에 없었던 것 = "봤는데 없었다". 못 본 것과 다르다."""
+    manifest = _manifest(files=[{"artifact": "evtx:Security", "record_count": 0}])
+    context = _context(docs, manifest=manifest)
+    assert [r["artifact"] for r in context["examined"]] == ["evtx:Security"]
+    assert "evtx:Security" not in {e["artifact"] for e in context["limits"]}
+
+
+def test_a_partial_read_is_marked_but_not_called_unexamined(docs):
+    """실측: $J 306,857건을 읽고 503,752바이트를 못 읽었다.
+
+    "안 봤다"가 아니지만 "다 봤다"도 아니므로 비고로 적는다.
+    """
+    manifest = _manifest(
+        files=[
+            {
+                "artifact": "$UsnJrnl",
+                "record_count": 306857,
+                "parse_errors": 1,
+                "unreadable_bytes": 503752,
+            }
+        ]
+    )
+    docs["selection"]["selected"] = [{"artifact": "$UsnJrnl", "scope": {}}]
+    docs["selection"]["excluded"] = []
+    docs["selection"]["deferred"] = []
+    context = _context(docs, manifest=manifest)
+    (row,) = context["examined"]
+    assert "부분 판독" in row["note"]
+    assert "503,752" in row["note"]
+    assert context["limits"] == [], "부분 판독은 '못 봤다'가 아니다"
+
+
+def test_an_artifact_that_was_read_is_never_also_listed_as_unexamined(docs):
+    """03이 Tier 1으로 읽는 것을 deferred 에서 빼지 못했더라도, 산출물이
+    있으면 읽은 것이다. 같은 아티팩트가 양쪽에 실리면 보고서가 모순된다.
+    """
+    manifest = _manifest(files=[{"artifact": "$UsnJrnl", "record_count": 5}])
+    context = _context(docs, manifest=manifest)
+    examined = {r["artifact"] for r in context["examined"]}
+    limited = {e["artifact"] for e in context["limits"]}
+    assert examined & limited == set()
+
+
+def test_a_skipped_empty_candidate_is_surfaced_in_the_report(docs):
+    """0바이트 껍데기를 건너뛰고 읽었다는 사실은 추출 진단이다."""
+    manifest = _manifest(
+        files=[
+            {
+                "artifact": "$UsnJrnl",
+                "record_count": 10,
+                "source_empty_skipped": ["C/$Extend/$UsnJrnl"],
+            }
+        ]
+    )
+    (row,) = _context(docs, manifest=manifest)["examined"]
+    assert "추출 확인" in row["note"]
+
+
+def test_the_report_never_claims_it_checked_everything(docs):
+    """고치기 전 실제로 나왔던 문장. 선별 밖은 알 수 없으므로 단정할 수 없다."""
+    docs["selection"]["excluded"] = []
+    docs["selection"]["deferred"] = []
+    docs["selection"]["selected"] = [{"artifact": "$MFT", "scope": {}}]
+    text = render(_context(docs, manifest=_manifest(files=[{"artifact": "$MFT", "record_count": 3}])))
+    assert "카탈로그의 모든 아티팩트를 확인했습니다" not in text
 
 
 def test_the_disclaimer_is_in_every_report(docs):

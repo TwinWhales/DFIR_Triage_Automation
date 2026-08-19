@@ -4,11 +4,17 @@
 않는다. 소형 모델에 파싱까지 맡기면 환각이 데이터 계층에서 발생해
 검증 자체가 불가능해진다.
 
-**현재 상태: ``$MFT``와 ``$UsnJrnl`` 구현됨, evtx 미구현.** 등록된
-파서 목록은 ``parsers/__init__.py``가 들고 있다. 파서가 없는 아티팩트가
-선별되면 ``errors.jsonl``에 남기고 건너뛴다 — 조용히 빈 결과를 내지
-않는다. evtx 목업 ``04_parsed/``를 미리 넣어 두고 ``--skip-existing``으로
-건너뛰면 나머지 단계를 관통시킬 수 있다.
+**현재 상태: 카탈로그(``mappings/_artifacts.yaml``)의 아티팩트에는 전부
+파서가 있다** — ``$MFT``, ``$UsnJrnl``, ``evtx:Security``, ``evtx:System``.
+등록된 파서 목록은 ``parsers/__init__.py``가 들고 있다.
+
+파서가 없거나 증거 파일이 없는 아티팩트가 선별되면 ``errors.jsonl``에
+남기고 건너뛴다 — 조용히 빈 결과를 내지 않는다. **다만 07단계가 그
+기록을 읽지 않는다**(``docs/limitations.md`` 4-1). 증거가 없어 건너뛴
+아티팩트는 보고서의 "분석 범위 한계"에 나타나지 않는다.
+
+증거 없이 배선만 확인하려면 목업 ``04_parsed/``를 미리 넣어 두고
+``--skip-existing``으로 건너뛴다.
 
 사용법::
 
@@ -95,7 +101,11 @@ def group_by_artifact(selection: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def write_manifest(
-    out_dir: Path, case_id: str, files: list[dict[str, Any]], implementation: str = "native"
+    out_dir: Path,
+    case_id: str,
+    files: list[dict[str, Any]],
+    implementation: str = "native",
+    skipped: "list[dict[str, Any]] | None" = None,
 ) -> Path:
     """``_manifest.json``을 쓴다.
 
@@ -104,12 +114,18 @@ def write_manifest(
 
     ``generator``에 어느 파서 구현으로 돌렸는지 남긴다. 참조 구현은
     임시이므로, 산출물만 보고 구분할 수 있어야 한다.
+
+    **``skipped``는 읽지 못한 아티팩트다.** 매니페스트는 이 단계가 자기가
+    한 일을 적는 곳이므로 "안 한 일"도 여기 적는다. 예전에는 이것이
+    ``errors.jsonl``에만 남아 07단계가 볼 수 없었고, 그 결과 보고서가
+    **읽지 못한 아티팩트를 언급조차 하지 않았다**(docs/limitations.md 4-1).
     """
     manifest = io.new_document(
         case_id,
         STAGE,
         io.make_generator("parse.py", implementation),
         files=files,
+        skipped=list(skipped or []),
         total_records=sum(entry["record_count"] for entry in files),
         flagged_records=sum(entry["flagged_count"] for entry in files),
     )
@@ -193,6 +209,10 @@ def parse_artifact(
         "flagged_count": counter.flagged,
         "parse_errors": int(stats.get("parse_errors", 0)),
     }
+    if stats.get("unreadable_bytes"):
+        # 구간 수(parse_errors)만으로는 규모를 알 수 없다. 구간 1곳이
+        # 8바이트인 것과 500KB인 것은 판단이 다르다.
+        entry["unreadable_bytes"] = int(stats["unreadable_bytes"])
     if located is not None:
         # 어느 파일에서 읽었는지 남긴다. 나중에 "이 결과가 어디서 나왔나"를
         # 되짚을 수 있어야 하고, method가 search면 제자리에 없던 것이므로
@@ -201,6 +221,10 @@ def parse_artifact(
         entry["source_method"] = located.method
         if located.alternates:
             entry["source_alternates"] = [str(p) for p in located.alternates]
+        if located.empty_candidates:
+            # 0바이트라 건너뛴 후보. 추출이 잘못됐다는 진단이므로 산출물에
+            # 남긴다 — 같은 증거를 다시 뽑을 때 고쳐야 할 지점이다.
+            entry["source_empty_skipped"] = [str(p) for p in located.empty_candidates]
     return entry
 
 
@@ -278,6 +302,24 @@ def main(argv: "list[str] | None" = None) -> int:
         log.abort(STAGE, "parse_error", {"message": str(e)})
 
     files: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    def note_skip(artifact: str, reason: str, message: str, label: str) -> None:
+        """읽지 못한 아티팩트를 **두 곳에** 남긴다.
+
+        ``errors.jsonl``은 전 단계가 공유하는 집계용 로그이고,
+        ``_manifest.json``은 07단계가 읽는 이 단계의 산출물이다. 예전에는
+        앞엣것만 있어서 보고서가 스킵을 알지 못했다.
+        """
+        log.record(
+            STAGE,
+            "empty_result",
+            {"field": "selected[].artifact", "value": artifact, "message": message},
+            action="skip",
+        )
+        skipped.append({"artifact": artifact, "reason": reason, "message": message})
+        print(f"[{STAGE}] {label} — {message}", file=sys.stderr)
+
     for artifact, scope_dict in sorted(targets.items()):
         try:
             entry = parse_artifact(
@@ -286,23 +328,15 @@ def main(argv: "list[str] | None" = None) -> int:
         except LookupError as e:
             # 파서 미구현. 실패가 아니라 지원 범위 밖이며, 보고서의
             # "분석 범위 한계"로 이어져야 할 정보다.
-            log.record(
-                STAGE,
-                "empty_result",
-                {"field": "selected[].artifact", "value": artifact, "message": str(e)},
-                action="skip",
-            )
-            print(f"[{STAGE}] 건너뜀 — {e}", file=sys.stderr)
+            note_skip(artifact, "parser_missing", str(e), "건너뜀")
+            continue
+        except evidence.EmptyArtifact as e:
+            # 파일은 있는데 0바이트다. "수집 안 됨"과 조치가 다르므로 나눈다.
+            note_skip(artifact, "empty_artifact", str(e), "빈 파일")
             continue
         except evidence.ArtifactNotFound as e:
             # 선별은 요청했는데 증거에 없다. 수집 누락이다.
-            log.record(
-                STAGE,
-                "empty_result",
-                {"field": "selected[].artifact", "value": artifact, "message": str(e)},
-                action="skip",
-            )
-            print(f"[{STAGE}] 증거 없음 — {e}", file=sys.stderr)
+            note_skip(artifact, "artifact_not_found", str(e), "증거 없음")
             continue
         except (OSError, ValueError) as e:
             log.abort(STAGE, "parse_error", {"value": artifact, "message": str(e)})
@@ -329,7 +363,9 @@ def main(argv: "list[str] | None" = None) -> int:
             },
         )
 
-    write_manifest(out_dir, selection["case_id"], files, implementation=args.parser)
+    write_manifest(
+        out_dir, selection["case_id"], files, implementation=args.parser, skipped=skipped
+    )
     # native/reference 는 $MFT 에 한해 같은 인스턴스를 가리킨다. 산출물만
     # 보고 어느 쪽으로 돌렸는지 구분할 수 있게 매니페스트에는 남기되,
     # 콘솔에서 다른 파서인 것처럼 보이게 하지는 않는다.

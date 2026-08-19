@@ -51,6 +51,7 @@ def build_context(
     selection: dict[str, Any],
     scenario: dict[str, Any] | None = None,
     records: dict[str, dict[str, Any]] | None = None,
+    manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """템플릿에 넘길 값을 만든다.
 
@@ -101,7 +102,8 @@ def build_context(
         "passed": passed,
         "unverifiable": unverifiable,
         "timeline": timeline,
-        "limits": _limits(selection),
+        "examined": _examined(manifest),
+        "limits": _limits(selection, manifest),
         "generated_at": io.utc_now(),
         "generator": io.make_generator("report.py"),
     }
@@ -157,13 +159,73 @@ def _techniques(selection: dict[str, Any], scenario: dict[str, Any] | None) -> l
     return [f"{tid} ({attack.name_of(tid) or '이름 미상'})" for tid in seen]
 
 
-def _limits(selection: dict[str, Any]) -> list[dict[str, str]]:
+#: 04단계의 스킵 사유 코드 → 보고서 문장.
+#:
+#: 사유마다 **분석가가 할 일이 다르다.** 수집을 다시 해야 하는지, 추출이
+#: 잘못됐는지, 이 도구가 아직 못 읽는 것인지가 구별되어야 한다.
+SKIP_REASONS = {
+    "artifact_not_found": "증거에 없음 (수집 누락)",
+    "empty_artifact": "파일이 0바이트 (추출 확인 필요)",
+    "parser_missing": "본 버전 미지원 (파서 없음)",
+}
+
+
+def _examined(manifest: dict[str, Any] | None) -> list[dict[str, str]]:
+    """실제로 읽은 아티팩트와 규모.
+
+    **"안 본 것"만 적으면 범위가 반쪽입니다.** 무엇을 봤는지도 함께 적어야
+    읽는 사람이 보고서만으로 분석 범위를 확인할 수 있습니다.
+
+    레코드 0건도 여기 들어갑니다 — 파싱은 됐는데 범위에 아무것도 없었던
+    경우이며, 그것이 곧 **"봤는데 없었다"**입니다. 한계로 옮기면 못 본 것과
+    구별되지 않습니다.
+    """
+    if not manifest:
+        return []
+
+    rows: list[dict[str, str]] = []
+    for entry in manifest.get("files", []):
+        note = ""
+        unreadable = entry.get("unreadable_bytes")
+        if unreadable:
+            # 부분 판독. "안 봤다"가 아니지만 "다 봤다"도 아니므로 따로 적는다.
+            note = (
+                f"부분 판독 — 구간 {entry.get('parse_errors', 0)}곳 / "
+                f"{unreadable:,}바이트를 읽지 못함"
+            )
+        elif entry.get("parse_errors"):
+            note = f"부분 판독 — 구간 {entry['parse_errors']}곳"
+        if entry.get("source_empty_skipped"):
+            skipped_note = "0바이트 후보를 건너뛰고 읽음 (추출 확인 권장)"
+            note = f"{note}; {skipped_note}" if note else skipped_note
+        rows.append(
+            {
+                "artifact": entry["artifact"],
+                "records": f"{entry.get('record_count', 0):,}건",
+                "note": note,
+            }
+        )
+    return rows
+
+
+def _limits(
+    selection: dict[str, Any], manifest: dict[str, Any] | None = None
+) -> list[dict[str, str]]:
     """확인하지 않은 아티팩트와 사유.
 
-    ``excluded``와 발동하지 않은 ``deferred``를 합친다. 스펙의 보고서
-    예시가 둘을 한 표에 담고 있으나 합치는 규칙은 적혀 있지 않아
-    여기서 정한다. 본 버전은 Tier 2 루프백을 구현하지 않으므로
-    ``deferred``는 전부 미발동이다.
+    세 갈래를 합칩니다.
+
+    1. ``excluded`` — 03단계가 애초에 제외
+    2. ``deferred`` — Tier 2로 유예
+    3. **04단계가 읽지 못한 것** — 매니페스트의 ``skipped``
+
+    3번이 없으면 보고서가 **읽지 못한 아티팩트를 언급조차 하지 않습니다.**
+    "봤는데 없었다"와 "못 봤다"를 구분하는 것이 이 도구의 존재 이유이므로,
+    그 구멍은 기능 결손이 아니라 논지의 구멍입니다(docs/limitations.md 4-1).
+
+    마지막으로 **차집합으로 검산합니다.** ``selected``에 있는데 읽지도
+    스킵되지도 않은 아티팩트가 남으면 04단계가 기록을 빠뜨린 것이므로,
+    사유를 모른 채로라도 표에 올립니다. 조용히 사라지는 것보다 낫습니다.
     """
     limits = [
         {"artifact": entry["artifact"], "reason": entry["reason"]}
@@ -172,10 +234,52 @@ def _limits(selection: dict[str, Any]) -> list[dict[str, str]]:
     limits.extend(
         {
             "artifact": entry["artifact"],
-            "reason": f"Tier 2 조건 미충족 ({entry['trigger']})",
+            # 본 버전은 Tier 2 루프백이 없다. 조건을 **평가한 적이 없으므로**
+            # "조건 미충족"이라고 쓰면 사실과 다르다 — 평가했는데 안 걸린
+            # 것처럼 읽힌다. 실제로 $MFT가 deleted 69건을 냈는데도 "미충족"
+            # 으로 적힌 사례가 있었다(docs/limitations.md 3).
+            "reason": f"Tier 2 루프백 미구현으로 미평가 (조건: {entry['trigger']})",
         }
         for entry in selection.get("deferred", [])
     )
+
+    if manifest is None:
+        # 매니페스트 없이 부른 경우(``--parsed`` 미지정). 04단계가 무엇을
+        # 했는지 알 수 없으므로 차집합 검산을 하지 않는다. 모르는 것을
+        # "빠뜨렸다"고 적으면 그것도 거짓이다.
+        return limits
+
+    for entry in manifest.get("skipped", []):
+        code = entry.get("reason", "")
+        reason = SKIP_REASONS.get(code, "읽지 못함")
+        message = entry.get("message", "")
+        # ``parser_missing``의 메시지는 소스 파일 경로를 담은 개발자용
+        # 안내다. 분석가가 읽는 문서에는 사유만 싣는다. 나머지 사유의
+        # 메시지는 기대 경로나 파일 상태라 분석가에게도 쓸모가 있다.
+        if message and code != "parser_missing":
+            reason = f"{reason} — {message}"
+        limits.append({"artifact": entry["artifact"], "reason": reason})
+
+    # 실제로 읽은 것은 한계에서 뺀다. 03단계가 "Tier 1로 읽는 것은
+    # deferred 에서 뺀다"를 지키지만(docs/mapping-guide.md), 어긋나면
+    # 같은 아티팩트가 "확인함"과 "확인 못 함"에 동시에 실린다. 산출물이
+    # 있다는 사실이 더 강한 증거이므로 그쪽을 믿는다.
+    read = {entry["artifact"] for entry in manifest.get("files", [])}
+    limits = [row for row in limits if row["artifact"] not in read]
+
+    accounted = {row["artifact"] for row in limits} | read
+    for entry in selection.get("selected", []):
+        artifact = entry["artifact"]
+        if artifact not in accounted:
+            accounted.add(artifact)
+            limits.append(
+                {
+                    "artifact": artifact,
+                    "reason": (
+                        "선별됐으나 산출물에 없음 — 04단계가 사유를 남기지 않았습니다"
+                    ),
+                }
+            )
     return limits
 
 
@@ -233,13 +337,30 @@ def main(argv: "list[str] | None" = None) -> int:
         log.abort(STAGE, "schema_violation", violation.as_detail())
 
     records = None
+    manifest = None
     if args.parsed:
         try:
             records = io.read_parsed_records(args.parsed)
         except (ValueError, NotADirectoryError) as e:
             log.abort(STAGE, "parse_error", {"message": str(e)})
 
-    context = build_context(verified, findings_doc, selection, scenario, records)
+        # 04단계가 무엇을 읽고 무엇을 건너뛰었는지. 이것이 없으면 보고서의
+        # "분석 범위"가 요청 목록만 보고 쓰이며, 읽지 못한 아티팩트가
+        # 통째로 사라진다(docs/limitations.md 4-1).
+        manifest_path = Path(args.parsed) / "_manifest.json"
+        if manifest_path.is_file():
+            manifest = io.read_json(manifest_path)
+        else:
+            # 조용히 넘어가면 "범위 한계 0건"이 사실인지 알 수 없다.
+            log.record(
+                STAGE,
+                "empty_result",
+                {"message": f"{manifest_path} 없음 — 분석 범위를 04 산출물로 검산하지 못했습니다"},
+                action="skip",
+            )
+            print(f"[{STAGE}] 경고 — {manifest_path} 없음. 분석 범위가 불완전합니다.")
+
+    context = build_context(verified, findings_doc, selection, scenario, records, manifest)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render(context), encoding="utf-8", newline="\n")
 
