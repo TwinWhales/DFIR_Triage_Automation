@@ -285,14 +285,39 @@ defaults:
   "generator": "parse.py",
   "files": [
     { "artifact": "$MFT", "path": "mft.jsonl", "record_count": 1842,
-      "flagged_count": 3, "parse_errors": 0 },
+      "flagged_count": 3, "parse_errors": 0,
+      "source_path": "/mnt/evidence/WEB01/$MFT", "source_method": "volume_path" },
     { "artifact": "evtx:Security", "path": "evtx_security.jsonl", "record_count": 517,
-      "flagged_count": 2, "parse_errors": 1 }
+      "flagged_count": 2, "parse_errors": 1, "unreadable_bytes": 4096,
+      "source_path": "/mnt/evidence/WEB01/Windows/System32/winevt/Logs/Security.evtx",
+      "source_method": "volume_path" }
+  ],
+  "skipped": [
+    { "artifact": "$UsnJrnl", "reason": "empty_artifact",
+      "message": "$UsnJrnl: 파일은 있으나 0바이트입니다 ($Extend/$UsnJrnl). ..." }
   ],
   "total_records": 2359,
   "flagged_records": 5
 }
 ```
+
+### `skipped` — 읽지 못한 아티팩트
+
+**매니페스트는 04단계가 자기가 한 일을 적는 곳이므로 "안 한 일"도 여기 적습니다.**
+
+예전에는 스킵이 `errors.jsonl`에만 남아 07단계가 볼 수 없었고, 그 결과 보고서가 읽지 못한 아티팩트를 **언급조차 하지 않았습니다**(`docs/limitations.md` 4-1). `errors.jsonl`은 전 단계가 공유하는 집계용 로그라, 07이 그것을 파싱하면 에러 로그 형식에 묶입니다.
+
+| `reason` | 뜻 | 분석가의 조치 |
+|---|---|---|
+| `artifact_not_found` | 선별했는데 증거에 없음 | 다시 수집 |
+| `empty_artifact` | 파일은 있는데 0바이트 | 다시 추출 |
+| `parser_missing` | 이 버전이 못 읽는 아티팩트 | 다른 도구로 확인 |
+
+### `unreadable_bytes` — 못 읽은 규모
+
+`parse_errors`는 **못 읽은 구간의 개수**이고 `unreadable_bytes`는 그 총 크기입니다. 둘을 함께 봐야 규모를 알 수 있습니다 — 구간 1곳이 8바이트인 것과 500KB인 것은 판단이 다릅니다.
+
+연속된 실패를 한 구간으로 묶는 이유는, 걸음마다 세면 비저널 구간 하나가 수만 건으로 부풀어 **"저널이 심하게 손상됐다"고 정반대로 읽히기** 때문입니다(실측 사례는 `docs/limitations.md` 4-0-1).
 
 ### flags 어휘 (고정 목록)
 
@@ -477,16 +502,39 @@ $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황�
 다음 서술은 특정 증거로 뒷받침되지 않는 종합 판단이며 분석가 검토가 필요합니다.
 - 웹셸을 통한 초기 침투 이후 계정 생성으로 지속성을 확보한 흐름으로 판단됨
 
-## 분석 범위 한계
-본 분석에서 확인하지 않은 아티팩트는 다음과 같습니다.
+## 분석 범위
+
+### 확인한 아티팩트
+| 아티팩트 | 레코드 | 비고 |
+|---|---|---|
+| $MFT | 1,842건 |  |
+| evtx:Security | 517건 | 부분 판독 — 구간 1곳 / 4,096바이트를 읽지 못함 |
+
+### 확인하지 못한 아티팩트
 | 아티팩트 | 사유 |
 |---|---|
 | prefetch | Windows Server 기본 비활성화로 수집 불가 |
 | $LogFile | 본 버전 파싱 모듈 미지원 |
-| $UsnJrnl | Tier 2 조건 미충족 (Tier1 삭제 흔적 없음) |
+| $UsnJrnl | Tier 2 루프백 미구현으로 미평가 (조건: Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시) |
 ```
 
-미검증 항목과 분석 범위 한계를 보고서에 명시하는 것이 이 도구의 신뢰성 근거입니다. 자동 생성 시 누락되지 않도록 템플릿에 고정 섹션으로 둡니다.
+미검증 항목과 분석 범위를 보고서에 명시하는 것이 이 도구의 신뢰성 근거입니다. 자동 생성 시 누락되지 않도록 템플릿에 고정 섹션으로 둡니다.
+
+### 범위 섹션의 규칙
+
+**양쪽을 다 적습니다.** "안 본 것"만 적으면 읽는 사람이 무엇을 봤는지 알 수 없고, "본 것"만 적으면 못 본 것이 사라집니다.
+
+| 상태 | 어디에 | 판단 근거 |
+|---|---|---|
+| 읽었다 (0건 포함) | 확인한 아티팩트 | `_manifest.json`의 `files[]` |
+| 읽었으나 일부 구간 실패 | 확인한 아티팩트 + 비고 | `parse_errors` / `unreadable_bytes` |
+| 03이 제외 / Tier 2 유예 | 확인하지 못한 아티팩트 | `03_selection.json` |
+| 04가 읽지 못함 | 확인하지 못한 아티팩트 | `_manifest.json`의 `skipped[]` |
+| 선별됐는데 양쪽 어디에도 없음 | 확인하지 못한 아티팩트 | 차집합 검산 |
+
+**레코드 0건은 "확인함"입니다.** 파싱은 됐는데 범위에 아무것도 없었던 것이며, 그것이 곧 "봤는데 없었다"입니다. 한계로 옮기면 못 본 것과 구별되지 않습니다.
+
+마지막 줄(차집합)이 있는 이유는, 04단계가 새 실패 유형을 만들고 기록을 빠뜨려도 **조용히 사라지지 않게** 하기 위함입니다.
 
 ---
 

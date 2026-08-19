@@ -48,9 +48,9 @@ python benchmark/validator_check.py
 
 ## 현재 상태
 
-파이프라인은 **01→07 전 구간이 관통합니다.** 다만 두 가지가 대체물입니다 —
-LLM 호출이 스텁이고, evtx 파서가 없습니다. 알려진 한계 전체는
-[`docs/limitations.md`](docs/limitations.md)에 있습니다.
+파이프라인은 **01→07 전 구간이 관통합니다.** 카탈로그의 아티팩트에는
+전부 파서가 있습니다. 남은 대체물은 하나 — **LLM 호출이 스텁입니다.**
+알려진 한계 전체는 [`docs/limitations.md`](docs/limitations.md)에 있습니다.
 
 | | 상태 |
 |---|---|
@@ -59,7 +59,7 @@ LLM 호출이 스텁이고, evtx 파서가 없습니다. 알려진 한계 전체
 | C-001 목업 세트 | 작성 완료 |
 | 02 시나리오 정규화 | 구현 완료 — 알럿 어댑터는 실동작, LLM은 **스텁** |
 | 03 아티팩트 선별 | 구현 완료 — 매핑 5개 + 카탈로그 |
-| **04 파싱** | 부분 구현 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현). **evtx 미구현** |
+| **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx`(python-evtx 기반) |
 | 05 sLLM 해석 | 구현 완료 — 레코드 추림은 실동작, LLM은 **스텁** |
 | 06 근거 검증 | 구현 완료 — 체커 3종 + `--checkers` 조합 |
 | 07 결과 보고 | 구현 완료 — Jinja2 템플릿 (LLM 미사용) |
@@ -96,8 +96,16 @@ cases/C-001-D/   ← 데이터 볼륨
   응답 파싱, 스키마 검증, 재시도까지 실제 경로를 그대로 지나가고 네트워크
   호출만 대체됩니다.
 
+- **evtx** — 온디스크 계층은 [python-evtx](docs/artifact-notes.md)가 맡고,
+  청크 순회 감사·필드 추출·`ref`/`offset` 규약은 우리 어댑터가 합니다.
+
 `$MFT` 파싱 회귀는 `tools/compare_mft.py`와 합성 레코드 테스트
 (`tests/test_mft_parser.py`)로 MFTECmd 없이 `pytest` 안에서 검증합니다.
+
+evtx는 **외부 도구 대조를 실제로 마쳤습니다.** `wevtutil`(Windows 기본
+탑재, 마이크로소프트 자체 파서)과 8,257레코드를 대조해 레코드 수·
+`EventRecordID`·`event_id`·`computer`·타임스탬프가 전부 일치했습니다.
+기록은 [`docs/artifact-notes.md`](docs/artifact-notes.md)에 있습니다.
 
 ### 관통 실행해 보기
 

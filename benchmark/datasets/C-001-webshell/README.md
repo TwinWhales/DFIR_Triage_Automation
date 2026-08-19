@@ -52,7 +52,7 @@ F6이 성립하려면 `mft.jsonl`에는 있으나 `input_refs`에는 없는 레�
 |---|---|---|
 | `01_input.json`, `02_scenario.json` | 입력 (손으로 작성) | — |
 | `03_selection.json` | `select.py` 기대 출력 | `test_mapping_loader.py` |
-| `04_parsed/*` | 입력 (evtx 파서 미구현) | — |
+| `04_parsed/*` | 입력 (손으로 작성) | `test_evtx_parser.py`가 필드 집합만 대조 |
 | `05_findings.json` | 스텁 응답 겸 기대 출력 | `test_interpret.py` |
 | `06_verified.json`, `06_verified.bad.json` | `verify.py` 기대 출력 | `test_verify_checkers.py` |
 | `07_report.md` | `report.py` 기대 출력 | `test_report.py` |
