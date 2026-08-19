@@ -7,11 +7,15 @@
 
 ``$MFT`` 메인 파서는 ``mft`` (analyzeMFT 기반, MIT) 입니다.
 ``$UsnJrnl`` 파서는 ``usnjrnl`` (전부 자체 구현) 입니다.
+``evtx:Security`` / ``evtx:System`` 은 ``evtx`` (python-evtx 기반) 입니다.
 ``parse.py``는 기본적으로 ``native`` 테이블을 쓰고, ``--parser reference``도
 같은 인스턴스를 가리킵니다 — 아티팩트마다 구현이 하나씩뿐입니다.
 
-다른 아티팩트(evtx 등) 파서를 추가하면 아래 ``PARSERS``에 한 줄
-등록하면 됩니다.
+다른 아티팩트(registry 등) 파서를 추가하면 아래 ``PARSERS``에 한 줄
+등록하면 됩니다. **한 파서 클래스가 여러 아티팩트를 맡으면 인스턴스를
+아티팩트마다 따로 만듭니다** — ``artifact``가 ``ref`` 접두어와 출력
+파일명을 정하므로, 공유하면 한쪽 레코드가 다른 쪽 접두어로 나가고
+06단계가 그것을 환각으로 집계합니다.
 
 등록되지 않은 아티팩트가 선별되면 ``parse.py``가 그 사실을
 ``errors.jsonl``에 남기고 건너뜁니다. 조용히 빈 결과를 내지 않습니다 —
@@ -79,6 +83,20 @@ from .usnjrnl import UsnJrnlParser  # noqa: E402 — $MFT 등록 블록 뒤라�
 _usn_parser = UsnJrnlParser()
 PARSERS["$UsnJrnl"] = _usn_parser
 REFERENCE_PARSERS["$UsnJrnl"] = _usn_parser
+
+
+# evtx 는 python-evtx 에 온디스크 계층을 맡긴다(work-guide.md 3.1). 라이브러리가
+# 없으면 우리 잘못이 아니라 설치 문제이므로 $MFT 와 달리 감싸지 않는다 —
+# requirements.txt 에 들어 있고, 조용히 빠지면 evtx 없는 보고서가 정상 종료로 나온다.
+from .evtx import EvtxParser  # noqa: E402 — 등록 블록 순서를 유지한다
+
+# **아티팩트마다 인스턴스를 따로 만든다.** artifact 가 ref 접두어와 출력
+# 파일명을 정하므로, 공유하면 System 레코드가 EVTX-SEC# 으로 나가고
+# 06단계가 그것을 환각으로 집계한다.
+for _artifact in ("evtx:Security", "evtx:System"):
+    _evtx_parser = EvtxParser(_artifact)
+    PARSERS[_artifact] = _evtx_parser
+    REFERENCE_PARSERS[_artifact] = _evtx_parser
 
 
 IMPLEMENTATIONS = ("native", "reference")

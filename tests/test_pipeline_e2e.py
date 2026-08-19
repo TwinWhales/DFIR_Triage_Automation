@@ -91,9 +91,9 @@ def test_parse_skips_when_output_already_exists(tmp_path):
 
 
 def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
-    # 파서가 하나도 등록되지 않은 현재 상태. 아티팩트마다 왜 못 읽었는지를
-    # 남기고 중단한다. 조용히 빈 산출물을 만들면 05단계가 그걸 정상으로
-    # 읽어 원인 파악이 불가능해진다.
+    # 증거 디렉터리가 비어 있는 경우. 파서는 등록돼 있으나 읽을 파일이
+    # 없으므로 아티팩트마다 왜 못 읽었는지를 남기고 중단한다. 조용히 빈
+    # 산출물을 만들면 05단계가 그걸 정상으로 읽어 원인 파악이 불가능해진다.
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()
 
@@ -118,15 +118,17 @@ def test_parse_skips_artifacts_without_a_registered_parser(tmp_path):
     # 파서 등록이 유일한 확장 지점이라는 것을 고정한다. 구현된 아티팩트는
     # 인스턴스가 나오고, 아직 파서가 없는 것은 None 이라 parse 가 건너뛴다.
     #
-    # 미구현 쪽으로 evtx 를 쓴다. 구현되면 이 테스트가 깨지는데, 그때
-    # 고쳐야 할 것은 여기가 아니라 mappings/_artifacts.yaml 의
-    # supported 값이다 — 카탈로그와 파서가 어긋난 채로 두면 보고서가
-    # "분석했다"고 말하면서 실제로는 아무것도 읽지 않는다.
+    # 미구현 쪽으로는 registry 를 쓴다. refs 와 OUTPUT_FILENAMES 에는
+    # 자리가 있지만 파서도 카탈로그 항목도 없다. 구현하면 이 테스트가
+    # 깨지는데, 그때 함께 볼 것은 mappings/_artifacts.yaml 이다 —
+    # 카탈로그와 파서가 어긋난 채로 두면 보고서가 "분석했다"고 말하면서
+    # 실제로는 아무것도 읽지 않는다(docs/limitations.md 4-1).
     from src.stage04_parse import parsers
 
-    assert parsers.get("$MFT") is not None
-    assert parsers.get("$UsnJrnl") is not None
-    assert parsers.get("evtx:Security") is None
+    for artifact in ("$MFT", "$UsnJrnl", "evtx:Security", "evtx:System"):
+        assert parsers.get(artifact) is not None, f"{artifact} 파서가 등록되지 않았다"
+
+    assert parsers.get("registry:SYSTEM") is None
 
 
 # ============================================================ 관통 실행
