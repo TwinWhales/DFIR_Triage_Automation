@@ -221,6 +221,77 @@ def test_a_corrupt_region_does_not_swallow_the_rest():
     assert parser.stats["parse_errors"] > 0
 
 
+def test_one_bad_region_counts_as_one_not_once_per_step(caplog):
+    """**집계 단위 회귀 (docs/limitations.md 4-0-1).**
+
+    파서는 레코드가 아닌 바이트를 만나면 8바이트씩 걸으며 재동기화한다.
+    걸음마다 세면 구간 하나가 수만 건으로 부풀어, 매니페스트를 읽는
+    사람이 "저널이 심하게 손상됐다"고 정반대로 판단한다.
+
+    실측(evidence/[root]): 꼬리에 붙은 비저널 데이터 503,752바이트가
+    503752 / 8 = 62,969건으로 집계됐다. 실제로는 구간 1곳이고 나머지
+    306,857레코드는 전부 정상이었다.
+    """
+    junk = 800  # 8바이트씩이면 100걸음
+    data = (
+        build_usn_record(usn=0, name="before.txt")
+        + b"\xff" * junk
+        + build_usn_record(usn=4096, name="after.txt")
+    )
+
+    parser = usnjrnl.UsnJrnlParser()
+    records = list(parser.parse(_io.BytesIO(data), Scope()))
+
+    assert [r["name"] for r in records] == ["before.txt", "after.txt"]
+    assert parser.stats["parse_errors"] == 1, "연속된 실패는 한 구간이다"
+    assert parser.stats["unreadable_bytes"] >= junk
+
+
+def test_two_separate_bad_regions_count_as_two():
+    """묶는다고 해서 서로 다른 손상을 하나로 합치면 안 된다."""
+    data = (
+        build_usn_record(usn=0, name="a.txt")
+        + b"\xff" * 64
+        + build_usn_record(usn=4096, name="b.txt")
+        + b"\xff" * 64
+        + build_usn_record(usn=8192, name="c.txt")
+    )
+
+    parser = usnjrnl.UsnJrnlParser()
+    records = list(parser.parse(_io.BytesIO(data), Scope()))
+
+    assert [r["name"] for r in records] == ["a.txt", "b.txt", "c.txt"]
+    assert parser.stats["parse_errors"] == 2
+
+
+def test_unreadable_bytes_reports_the_scale():
+    """구간 수만으로는 8바이트짜리와 500KB짜리를 구별할 수 없다."""
+    small = usnjrnl.UsnJrnlParser()
+    list(small.parse(_io.BytesIO(
+        build_usn_record(usn=0, name="a.txt") + b"\xff" * 64
+        + build_usn_record(usn=4096, name="b.txt")
+    ), Scope()))
+
+    big = usnjrnl.UsnJrnlParser()
+    list(big.parse(_io.BytesIO(
+        build_usn_record(usn=0, name="a.txt") + b"\xff" * 8192
+        + build_usn_record(usn=16384, name="b.txt")
+    ), Scope()))
+
+    assert small.stats["parse_errors"] == big.stats["parse_errors"] == 1
+    assert big.stats["unreadable_bytes"] > small.stats["unreadable_bytes"] * 10
+
+
+def test_a_clean_journal_reports_no_unreadable_bytes():
+    parser = usnjrnl.UsnJrnlParser()
+    list(parser.parse(_io.BytesIO(build_journal([
+        build_usn_record(usn=0, name="a.txt"),
+        build_usn_record(usn=80, name="b.txt"),
+    ])), Scope()))
+    assert parser.stats["parse_errors"] == 0
+    assert parser.stats["unreadable_bytes"] == 0
+
+
 def test_a_record_straddling_the_buffer_boundary_is_read():
     """버퍼 경계에 걸친 레코드를 잃지 않는가. 청크 방식의 대표 버그다."""
     chunk = u.MAX_RECORD_SIZE * 2
@@ -245,8 +316,25 @@ def test_an_all_zero_stream_yields_nothing_and_terminates():
     assert parse(b"\x00" * 100_000) == []
 
 
-def test_an_empty_stream_yields_nothing():
-    assert parse(b"") == []
+def test_an_empty_stream_is_an_error_not_an_empty_result():
+    """빈 저널은 "변경이 없었다"가 아니라 "저널을 못 받았다"이다.
+
+    조용히 0건을 내면 매니페스트에 ``record_count: 0`` 으로만 남아 두
+    경우가 구별되지 않는다. 실제로 밟았다 — FTK Imager 추출본이
+    ``$Extend/$UsnJrnl`` 에 이름 없는 ``$DATA``(0바이트)를 쓰고 실제
+    저널은 ``$J`` 로 따로 내놓는데, 파이프라인이 30만 건짜리 저널을
+    옆에 두고 "레코드 0건"을 보고했다. (docs/limitations.md 4-0)
+    """
+    with pytest.raises(ValueError, match="비어 있습니다"):
+        parse(b"")
+
+
+def test_a_nonempty_stream_still_sees_its_first_record():
+    """빈 스트림 판정을 위해 앞을 읽어도 순회가 그것을 다시 봐야 한다."""
+    data = build_journal([build_usn_record(usn=0, name="first.txt")])
+    records = parse(data)
+    assert [r["name"] for r in records] == ["first.txt"]
+    assert records[0]["offset"] == "0x0"
 
 
 def test_a_v3_record_is_counted_separately_from_corruption():

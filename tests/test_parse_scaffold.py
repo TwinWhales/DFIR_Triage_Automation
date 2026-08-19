@@ -177,6 +177,67 @@ def test_alternate_usnjrnl_names_are_recognised(tmp_path):
     assert "$UsnJrnl" in evidence.FileSource(root).available()
 
 
+# ------------------------------------------- 0바이트 껍데기 (실측 회귀)
+
+
+def test_an_empty_candidate_does_not_shadow_the_real_file(tmp_path):
+    """실측 회귀 (docs/limitations.md 4-0).
+
+    FTK Imager 추출본은 ``$Extend/$UsnJrnl`` 에 이름 없는 ``$DATA``
+    (0바이트)를 쓰고 실제 저널을 ``$J`` 로 따로 내놓는다. 0바이트를 유효한
+    후보로 받으면 **30만 건이 든 진짜 저널을 옆에 두고 "레코드 0건"을
+    보고한다.** 실제 증거(evidence/[root])에서 그렇게 됐다.
+    """
+    root = tmp_path / "C"
+    _write(root / "$Extend/$UsnJrnl", b"")  # 껍데기
+    _write(root / "$J", b"\xd0\x00\x00\x00\x02\x00\x00\x00" + b"x" * 200)  # 알맹이
+
+    found = evidence.FileSource(root).locate("$UsnJrnl")
+    assert found is not None
+    assert found.path.name == "$J", "0바이트 껍데기가 진짜 저널을 가렸다"
+
+
+def test_the_skipped_empty_candidate_is_reported_not_discarded(tmp_path):
+    """건너뛴 사실 자체가 진단이다. 추출을 고쳐야 한다는 신호."""
+    root = tmp_path / "C"
+    _write(root / "$Extend/$UsnJrnl", b"")
+    _write(root / "$J", b"\xd0\x00\x00\x00\x02\x00\x00\x00" + b"x" * 200)
+
+    found = evidence.FileSource(root).locate("$UsnJrnl")
+    assert [p.name for p in found.empty_candidates] == ["$UsnJrnl"]
+
+
+def test_all_candidates_empty_is_distinguished_from_not_collected(tmp_path):
+    """"수집 안 됨"과 "수집됐는데 0바이트"는 분석가가 취할 조치가 다르다."""
+    root = tmp_path / "C"
+    _write(root / "$Extend/$UsnJrnl", b"")
+
+    source = evidence.FileSource(root)
+    with pytest.raises(evidence.EmptyArtifact, match="0바이트"):
+        source.open("$UsnJrnl")
+
+
+def test_empty_artifact_is_still_handled_like_not_found_by_stage_04(tmp_path):
+    """04단계는 둘을 같이 처리해야 한다 — 건너뛰고 기록한다."""
+    assert issubclass(evidence.EmptyArtifact, evidence.ArtifactNotFound)
+
+
+def test_an_empty_artifact_is_not_listed_as_available(tmp_path):
+    root = tmp_path / "C"
+    _write(root / "$MFT", b"")
+    assert "$MFT" not in evidence.FileSource(root).available()
+
+
+def test_search_also_skips_empty_candidates(tmp_path):
+    root = tmp_path / "C"
+    _write(root / "odd/place/SYSTEM", b"")
+    _write(root / "deeper/still/SYSTEM", b"hive")
+
+    found = evidence.FileSource(root).locate("registry:SYSTEM")
+    assert found is not None
+    assert found.path.read_bytes() == b"hive"
+
+
 # ----------------------------------------------- 재귀 검색 (마지막 수단)
 
 

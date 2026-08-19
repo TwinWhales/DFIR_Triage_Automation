@@ -74,6 +74,31 @@ _log = logging.getLogger(__name__)
 DEFAULT_CHUNK_SIZE = 1 << 20  # 1 MiB
 
 
+class _Rewound:
+    """앞에서 미리 읽은 바이트를 되돌려 놓은 스트림.
+
+    빈 스트림 판정을 위해 헤더 크기만큼 읽었으므로, 순회가 그것을 다시
+    보게 해야 합니다. ``seek``을 쓰지 않는 이유는 ``EvidenceSource``가
+    되감을 수 없는 스트림을 줄 수 있기 때문입니다.
+    """
+
+    def __init__(self, head: bytes, rest: BinaryIO) -> None:
+        self._head = head
+        self._rest = rest
+
+    def read(self, size: int = -1) -> bytes:
+        if not self._head:
+            return self._rest.read(size)
+        if size < 0:
+            out, self._head = self._head + self._rest.read(), b""
+            return out
+        if size <= len(self._head):
+            out, self._head = self._head[:size], self._head[size:]
+            return out
+        out, self._head = self._head, b""
+        return out + self._rest.read(size - len(out))
+
+
 class UsnJrnlParser:
     """``$UsnJrnl:$J`` 스트림을 읽어 우리 레코드 형식으로 낸다.
 
@@ -97,7 +122,17 @@ class UsnJrnlParser:
     def _new_stats() -> dict[str, int]:
         return {
             "records": 0,
+            # **연속된 실패는 한 덩어리로 센다.** 8바이트씩 걸어간 횟수를
+            # 세면 비저널 구간 하나가 수만 건으로 부풀어, 매니페스트를 읽는
+            # 사람이 "저널이 심하게 손상됐다"고 정반대로 판단한다.
+            #
+            # 실측(evidence/[root]): 꼬리에 붙은 남의 데이터 503,752바이트가
+            # 503752 / 8 = 62,969건으로 집계됐다. 실제로는 못 읽은 구간 1곳이고
+            # 나머지 306,857레코드는 전부 정상이었다.
             "parse_errors": 0,
+            #: 못 읽은 총 바이트. 구간 수(``parse_errors``)와 함께 봐야
+            #: 규모를 알 수 있다. 구간 1곳이 8바이트인 것과 500KB인 것은 다르다.
+            "unreadable_bytes": 0,
             "unsupported_version": 0,
             "zero_bytes_skipped": 0,
         }
@@ -106,6 +141,21 @@ class UsnJrnlParser:
 
     def parse(self, stream: BinaryIO, scope: Scope) -> Iterator[dict[str, Any]]:
         self.stats = self._new_stats()
+
+        # 빈 스트림은 "변경이 없었다"가 아니라 "저널을 못 받았다"이다.
+        # 조용히 0건을 내면 매니페스트에 record_count 0 으로만 남아
+        # 두 경우가 구별되지 않는다. evidence 계층이 0바이트 파일을
+        # 걸러 주지만, 다른 경로로 빈 스트림이 들어올 수 있으므로
+        # 파서도 자기 앞을 지킨다.
+        head = stream.read(structs.V2_HEADER_SIZE)
+        if not head:
+            raise ValueError(
+                f"{self.artifact}: 저널이 비어 있습니다. "
+                "$UsnJrnl:$J 의 내용이 아니라 이름 없는 $DATA 스트림을 "
+                "뽑았을 수 있습니다 — 추출을 확인하십시오."
+            )
+        stream = _Rewound(head, stream)
+
         for offset, record in self._records(stream):
             # 이름으로만 거른다. path_prefix 는 적용할 수 없다 (모듈 설명 참조).
             if not scope.matches_extension(record.name):
@@ -114,10 +164,16 @@ class UsnJrnlParser:
             yield self._as_dict(offset, record)
 
         if self.stats["parse_errors"]:
+            # 구간 수와 바이트를 함께 냅니다. 둘 중 하나만으로는 규모를
+            # 판단할 수 없습니다 — 구간 1곳이 8바이트일 수도, 500KB일 수도
+            # 있고, 후자는 대개 저널 손상이 아니라 꼬리에 붙은 남의
+            # 데이터입니다(docs/artifact-notes.md).
             _log.warning(
-                "%s: 재동기화 %d회 — 저널 일부를 읽지 못했습니다",
+                "%s: 읽지 못한 구간 %d곳 / 총 %d바이트 — 레코드 %d건은 정상입니다",
                 self.artifact,
                 self.stats["parse_errors"],
+                self.stats["unreadable_bytes"],
+                self.stats["records"],
             )
 
     # ------------------------------------------------------------ 내부
@@ -134,6 +190,28 @@ class UsnJrnlParser:
         base = 0
         cursor = 0
         eof = False
+
+        # 못 읽은 구간 하나의 시작과 끝(절대 오프셋). ``bad_end`` 가 현재
+        # 위치와 같으면 실패가 이어지는 중이므로 같은 구간이다.
+        bad_start = -1
+        bad_end = -1
+
+        def close_bad_run() -> None:
+            """열려 있던 구간을 로그로 남긴다.
+
+            **위치와 크기를 함께 적습니다.** 구간 수만으로는 8바이트가
+            깨진 것과 500KB가 통째로 저널이 아닌 것을 구별할 수 없습니다.
+            """
+            nonlocal bad_start
+            if bad_start < 0:
+                return
+            _log.warning(
+                "%s: @0x%X 부터 %d바이트를 읽지 못했습니다 (레코드가 아님)",
+                self.artifact,
+                bad_start,
+                bad_end - bad_start,
+            )
+            bad_start = -1
 
         while True:
             # 소비한 앞부분을 버리고 뒤를 채운다.
@@ -154,11 +232,13 @@ class UsnJrnlParser:
             while cursor < len(buf):
                 if len(buf) - cursor < structs.V2_HEADER_SIZE:
                     if eof:
+                        close_bad_run()
                         return  # 헤더도 안 되는 꼬리 조각
                     break  # 더 읽어 와서 이어 붙인다
 
                 # 0 구간 — 스파스 홀이거나 정렬 패딩이다. 구분할 필요 없다.
                 if not int.from_bytes(buf[cursor : cursor + 4], "little"):
+                    close_bad_run()
                     cursor = self._skip_zeros(buf, base, cursor)
                     progressed = True
                     continue
@@ -169,6 +249,7 @@ class UsnJrnlParser:
                     # V3/V4. 손상이 아니라 지원 범위 밖이므로 따로 센다.
                     # **레코드 하나를 통째로** 건너뛴다 — 8바이트씩 걸어
                     # 들어가면 본문을 레코드로 오해해 가짜 손상이 잡힌다.
+                    close_bad_run()
                     self.stats["unsupported_version"] += 1
                     _log.warning("%s @ 0x%X: %s", self.artifact, base + cursor, e)
                     cursor += max(e.record_length, structs.RECORD_ALIGNMENT)
@@ -176,21 +257,33 @@ class UsnJrnlParser:
                     continue
                 except structs.StructError:
                     # 레코드가 아니다. 8바이트 전진해 다시 찾는다.
-                    self.stats["parse_errors"] += 1
+                    #
+                    # **집계는 구간 단위다.** 직전 위치도 실패였다면 같은
+                    # 구간이 이어지는 것이므로 건수를 올리지 않고 바이트만
+                    # 더한다. 새 구간일 때만 parse_errors 가 1 오른다.
+                    if bad_end != base + cursor:
+                        self.stats["parse_errors"] += 1
+                        bad_start = base + cursor
+                    self.stats["unreadable_bytes"] += structs.RECORD_ALIGNMENT
                     cursor += structs.RECORD_ALIGNMENT
+                    bad_end = base + cursor
                     progressed = True
                     continue
 
                 if len(buf) - cursor < record.record_length:
                     if eof:
+                        close_bad_run()
                         return  # 잘린 마지막 레코드
                     break  # 뒷부분을 더 읽어 온다
 
+                # 유효한 레코드를 만났으므로 못 읽던 구간이 여기서 끝난다.
+                close_bad_run()
                 yield base + cursor, record
                 cursor += record.record_length
                 progressed = True
 
             if eof and not progressed:
+                close_bad_run()
                 return
 
     def _skip_zeros(self, buf: bytearray, base: int, cursor: int) -> int:

@@ -52,6 +52,7 @@ raw와 E01은 결국 같습니다. **E01은 raw로 펼쳐지는 컨테이너**�
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -61,6 +62,7 @@ from typing import BinaryIO, Protocol
 __all__ = [
     "EvidenceError",
     "ArtifactNotFound",
+    "EmptyArtifact",
     "NotAVolumeRoot",
     "ArtifactLocation",
     "Located",
@@ -71,6 +73,8 @@ __all__ = [
     "FILE_LAYOUT",
     "MAX_SEARCH_MATCHES",
 ]
+
+_log = logging.getLogger(__name__)
 
 
 class EvidenceError(RuntimeError):
@@ -83,6 +87,22 @@ class ArtifactNotFound(EvidenceError):
     실패가 아니라 **정보**다. 선별이 요청했는데 수집되지 않은 경우이며,
     보고서의 "분석 범위 한계"에 실려야 한다. 조용히 빈 결과를 내면
     "봤는데 없었다"와 "아예 못 봤다"가 구별되지 않는다.
+    """
+
+
+class EmptyArtifact(ArtifactNotFound):
+    """아티팩트 파일이 있기는 한데 **0바이트**다.
+
+    ``ArtifactNotFound``를 상속하는 이유는 04단계의 처리가 같아야 하기
+    때문이다 — 읽지 못했으므로 건너뛰고 기록한다. 다만 **원인이 다르므로
+    메시지를 나눈다.** "수집되지 않음"과 "수집됐는데 알맹이가 없음"은
+    분석가가 취할 조치가 다르다. 후자는 추출을 다시 해야 한다.
+
+    실제로 밟은 경우: ``$UsnJrnl:$J``는 콜론이 파일명에 못 들어가
+    도구마다 다르게 저장되는데, 어떤 추출본은 **이름 없는 ``$DATA``
+    스트림(0바이트)을 ``$Extend/$UsnJrnl``로 쓰고 실제 저널은 ``$J``라는
+    별도 파일로** 내놓는다. 0바이트를 유효한 후보로 받아들이면 30만 건이
+    든 진짜 저널을 옆에 두고 "레코드 0건"을 보고하게 된다.
     """
 
 
@@ -162,6 +182,12 @@ class Located:
     method: str
     #: 고르지 않은 후보. 재귀 검색에서만 생긴다.
     alternates: tuple[Path, ...] = ()
+    #: 있었지만 0바이트라 건너뛴 후보.
+    #:
+    #: 버리지 않고 남기는 이유는 **추출이 잘못됐다는 진단**이기 때문이다.
+    #: 이 값이 비어 있지 않으면 같은 증거를 다시 뽑을 때 고쳐야 할 지점이
+    #: 있다는 뜻이고, 매니페스트에 실려 나중에 되짚을 수 있어야 한다.
+    empty_candidates: tuple[Path, ...] = ()
 
 
 class EvidenceSource(Protocol):
@@ -174,6 +200,18 @@ class EvidenceSource(Protocol):
     def locate(self, artifact: str) -> Located | None: ...
 
     def describe(self) -> str: ...
+
+
+def _is_empty(path: Path) -> bool:
+    """0바이트인가. 읽을 수 없으면 비었다고 보지 않는다.
+
+    권한 문제로 ``stat``이 실패한 것을 "비었다"로 처리하면, 읽을 수 있었을
+    파일을 조용히 건너뛰게 됩니다. 판단이 서지 않으면 후보로 남깁니다.
+    """
+    try:
+        return path.stat().st_size == 0
+    except OSError:
+        return False
 
 
 def _resolve(base: Path, relative: str) -> Path | None:
@@ -221,6 +259,8 @@ class FileSource:
             raise EvidenceError(f"증거 폴더 없음: {self.root}")
         self.max_search = max_search
         self._cache: dict[str, Located | None] = {}
+        #: 아티팩트별로 "있었지만 0바이트라 건너뛴" 후보.
+        self._empties: dict[str, tuple[Path, ...]] = {}
 
     def describe(self) -> str:
         return f"파일 단위 볼륨 ({self.root})"
@@ -228,10 +268,32 @@ class FileSource:
     def open(self, artifact: str) -> BinaryIO:
         found = self.locate(artifact)
         if found is None:
+            empties = self._empties.get(artifact, ())
+            if empties:
+                # 파일은 있는데 전부 0바이트다. "수집 안 됨"과 원인이 다르고
+                # 조치도 다르므로 메시지를 나눈다.
+                names = ", ".join(str(p.relative_to(self.root)) for p in empties)
+                raise EmptyArtifact(
+                    f"{artifact}: 파일은 있으나 0바이트입니다 ({names}). "
+                    "추출이 잘못됐을 가능성이 높습니다 — 내용이 이름 있는 "
+                    "스트림(예: $UsnJrnl:$J)에 있는데 이름 없는 $DATA 를 "
+                    "뽑았거나, 수집 중 잘렸습니다. 다시 추출하십시오."
+                )
             location = FILE_LAYOUT.get(artifact)
             expected = ", ".join(location.relative_paths) if location else "등록 안 됨"
             raise ArtifactNotFound(
                 f"{artifact}: {self.root} 에서 찾지 못함 (기대 위치: {expected})"
+            )
+
+        if found.empty_candidates:
+            # 진짜 파일은 찾았지만 껍데기도 있었다. 추출본의 특성이므로
+            # 알려 두면 다음 수집에서 고칠 수 있다.
+            names = ", ".join(str(p.relative_to(self.root)) for p in found.empty_candidates)
+            _log.warning(
+                "%s: 0바이트 후보를 건너뛰고 %s 를 씁니다 (건너뛴 것: %s)",
+                artifact,
+                found.path.relative_to(self.root),
+                names,
             )
         return found.path.open("rb")
 
@@ -259,20 +321,42 @@ class FileSource:
         """``stat`` 몇 번으로 끝나는 빠른 경로.
 
         폴더 크기와 무관합니다. 10만 개 파일이 있어도 비용이 같습니다.
+
+        **0바이트 후보는 건너뜁니다.** 이 아티팩트들에 빈 파일은 유효한
+        값이 아니라 추출 실패의 흔적입니다. 여기서 멈추면 뒤에 있는 진짜
+        파일에 도달하지 못합니다(``EmptyArtifact`` 참조).
         """
         location = FILE_LAYOUT.get(artifact)
         if location is None:
             return None
 
+        empties: list[Path] = []
+
         for relative in location.relative_paths:
             found = _resolve(self.root, relative)
-            if found is not None:
-                return Located(path=found, method="volume_path")
+            if found is None:
+                continue
+            if _is_empty(found):
+                empties.append(found)
+                continue
+            return Located(
+                path=found, method="volume_path", empty_candidates=tuple(empties)
+            )
 
         for filename in location.filenames:
             found = _resolve(self.root, filename)
-            if found is not None:
-                return Located(path=found, method="root_file")
+            if found is None or found in empties:
+                continue
+            if _is_empty(found):
+                empties.append(found)
+                continue
+            return Located(
+                path=found, method="root_file", empty_candidates=tuple(empties)
+            )
+
+        # 후보를 찾긴 했으나 전부 비었다. _search 가 이어받을 수 있도록
+        # 여기서는 None 을 내되, 무엇이 비었는지는 남긴다.
+        self._empties[artifact] = tuple(empties)
         return None
 
     def _search(self, artifact: str) -> Located | None:
@@ -291,16 +375,25 @@ class FileSource:
         wanted = {name.lower() for name in location.filenames}
 
         matches: list[tuple[int, str, Path]] = []
+        empties: list[Path] = list(self._empties.get(artifact, ()))
         for dirpath, dirnames, filenames in os.walk(self.root):
             dirnames.sort()
             here = Path(dirpath)
             depth = len(here.relative_to(self.root).parts)
             for filename in sorted(filenames):
-                if filename.lower() in wanted:
-                    matches.append((depth, filename.lower(), here / filename))
+                if filename.lower() not in wanted:
+                    continue
+                candidate = here / filename
+                # _probe 와 같은 이유로 0바이트는 후보가 아니다.
+                if _is_empty(candidate):
+                    if candidate not in empties:
+                        empties.append(candidate)
+                    continue
+                matches.append((depth, filename.lower(), candidate))
             if len(matches) >= self.max_search:
                 break
 
+        self._empties[artifact] = tuple(empties)
         if not matches:
             return None
         matches.sort(key=lambda item: (item[0], str(item[2]).lower()))
@@ -308,6 +401,7 @@ class FileSource:
             path=matches[0][2],
             method="search",
             alternates=tuple(item[2] for item in matches[1:]),
+            empty_candidates=tuple(empties),
         )
 
 
