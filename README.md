@@ -58,7 +58,7 @@ python benchmark/validator_check.py
 | `src/common/` | 구현 완료 — `io` `schema` `errors` `refs` `attack` |
 | C-001 목업 세트 | 작성 완료 |
 | 02 시나리오 정규화 | 구현 완료 — 알럿 어댑터는 실동작, LLM은 **스텁** |
-| 03 아티팩트 선별 | 구현 완료 — 매핑 5개 + 카탈로그 |
+| 03 아티팩트 선별 | 구현 완료 — 매핑 6개 + 카탈로그 |
 | **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx`(python-evtx 기반) |
 | 05 sLLM 해석 | 구현 완료 — 레코드 추림은 실동작, LLM은 **스텁** |
 | 06 근거 검증 | 구현 완료 — 체커 3종 + `--checkers` 조합 |
