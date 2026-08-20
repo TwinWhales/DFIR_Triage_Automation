@@ -58,8 +58,8 @@ python benchmark/validator_check.py
 | `src/common/` | 구현 완료 — `io` `schema` `errors` `refs` `attack` |
 | C-001 목업 세트 | 작성 완료 |
 | 02 시나리오 정규화 | 구현 완료 — 알럿 어댑터는 실동작, LLM은 **스텁** |
-| 03 아티팩트 선별 | 구현 완료 — 매핑 6개 + 카탈로그 |
-| **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx`(python-evtx 기반) |
+| 03 아티팩트 선별 | 구현 완료 — 매핑 6개 + 카탈로그 (`mapping_table_version` 0.4) |
+| **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx`(python-evtx 기반), `registry`(python-registry 기반) |
 | 05 sLLM 해석 | 구현 완료 — 레코드 추림은 실동작, LLM은 **스텁** |
 | 06 근거 검증 | 구현 완료 — 체커 3종 + `--checkers` 조합 |
 | 07 결과 보고 | 구현 완료 — Jinja2 템플릿 (LLM 미사용) |
@@ -99,6 +99,12 @@ cases/C-001-D/   ← 데이터 볼륨
 - **evtx** — 온디스크 계층은 [python-evtx](docs/artifact-notes.md)가 맡고,
   청크 순회 감사·필드 추출·`ref`/`offset` 규약은 우리 어댑터가 합니다.
 
+- **registry** — `SYSTEM`·`SOFTWARE` 하이브. 온디스크 계층은 python-registry가
+  맡고, 경로 재구성·`CurrentControlSet` 해석·범위 밖 서브트리 가지치기는
+  우리 어댑터가 합니다. **다만 05단계에 도달하지 못합니다** —
+  플래그가 붙지 않는 아티팩트라 `record_filter`가 전부 버립니다
+  ([`limitations.md`](docs/limitations.md) 6-7).
+
 `$MFT` 파싱 회귀는 `tools/compare_mft.py`와 합성 레코드 테스트
 (`tests/test_mft_parser.py`)로 MFTECmd 없이 `pytest` 안에서 검증합니다.
 
@@ -106,6 +112,15 @@ evtx는 **외부 도구 대조를 실제로 마쳤습니다.** `wevtutil`(Window
 탑재, 마이크로소프트 자체 파서)과 8,257레코드를 대조해 레코드 수·
 `EventRecordID`·`event_id`·`computer`·타임스탬프가 전부 일치했습니다.
 기록은 [`docs/artifact-notes.md`](docs/artifact-notes.md)에 있습니다.
+
+레지스트리는 **커버리지 대조를 마쳤습니다.** `tools/scan_hive_cells.py`가
+서브키 목록을 따라가지 않고 셀을 직접 걸어 `nk`를 세는데, 파서 결과와
+SYSTEM 34,855건·SOFTWARE 156,716건이 정확히 일치했습니다. 값 대조는
+`reg load`로 남아 있습니다.
+
+```bash
+python tools/scan_hive_cells.py --hive <volume>/Windows/System32/config/SYSTEM   --ours cases/C-001/04_parsed/registry_system.jsonl
+```
 
 ### 관통 실행해 보기
 
