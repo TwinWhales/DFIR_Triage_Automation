@@ -43,20 +43,14 @@ class FieldMissing(LookupError):
 #: ``C:\Users``처럼 보이는 계정명 같은 것에서 오작동한다.
 PATH_FIELDS = frozenset({"path", "target_path", "source_path", "image_path"})
 
-# normalize_path와 parse_timestamp는 common에 있다. 04단계의 범위 매칭이
-# 같은 함수를 쓰기 때문이다. NTFS 대소문자 무시는 검증 정책이 아니라
+# normalize_path와 parse_timestamp는 common에서 가져다 쓴다. 04단계의 범위
+# 매칭이 같은 함수를 쓰기 때문이다. NTFS 대소문자 무시는 검증 정책이 아니라
 # 파일시스템의 사실이므로 두 단계가 갈라지면 안 된다.
-
-
-def normalize_path(value: str) -> str:
-    """대소문자와 구분자를 정규화한다.
-
-    끝의 구분자도 떼어 ``C:\\dir``과 ``C:/dir/``를 같게 본다.
-    """
-    normalized = value.replace("\\", "/").lower()
-    stripped = normalized.rstrip("/")
-    # "/" 하나만 있던 경우까지 빈 문자열로 만들지는 않는다.
-    return stripped or normalized
+#
+# 여기서 다시 정의하지 않는다. 한때 같은 이름의 사본이 아래에 있었는데,
+# 본문이 같아 아무도 눈치채지 못하는 채로 import를 가리고 있었다. 한쪽만
+# 고치는 순간 04와 06이 다른 규칙으로 경로를 비교하게 된다 — 이 주석이
+# 막으려던 바로 그 상황이다.
 
 
 def is_path_field(field: str) -> bool:
