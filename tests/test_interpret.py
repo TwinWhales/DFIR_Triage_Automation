@@ -124,6 +124,30 @@ def test_no_signals_means_nothing_to_send():
     assert record_filter.select_records([_mft("MFT#1", si_ctime="2026-07-20T03:14:22Z")]) == []
 
 
+def test_a_signal_without_a_readable_time_sorts_last_instead_of_crashing():
+    """``zero_timestamp`` 레코드는 시각이 없다 — 그게 신호가 된 이유다.
+
+    04단계는 ``$SI``가 전부 0이면 타임스탬프를 ``None``으로 내고
+    ``zero_timestamp``를 붙인다. 시각 있는 신호와 같이 정렬될 때 naive를
+    섞으면 05단계가 ``TypeError``로 통째로 멈춘다.
+    """
+    timed = _mft("MFT#1", si_ctime="2026-07-20T03:14:22Z", flags=["deleted"])
+    untimed = _mft("MFT#2", si_btime=None, si_ctime=None, flags=["zero_timestamp"])
+
+    selected = record_filter.select_records([timed, untimed])
+
+    # 버려지지 않고, 시각을 아는 것 뒤에 온다.
+    assert [r["ref"] for r in selected] == ["MFT#1", "MFT#2"]
+
+
+def test_a_timeless_signal_does_not_open_a_context_window():
+    """앵커가 될 시각이 없으므로 주변 레코드를 끌어오지 않는다."""
+    untimed = _mft("MFT#1", si_ctime=None, flags=["zero_timestamp"])
+    other = _mft("MFT#2", si_ctime="2026-07-20T03:14:30Z")
+
+    assert [r["ref"] for r in record_filter.select_records([untimed, other])] == ["MFT#1"]
+
+
 # ============================================================ 문서 조립
 
 

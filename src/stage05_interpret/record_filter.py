@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from ..common.io import parse_timestamp
@@ -31,6 +31,7 @@ __all__ = [
     "DEFAULT_LIMIT",
     "DEFAULT_WINDOW_SECONDS",
     "NON_SIGNAL_FLAGS",
+    "NO_TIME",
     "SI_TIME_FIELDS",
     "activity_times",
     "is_signal",
@@ -55,6 +56,19 @@ NON_SIGNAL_FLAGS = frozenset({"outside_time_range"})
 #: 실제 활동 시각이 아니다. $FN을 섞으면 조작된 레코드가 엉뚱한 시점으로
 #: 정렬되어 타임라인이 뒤틀린다.
 SI_TIME_FIELDS = ("si_btime", "si_ctime", "si_mtime", "si_atime")
+
+#: 시각을 읽지 못한 신호 레코드가 앉을 정렬 자리. 맨 뒤로 보낸다.
+#:
+#: **tz-aware여야 한다.** 시각이 있는 신호와 같은 리스트에서 정렬되므로
+#: naive를 쓰면 정렬이 ``can't compare offset-naive and offset-aware
+#: datetimes``로 터지고 05단계가 통째로 멈춘다.
+#:
+#: 드문 경우가 아니다. ``$SI`` 타임스탬프가 전부 0인 레코드는
+#: ``filetime_to_datetime``이 ``None``을 주고, 04단계가 거기에
+#: ``zero_timestamp`` 플래그를 붙인다 — 즉 **시각이 없다는 사실 자체가
+#: 그 레코드를 신호로 만든다.** 타임스탬프 조작 흔적이 있는 증거에서
+#: 반드시 만나게 된다.
+NO_TIME = datetime.max.replace(tzinfo=timezone.utc)
 
 
 def is_signal(record: dict[str, Any]) -> bool:
@@ -96,11 +110,13 @@ def select_records(
         times = activity_times(record)
         if is_signal(record):
             # 시각을 못 읽는 레코드도 신호라면 버리지 않는다.
-            signals.append((min(times) if times else datetime.max.replace(tzinfo=None), record))
+            signals.append((min(times) if times else NO_TIME, record))
         else:
             others.append(record)
 
-    anchors = [anchor for anchor, _ in signals if anchor.tzinfo is not None]
+    # 시각 없는 신호는 주변 레코드를 끌어올 앵커가 되지 못한다. "그 시각
+    # 주변"이라고 할 시각이 없기 때문이다. 자기는 전달되되 창은 안 연다.
+    anchors = [anchor for anchor, _ in signals if anchor is not NO_TIME]
 
     context: list[tuple[float, datetime, dict[str, Any]]] = []
     for record in others:
