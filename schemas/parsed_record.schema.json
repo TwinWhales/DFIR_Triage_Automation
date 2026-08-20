@@ -114,6 +114,13 @@
       "then": {
         "required": ["event_id", "timestamp", "channel", "computer", "fields"]
       }
+    },
+    {
+      "if": { "properties": { "artifact": { "pattern": "^registry:" } }, "required": ["artifact"] },
+      "then": {
+        "$comment": "레코드 단위는 키(nk)이고 값들은 fields에 담긴다. timestamp는 required가 아니다 — 키 LastWrite를 읽지 못해도 키가 거기 존재한다는 사실 자체가 증거이므로 버리지 않는다($UsnJrnl과 같은 규약). fields가 빈 객체인 것도 정상이다. 값 없는 키가 실제로 있고, 그 존재와 LastWrite가 증거다. timestamp는 키의 것이며 그 키의 모든 값이 공유한다 — 값에는 타임스탬프가 없다(docs/limitations.md).",
+        "required": ["path", "name", "fields"]
+      }
     }
   ]
 }
