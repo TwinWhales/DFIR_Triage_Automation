@@ -9,11 +9,14 @@
 # 않았더라도 목록에서 빼지 않는다.
 #
 # 뒤집어 말하면 **여기 넣는 순간 모든 보고서에 실립니다.** 그래서 아직
-# 착수하지 않은 아티팩트는 넣지 않는다. 레지스트리(Tier 3)는 ref 접두어와
-# 스키마만 미리 열어 두었고(src/common/refs.py), 파서가 생길 때 여기
-# 추가한다.
+# 착수하지 않은 아티팩트는 넣지 않는다. 레지스트리는 예전에 그 상태였다 —
+# ref 접두어와 스키마만 미리 열어 두고 여기서는 빠져 있었다. 파서가
+# 생기면서 아래에 추가했다.
+#
+# 카탈로그와 파서 등록소가 어긋나면 tests/test_pipeline_e2e.py 가 잡는다.
+# supported: true 인데 파서가 없거나, 파서가 있는데 여기 없거나 둘 다.
 
-mapping_table_version: "0.3"
+mapping_table_version: "0.4"
 
 artifacts:
   $MFT:
@@ -39,6 +42,26 @@ artifacts:
     os: [windows]
     supported: true
     description: 시스템 이벤트 로그. 서비스·드라이버.
+
+  # 레지스트리는 다른 아티팩트와 선별 방식이 다르다. 다른 것들은 전부
+  # 훑고 flags 로 추리지만, 레지스트리는 가치가 레코드가 아니라 경로에
+  # 있어 scope_template 의 path_prefix 가 사실상 전부를 정한다.
+  # path_prefix 없이 요청하면 SOFTWARE 하이브가 156,716건을 낸다.
+  #
+  # CurrentControlSet 은 그대로 써도 된다. 파서가 Select\Current 를
+  # 읽어 ControlSet00N 으로 바꾼다 — 매핑 작성자가 하이브 내부 사정을
+  # 몰라도 되게 한 것이다.
+  registry:SYSTEM:
+    parser: registry
+    os: [windows]
+    supported: true
+    description: SYSTEM 하이브. 서비스·드라이버·장치 설정.
+
+  registry:SOFTWARE:
+    parser: registry
+    os: [windows]
+    supported: true
+    description: SOFTWARE 하이브. 설치 프로그램·자동실행·예약 작업 캐시.
 
   # 제외 사유는 OS 변종과 무관하게 참이어야 한다. 처음에는 "Windows
   # Server 기본 비활성화"라고 적었는데, Windows 10 케이스 보고서에

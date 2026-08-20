@@ -4,7 +4,7 @@
   "schema_version": "1.0",
   "generated_at": "2026-08-06T04:12:40Z",
   "generator": "select.py",
-  "mapping_table_version": "0.3",
+  "mapping_table_version": "0.4",
   "selected": [
     {
       "artifact": "$MFT",
@@ -71,6 +71,14 @@
   ],
   "excluded": [
     {
+      "artifact": "registry:SYSTEM",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "registry:SOFTWARE",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
       "artifact": "prefetch",
       "reason": "본 버전 파싱 모듈 미지원 (Windows Server에서는 기본 비활성화되어 수집되지 않는 경우도 많음)"
     },
@@ -82,6 +90,6 @@
   "stats": {
     "selected_count": 2,
     "deferred_count": 2,
-    "excluded_count": 2
+    "excluded_count": 4
   }
 }

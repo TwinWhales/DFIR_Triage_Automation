@@ -53,9 +53,18 @@ def _write_mapping(tmp_path: Path, body: dict, name: str) -> Path:
 
 def test_catalog_loads_every_artifact(catalog):
     assert set(catalog.artifacts) == {
-        "$MFT", "$UsnJrnl", "evtx:Security", "evtx:System", "prefetch", "$LogFile"
+        "$MFT",
+        "$UsnJrnl",
+        "evtx:Security",
+        "evtx:System",
+        "registry:SYSTEM",
+        "registry:SOFTWARE",
+        "prefetch",
+        "$LogFile",
     }
-    assert catalog.mapping_table_version == "0.3"
+    # 목록이 바뀌면 이 값도 올린다. 03_selection.json 에 실려 나가므로
+    # 산출물만 보고 어느 카탈로그로 돌렸는지 되짚을 수 있어야 한다.
+    assert catalog.mapping_table_version == "0.4"
 
 
 def test_unsupported_artifacts_carry_a_reason(catalog):
