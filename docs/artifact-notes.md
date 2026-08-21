@@ -16,7 +16,7 @@
 
 ```bash
 MFTECmd.exe -f "<evidence>\$MFT" --csv out --csvf mft.csv
-python tools/compare_mft.py --ours cases/<id>/04_parsed/mft.jsonl --mftecmd out/mft.csv --full
+.venv/Scripts/python.exe tools/compare_mft.py --ours cases/<id>/04_parsed/mft.jsonl --mftecmd out/mft.csv --full
 ```
 
 `--full`은 범위 없이 돌린 출력에 씁니다. 선별 범위만 낸 결과에는 붙이지

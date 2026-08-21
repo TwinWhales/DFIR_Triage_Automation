@@ -62,8 +62,12 @@
    ↓
 [06] 근거 검증              ← 결정론적 (필터)
    ↓
-[07] 결과 보고              ← sLLM (검증 통과분만 입력)
+[07] 결과 보고              ← 결정론적 (템플릿 렌더링, 검증 통과분만 입력)
 ```
+
+07단계는 초안에서 sLLM으로 적었으나 **의도적으로 템플릿 렌더링만 한다.**
+검증을 통과한 문장을 모델이 다시 쓰게 하면 마지막 단계에서 환각이 재유입되어
+앞의 검증이 전부 무의미해진다. 근거는 `docs/limitations.md` 3장에 있다.
 
 ### 2.2 설계 원칙
 
@@ -337,6 +341,8 @@ dfir-triage/
 
 - `docs/pipeline-io-spec.md` — 단계별 입출력 상세 명세 및 예시
 - `docs/project-structure.md` — 디렉터리 구조 및 파일별 역할
-- `docs/mapping-guide.md` — 매핑 테이블 작성 규칙 (작성 예정)
+- `docs/mapping-guide.md` — 매핑 테이블 작성 규칙
+- `docs/llm-handover.md` — 02·05 LLM 연결 인계 문서
+- `docs/agent-harness.md` — `.claude/` 에이전트 하네스 안내 (팀원용)
 - `docs/artifact-notes.md` — 온디스크 구조 조사 메모 (진행 중 누적)
 - `docs/limitations.md` — 미지원 범위 및 알려진 한계 (진행 중 누적)
