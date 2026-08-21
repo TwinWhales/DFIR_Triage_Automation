@@ -319,18 +319,11 @@ defaults:
 
 연속된 실패를 한 구간으로 묶는 이유는, 걸음마다 세면 비저널 구간 하나가 수만 건으로 부풀어 **"저널이 심하게 손상됐다"고 정반대로 읽히기** 때문입니다(실측 사례는 `docs/limitations.md` 4-0-1).
 
-### flags 어휘 (고정 목록)
+### flags 어휘
 
 파싱 단계에서 룰 기반으로 부여합니다. LLM에 전달할 레코드를 추리는 필터로 쓰이므로 어휘를 고정합니다.
 
-| flag | 조건 |
-|---|---|
-| `timestamp_mismatch` | $SI와 $FN 타임스탬프 불일치 |
-| `deleted` | MFT 레코드 미할당 상태 |
-| `zero_timestamp` | 타임스탬프가 0 또는 비정상 값 |
-| `account_created` | EVTX 4720 |
-| `privileged_group_add` | EVTX 4728/4732, 대상이 특권 그룹 |
-| `outside_time_range` | 선별된 시간 범위 밖 |
+**목록과 조건은 `mappings/_flags.yaml`이 유일한 출처입니다.** 여기 표로 옮겨 적지 않습니다 — 예전에 옮겨 적었다가 `file_created`가 빠진 채로 남아 있었습니다. `schemas/parsed_record.schema.json`의 enum은 그 YAML에서 생성됩니다(`tools/sync_flag_enum.py`).
 
 LLM 입력 축소는 `flags`가 비어있지 않은 레코드 + 시간순 상위 N건 방식으로 처리합니다. 전달된 레코드 목록은 `05_findings.json`의 `input_refs`에 기록합니다.
 

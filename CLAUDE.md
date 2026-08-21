@@ -38,6 +38,9 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 
 # 검증기가 과엄격해지지 않았는지 확인 (하나라도 기각되면 환각률이 오염된 것)
 .venv/Scripts/python.exe benchmark/validator_check.py
+
+# flags 어휘를 고쳤으면 스키마 enum을 맞춘다 (--check 는 확인만, 어긋나면 1)
+.venv/Scripts/python.exe tools/sync_flag_enum.py
 ```
 
 ## 무엇을 알고 싶으면 어디를 보나
@@ -49,7 +52,8 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 | 단계별 입출력 계약 | `docs/pipeline-io-spec.md` |
 | **지금 안 되는 것과 그 이유** | `docs/limitations.md` |
 | 온디스크 구조, 외부 도구 대조 기록 | `docs/artifact-notes.md` |
-| 매핑 YAML 작성 규칙 | `docs/mapping-guide.md` |
+| 매핑 YAML 작성 규칙, flags 어휘·룰 작성법 | `docs/mapping-guide.md` |
+| flags 어휘와 판정 룰 자체 | `mappings/_flags.yaml` |
 | 02·05 LLM 연결 | `docs/llm-handover.md` |
 | 디렉터리별 역할과 근거 | `docs/project-structure.md` |
 | 어디까지가 우리 코드인가 | `third_party/README.md` |
@@ -61,6 +65,11 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 
 - **`schemas/` 6개는 동결됐다.** `src/common/`도 공용이다. 둘 다 변경은 전체
   공지 대상이므로, 고쳐야 할 것 같으면 먼저 사용자에게 말한다.
+  예외가 하나 있다 — `parsed_record`의 `flags` enum은 `mappings/_flags.yaml`에서
+  **생성되는 값**이다. 손으로 고치지 말고 `tools/sync_flag_enum.py`를 돌린다.
+- **flags 어휘와 룰은 `mappings/_flags.yaml`이 원본이다.** `flagging.py`에
+  새 이름을 만들지 않는다. `event_id`·USN 사유·필드값 비교로 되는 조건은
+  YAML만 고치면 되고, 파이썬이 필요한 것은 `HANDLERS`에 등록된 판정뿐이다.
 - **`ref` 문자열은 `src/common/refs.py`를 경유한다.** 직접 조립하지 않는다.
   자체 일련번호를 매기면 원본 대조가 불가능해진다.
 - **04·06·07은 결정론적 구간이다.** LLM을 부르지 않는다 (07은 Jinja2 템플릿).
