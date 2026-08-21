@@ -120,8 +120,12 @@ dfir-triage/
 │
 └── tools/
     ├── make_case.py               # 신규 케이스 디렉터리 생성
-    ├── inspect_jsonl.py           # 파싱 결과 빠른 조회
-    └── hexdump_record.py          # 특정 ref의 원본 바이트 덤프
+    ├── sync_flag_enum.py          # _flags.yaml → 스키마 enum 생성
+    ├── compare_mft.py             # $MFT 파싱 회귀 대조
+    ├── scan_hive_cells.py         # 하이브 nk 셀 직접 계수 (커버리지 정답지)
+    ├── decode_hive_values.py      # 하이브 값을 명세대로 직접 디코딩
+    ├── inspect_jsonl.py           # 파싱 결과 빠른 조회 (미구현)
+    └── hexdump_record.py          # 특정 ref의 원본 바이트 덤프 (미구현)
 ```
 
 ---

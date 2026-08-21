@@ -128,6 +128,76 @@ followups:
 추적하는 값입니다. 의미 있게 바뀔 때마다 올리고, `03_selection.json`에
 기록되므로 나중에 어느 버전으로 선별했는지 복원할 수 있습니다.
 
+## flags 어휘 (`_flags.yaml`)
+
+`flags`는 04단계가 레코드에 붙이는 "볼 만하다"는 표식이고, **05단계가
+sLLM에 전달할 레코드를 고르는 유일한 기준**입니다. 여기서 안 붙으면 그
+레코드는 모델 입장에서 존재하지 않습니다.
+
+**이 파일이 어휘와 룰의 원본입니다.** `flagging.py`가 여기서 목록을 읽고,
+`schemas/parsed_record.schema.json`의 enum은 `tools/sync_flag_enum.py`가
+여기서 생성합니다. 손으로 고치는 파일은 YAML 하나입니다.
+
+```yaml
+service_installed:
+  artifacts: [evtx:System]
+  condition: EVTX 7045 서비스 설치
+  rule:
+    when:
+      - artifact: evtx:*
+        match: event_id
+        values: [7045]
+```
+
+`when`은 절 목록이고 **하나라도 맞으면** 붙습니다. 절이 여럿인 것은 같은
+뜻이 아티팩트마다 다르게 나타나기 때문입니다 — `deleted`는 `$MFT`에서
+"미할당 상태"로, `$UsnJrnl`에서 "삭제 사유"로 나타납니다.
+
+| `match` | 조건 |
+|---|---|
+| 생략 | 그 아티팩트의 모든 레코드 |
+| `event_id` | `record["event_id"]`가 `values` 안에 있는가 |
+| `list_contains` | 리스트 필드 `field`가 `values`와 겹치는가 |
+| `field_equals` | `record[field]`가 `value`와 같은가 |
+
+`artifact`는 `$MFT`처럼 정확히 쓰거나 `evtx:*`로 접두어를, `*`로 전부를
+가리킵니다. 카탈로그에 있는 이름이어야 합니다.
+
+### `handler`는 선언으로 안 되는 것만
+
+`flagging.py`의 `HANDLERS`에 등록된 판정을 이름으로 부릅니다. `when`과
+함께 쓰면 **둘 다** 만족해야 합니다 — `when`이 대상을 좁히고 `handler`가
+판정합니다.
+
+```yaml
+privileged_group_add:
+  rule:
+    when:
+      - artifact: evtx:*
+        match: event_id
+        values: [4728, 4732]
+    handler: target_is_privileged_group
+```
+
+**선언으로 되는 것을 handler로 넘기지 마세요.** 넘기는 순간 이 파일만
+읽어서는 무슨 조건인지 알 수 없게 됩니다. handler는 타임스탬프 비교처럼
+근거가 코드 주석에 붙어 있어야 하는 것만 씁니다(`$SI`/`$FN` 비교는 세 쌍을
+다 보면 오탐이 59%였다는 실측이 주석에 남아 있습니다).
+
+### 새 flag를 추가하는 절차
+
+1. `mappings/_flags.yaml`에 항목을 쓴다
+2. `.venv/Scripts/python.exe tools/sync_flag_enum.py` — 스키마 enum이 따라온다
+3. `.venv/Scripts/python.exe -m pytest`
+
+`event_id`·USN 사유·필드값으로 표현되는 조건이면 **1번에서 끝납니다.**
+`tests/test_flag_rules.py`가 어긋난 정의를 로드 시점에 잡습니다.
+
+### 특권 그룹 목록
+
+`privileged_groups`는 예전부터 런타임에 읽던 값이라 이름만 추가하면 바로
+반영됩니다. 생성기를 돌릴 필요도 없습니다.
+
 ## 선별 결과가 만들어지는 순서
 
 1. 시나리오의 각 기법에 대해 매핑을 찾는다. 없으면 `errors.jsonl`에
@@ -174,7 +244,11 @@ XAMPP나 Tomcat 환경을 다루게 되면 별도 매핑 변형이 필요합니�
    (없으면 02단계가 스키마 위반으로 기각한다)
 2. `mappings/<os>/<기법ID>.yaml`을 만든다
 3. 필요한 아티팩트가 카탈로그에 없으면 `_artifacts.yaml`에 먼저 추가한다
-4. `.venv/Scripts/python.exe -m pytest tests/test_mapping_loader.py` 로
+   (파서가 없으면 `.claude/skills/add-parser/SKILL.md`부터 본다)
+4. 그 아티팩트의 신호가 기존 flags 어휘로 표현되는지 본다. 안 되면
+   위 "새 flag를 추가하는 절차"를 먼저 밟는다 — **매핑이 정확해도 flag가
+   없으면 05단계에 레코드가 가지 않는다**
+5. `.venv/Scripts/python.exe -m pytest tests/test_mapping_loader.py` 로
    로드되는지 확인한다
 
 `tests/test_mapping_loader.py`는 모든 매핑에 대해 Tier 2의 `trigger` 유무,

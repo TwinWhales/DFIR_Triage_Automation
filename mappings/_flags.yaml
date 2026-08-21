@@ -4,14 +4,44 @@
 # 때문이다. 파서마다 다른 이름을 쓰면 record_filter.py가 레코드를
 # 놓치고, 그 결과가 선별 재현율 저하로 잘못 집계된다.
 #
-# schemas/parsed_record.schema.json 의 flags enum과 반드시 일치해야 한다.
-# tests/test_mapping_loader.py 가 두 곳의 일치를 확인한다.
+# **이 파일이 어휘의 원본이다.** flagging.py 가 여기서 FLAGS 를 읽고,
+# schemas/parsed_record.schema.json 의 enum 은 tools/sync_flag_enum.py 가
+# 여기서 생성한다. 새 flag 는 이 파일에만 적고 생성기를 돌린 뒤 pytest 를
+# 돌린다. 어긋나면 tests/test_mapping_loader.py 가 잡는다.
+#
+# ---------------------------------------------------------------- rule
+#
+# `when` 은 절(clause) 목록이고 **하나라도 맞으면** 붙는다. 절이 여럿인
+# 것은 같은 뜻이 아티팩트마다 다르게 나타나기 때문이다 — deleted 를 보라.
+#
+#   artifact  대상. `evtx:*` 는 접두어 일치, `*` 하나면 전부.
+#             카탈로그(_artifacts.yaml)에 있는 이름이어야 한다.
+#   match     생략하면 "그 아티팩트의 모든 레코드". 나머지는 셋.
+#               event_id       record["event_id"] 가 values 안에 있는가
+#               list_contains  record[field] (리스트) 가 values 와 겹치는가
+#               field_equals   record[field] 가 value 와 같은가
+#
+# `handler` 는 선언으로 표현되지 않는 판정이다. flagging.py 의 HANDLERS 에
+# 등록된 이름만 쓸 수 있다. `when` 과 함께 쓰면 **둘 다** 만족해야 한다 —
+# when 이 대상을 좁히고 handler 가 판정한다.
+#
+# **선언으로 되는 것을 handler 로 넘기지 않는다.** 그러면 이 파일만 읽어서는
+# 무슨 조건인지 알 수 없게 되고, 그게 원래 문제였다. handler 는 타임스탬프
+# 비교처럼 근거가 코드 주석에 붙어 있어야 하는 것만 쓴다.
+#
+# `condition` 은 사람이 읽는 요약이다. 실행되는 것은 `rule` 이다.
 
 flags:
   timestamp_mismatch:
     artifacts: [$MFT]
-    condition: $SI와 $FN 타임스탬프 불일치
+    condition: $SI와 $FN 생성 시각 불일치
     note: 타임스탬프 조작(T1070.006)의 대표 흔적. $FN은 사용자 도구로 바꾸기 어렵다.
+    rule:
+      when:
+        - artifact: $MFT
+      # 방향과 대상 선택에 실측 근거가 붙어 있다. flagging.py 의
+      # MISMATCH_PAIRS 주석 참조 — 세 쌍을 다 보면 오탐 59%였다.
+      handler: si_earlier_than_fn
 
   deleted:
     artifacts: [$MFT, $UsnJrnl]
@@ -20,6 +50,27 @@ flags:
       두 아티팩트가 같은 이름을 쓰는 이유는 뜻이 같기 때문이다. $MFT는
       "지금 지워져 있다"는 상태고 $UsnJrnl은 "지워졌다"는 사건이다.
       Tier 2 유예 조건이 이 플래그를 보므로 이름이 갈라지면 안 된다.
+    rule:
+      when:
+        - artifact: $MFT
+          match: field_equals
+          field: allocated
+          value: false
+        - artifact: $UsnJrnl
+          match: list_contains
+          field: reason
+          values: [file_delete]
+
+  zero_timestamp:
+    artifacts: [$MFT]
+    condition: 타임스탬프가 0 또는 비정상 값
+    note: |
+      $UsnJrnl에는 붙이지 않는다. USN 파서는 시각을 읽지 못하면 timestamp
+      키 자체를 빼므로 "0이 들어 있다"를 판정할 대상이 없다.
+    rule:
+      when:
+        - artifact: $MFT
+      handler: has_zero_timestamp
 
   file_created:
     artifacts: [$UsnJrnl]
@@ -31,18 +82,35 @@ flags:
 
       범위를 좁히지 않으면 많이 걸린다 — 바쁜 볼륨에서는 파일 생성이
       수만 건이다. 03단계가 extensions 로 좁혀 주는 것을 전제한다.
-
-  zero_timestamp:
-    artifacts: [$MFT]
-    condition: 타임스탬프가 0 또는 비정상 값
+    rule:
+      when:
+        - artifact: $UsnJrnl
+          match: list_contains
+          field: reason
+          values: [file_create]
 
   account_created:
     artifacts: [evtx:Security]
     condition: EVTX 4720
+    rule:
+      when:
+        - artifact: evtx:*
+          match: event_id
+          values: [4720]
 
   privileged_group_add:
     artifacts: [evtx:Security]
     condition: EVTX 4728/4732, 대상이 특권 그룹
+    note: |
+      4728/4732에서 TargetUserName은 **그룹 이름**이다. 계정 이름이 아니다.
+      이걸 헷갈리면 특권 그룹 추가를 전부 놓친다. 그 판정이 handler 에
+      남아 있는 이유다 — 아래 privileged_groups 목록과 대조해야 한다.
+    rule:
+      when:
+        - artifact: evtx:*
+          match: event_id
+          values: [4728, 4732]
+      handler: target_is_privileged_group
 
   outside_time_range:
     artifacts: [$MFT, $UsnJrnl, evtx:Security, evtx:System]
@@ -51,7 +119,15 @@ flags:
       범위 밖이라도 버리지 않고 표시만 한다. 시간 범위 추론이 틀렸을 때
       원인을 되짚으려면 레코드가 남아 있어야 한다.
 
-# 특권 그룹 판정 기준. privileged_group_add 가 참조한다.
+      scope 를 알아야 판정되므로 handler 다. 03단계 산출물이 없으면
+      (scope=None) 절대 붙지 않는다.
+    rule:
+      when:
+        - artifact: "*"
+      handler: outside_selected_time_range
+
+# 특권 그룹 판정 기준. privileged_group_add 의 handler 가 참조한다.
+# 이쪽은 예전부터 런타임에 읽던 값이라 이름만 추가하면 바로 반영된다.
 privileged_groups:
   - Administrators
   - Domain Admins
