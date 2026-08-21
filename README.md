@@ -145,6 +145,8 @@ PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01 benc
 1. `work-guide.md` — 설계 전제와 팀 분담
 2. `schemas/README.md` — 데이터 계약, **스펙에 없어서 정한 것 8건**
 3. `benchmark/datasets/C-001-webshell/README.md` — 목업 사용법
+4. [`docs/agent-harness.md`](docs/agent-harness.md) — `.claude/`가 무엇이고
+   pull 하면 무엇이 달라지는지. Claude Code를 쓰든 안 쓰든 1절은 보세요
 
 담당별로 이어서 읽을 것:
 

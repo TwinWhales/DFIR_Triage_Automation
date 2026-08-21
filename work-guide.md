@@ -343,5 +343,6 @@ dfir-triage/
 - `docs/project-structure.md` — 디렉터리 구조 및 파일별 역할
 - `docs/mapping-guide.md` — 매핑 테이블 작성 규칙
 - `docs/llm-handover.md` — 02·05 LLM 연결 인계 문서
+- `docs/agent-harness.md` — `.claude/` 에이전트 하네스 안내 (팀원용)
 - `docs/artifact-notes.md` — 온디스크 구조 조사 메모 (진행 중 누적)
 - `docs/limitations.md` — 미지원 범위 및 알려진 한계 (진행 중 누적)
