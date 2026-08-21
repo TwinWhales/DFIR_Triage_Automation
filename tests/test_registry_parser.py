@@ -38,28 +38,87 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # 실물 하이브. 없으면 통합 테스트를 건너뛴다.
 REAL_HIVES = REPO_ROOT / "evidence" / "[root]" / "Windows" / "System32" / "config"
 
+_FILETIME_EPOCH = dt.datetime(1601, 1, 1, tzinfo=UTC)
+
+
+def to_filetime(moment: dt.datetime) -> int:
+    """정수 연산만 쓴다. 파서가 절삭하므로 픽스처도 절삭 기준이어야 한다."""
+    delta = moment - _FILETIME_EPOCH
+    return (delta.days * 86_400 + delta.seconds) * 10_000_000 + delta.microseconds * 10
+
 
 # ============================================================ 가짜 객체
 
 
 class FakeNk:
-    def __init__(self, offset: int) -> None:
+    """``NKRecord`` 흉내. 파서는 오프셋과 raw FILETIME 만 여기서 가져간다."""
+
+    def __init__(self, offset: int, filetime: int = 0) -> None:
         self._offset = offset
+        self._filetime = filetime
 
     def offset(self) -> int:
         return self._offset
 
+    def unpack_qword(self, at: int) -> int:
+        assert at == registry.NK_TIMESTAMP_OFFSET
+        if isinstance(self._filetime, Exception):
+            raise self._filetime
+        return self._filetime
+
 
 class FakeValue:
-    """``RegistryValue`` 흉내. ``raises``를 주면 값을 읽을 때 터진다."""
+    """``RegistryValue`` 흉내. ``raises``를 주면 값을 읽을 때 터진다.
 
-    def __init__(self, name: str, value=None, raises: Exception | None = None) -> None:
+    파서는 타입에 따라 두 경로로 갑니다. 문자열 타입이면 ``raw_data()``를
+    직접 디코딩하고(라이브러리가 한글을 자르므로), 나머지는 ``value()``를
+    씁니다. 그래서 가짜도 둘 다 흉내 냅니다.
+
+    ``value_type``을 주지 않으면 파이썬 타입에서 짐작합니다 — 문자열
+    픽스처를 쓰는 테스트가 매번 타입을 적지 않아도 되게 하려는 것입니다.
+    문자열이면 ``raw_data``도 UTF-16LE로 만들어 줍니다.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        value=None,
+        raises: Exception | None = None,
+        value_type: str | None = None,
+        raw: bytes | None = None,
+    ) -> None:
         self._name = name
         self._value = value
         self._raises = raises
+        self._type = value_type or self._guess_type(value)
+        self._raw = raw
+
+    @staticmethod
+    def _guess_type(value) -> str:
+        if isinstance(value, str):
+            return "RegSZ"
+        if isinstance(value, list):
+            return "RegMultiSZ"
+        if isinstance(value, bytes):
+            return "RegBin"
+        return "RegDWord"
 
     def name(self) -> str:
         return self._name
+
+    def value_type_str(self) -> str:
+        return self._type
+
+    def raw_data(self) -> bytes:
+        if self._raises is not None:
+            raise self._raises
+        if self._raw is not None:
+            return self._raw
+        if isinstance(self._value, str):
+            return (self._value + "\x00").encode("utf-16-le")
+        if isinstance(self._value, list):
+            return ("\x00".join(self._value) + "\x00\x00").encode("utf-16-le")
+        return b""
 
     def value(self):
         if self._raises is not None:
@@ -83,21 +142,25 @@ class FakeKey:
         timestamp_raise: Exception | None = None,
     ) -> None:
         self._name = name
-        self._nkrecord = FakeNk(offset)
+        moment = timestamp or dt.datetime(2026, 7, 24, 0, 28, 36, 123456, tzinfo=UTC)
+        self._nkrecord = FakeNk(
+            offset, timestamp_raise if timestamp_raise is not None else to_filetime(moment)
+        )
         self._values = values or []
         self._subkeys = subkeys or []
-        self._timestamp = timestamp or dt.datetime(2026, 7, 24, 0, 28, 36, 123456)
         self._subkeys_raise = subkeys_raise
         self._values_raise = values_raise
-        self._timestamp_raise = timestamp_raise
 
     def name(self) -> str:
         return self._name
 
     def timestamp(self):
-        if self._timestamp_raise is not None:
-            raise self._timestamp_raise
-        return self._timestamp
+        """파서는 이것을 쓰지 않는다 — 반올림 때문에 우회한다.
+
+        실물 API 를 흉내 내려고 남겨 두되, 파서가 실수로 쓰면 드러나도록
+        일부러 틀린 값을 준다.
+        """
+        return dt.datetime(1601, 1, 1, tzinfo=UTC)
 
     def values(self):
         if self._values_raise is not None:
@@ -174,8 +237,79 @@ def test_multi_sz_stays_a_list():
     assert registry.value_to_field(FakeValue("x", ["Tdx", "nsi"])) == ["Tdx", "nsi"]
 
 
+def test_multi_sz_terminators_are_not_values():
+    """``MULTI_SZ`` 끝의 널 종결자가 빈 문자열로 남으면 안 된다.
+
+    구조는 "각 문자열이 널로 끝나고 목록 전체가 널 하나로 더 끝나는"
+    것이라, 널 기준으로 그냥 쪼개면 빈 항목이 둘 남는다. python-registry
+    가 그렇게 한다.
+
+        raw_data : b'r\\x00p\\x00c\\x00s\\x00s\\x00\\x00\\x00\\x00\\x00'
+        라이브러리 : ['rpcss', '', '']
+        실제 내용  : ['rpcss']
+
+    **06단계에 실제 영향이 있다.** compare 가 리스트를 "원소 중 하나라도
+    일치"로 보므로, 빈 문자열이 남으면 모델이 지어낸 value: "" 주장이
+    검증을 통과한다.
+
+    실측 SYSTEM\\ControlSet001\\Services 1,754개 키 중 249개가 이 형태였다.
+    """
+    value = FakeValue(
+        "DependOnService",
+        raw=b"r\x00p\x00c\x00s\x00s\x00\x00\x00\x00\x00",
+        value_type="RegMultiSZ",
+    )
+
+    assert registry.value_to_field(value) == ["rpcss"]
+
+
+def test_a_multi_sz_gap_in_the_middle_survives():
+    """가운데 빈 문자열은 종결자가 아니라 위치가 의미를 가진다."""
+    value = FakeValue("x", raw="a\x00\x00b\x00\x00".encode("utf-16-le"), value_type="RegMultiSZ")
+
+    assert registry.value_to_field(value) == ["a", "", "b"]
+
+
+def test_korean_strings_are_not_truncated_at_a_false_terminator():
+    """python-registry 가 UTF-16LE 종결자를 정렬 없이 찾아 한글을 자른다.
+
+        '볼륨 관리자 드라이버'
+         fc bc │ 68 b9 │ 20 00 │ 00 ad │ ...
+          볼      륨    공백    관
+                        └─ 00 00 ─┘   ← 오프셋 5(홀수)에서 끊긴다
+
+    공백(U+0020, 고위 바이트 0x00) 다음에 U+XX00 형태 한글이 오면 두
+    문자에 걸쳐 00 00 이 만들어진다. 한글에 흔한 배치다 —
+    U+AC00(가) U+AD00(관) 처럼 하위 바이트가 0x00 인 음절이 많다.
+
+    실측 SYSTEM 하이브: 문자열 값 42,578건 중 56건(0.13%)이 잘렸다.
+    예외도 경고도 없고 잘린 문자열은 그 자체로 그럴듯해 보인다.
+
+    이 프로젝트는 한국어 환경을 대상으로 하므로 회귀로 고정한다.
+    """
+    text = "볼륨 관리자 드라이버"
+    raw = (text + "\x00").encode("utf-16-le")
+    assert b"\x00\x00" in raw  # 가짜 종결자가 실제로 들어 있다
+
+    assert registry.value_to_field(FakeValue("DisplayName", raw=raw, value_type="RegSZ")) == text
+
+
+def test_an_odd_length_string_drops_the_stray_byte():
+    """반쪽짜리 문자는 복원할 수 없다. 널을 붙이면 없던 문자가 생긴다."""
+    raw = "ab".encode("utf-16-le") + b"\x41"
+
+    assert registry.value_to_field(FakeValue("x", raw=raw, value_type="RegSZ")) == "ab"
+
+
 def test_binary_inside_a_list_is_also_hex():
-    assert registry.value_to_field(FakeValue("x", [b"\x01", "b"])) == ["01", "b"]
+    """문자열 아닌 타입이 리스트를 돌려주는 경우의 방어선.
+
+    ``RegMultiSZ``는 이제 ``raw_data()``를 직접 디코딩하므로 여기에
+    bytes 가 섞일 수 없습니다. 다른 타입에서 라이브러리가 예상 밖의
+    리스트를 주면 bytes 가 그대로 JSON 으로 나가려 하는데, 그때 막습니다.
+    """
+    value = FakeValue("x", [b"\x01", "b"], value_type="RegResourceList")
+    assert registry.value_to_field(value) == ["01", "b"]
 
 
 # ============================================================ 레코드 형식
@@ -215,13 +349,25 @@ def test_values_land_in_fields_by_name():
 
 
 def test_the_unnamed_default_value_gets_a_usable_key():
-    """빈 문자열을 키로 쓰면 06단계가 'fields.' 로 끝나는 필드를 가리켜야 한다."""
+    """빈 문자열을 키로 쓰면 06단계가 'fields.' 로 끝나는 필드를 가리켜야 한다.
+
+    **상수는 python-registry가 쓰는 값과 같아야 한다.** 라이브러리는 이름
+    없는 값에 `"(default)"`를 이미 돌려주므로, 상수가 다르면 그것은 죽은
+    코드가 되고 실제 키는 라이브러리 것이 된다. 한때 `"(Default)"`였고
+    정확히 그렇게 됐다 — 독립 디코더 대조에서 드러났다.
+    """
+    assert registry.DEFAULT_VALUE_NAME == "(default)"
+
     parser = _parser()
-    key = FakeKey("k", 0x1000, values=[FakeValue("", "default data")])
+    from_library = parser._build(  # 라이브러리가 실제로 주는 형태
+        FakeKey("k", 0x1000, values=[FakeValue("(default)", "d")]), "SYSTEM\\k", 0x1000
+    )
+    from_empty = parser._build(  # 빈 문자열이 올 경우의 안전망
+        FakeKey("k", 0x2000, values=[FakeValue("", "d")]), "SYSTEM\\k", 0x2000
+    )
 
-    record = parser._build(key, "SYSTEM\\k", 0x1000)
-
-    assert record["fields"] == {registry.DEFAULT_VALUE_NAME: "default data"}
+    assert from_library["fields"] == {"(default)": "d"}
+    assert from_empty["fields"] == {"(default)": "d"}
 
 
 def test_a_key_with_no_values_is_still_a_record():

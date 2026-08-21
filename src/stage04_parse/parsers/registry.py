@@ -87,13 +87,17 @@ from Registry import Registry
 
 from ...common import refs
 from ...common.io import normalize_path
+from ..structs.mft_record import filetime_to_datetime
 from .base import Scope
 
 __all__ = [
     "RegistryParser",
     "HIVE_OF",
     "DEFAULT_VALUE_NAME",
+    "STRING_TYPES",
+    "MULTI_STRING_TYPE",
     "MAX_DEPTH",
+    "NK_TIMESTAMP_OFFSET",
     "hive_designator",
     "value_to_field",
 ]
@@ -110,7 +114,22 @@ HIVE_OF: dict[str, str] = {
 #:
 #: 빈 문자열을 키로 쓰면 06단계가 ``fields.`` 로 끝나는 필드를 가리켜야
 #: 하는데, ``get_field``의 점 표기로는 표현할 수 없습니다.
-DEFAULT_VALUE_NAME = "(Default)"
+#:
+#: **값은 python-registry가 쓰는 것과 같아야 합니다.** 라이브러리의
+#: ``RegistryValue.name()``이 이름 없는 값에 이 문자열을 이미 돌려주므로,
+#: 다른 값을 쓰면 상수는 죽은 코드가 되고 실제 키는 라이브러리 것이 됩니다.
+#: 한때 ``"(Default)"``였고 정확히 그렇게 됐습니다.
+#:
+#: 이름이 실제로 이 문자열인 값과 충돌할 수 있으나, 실측 하이브
+#: 20,512개 키에서 0건이었습니다.
+DEFAULT_VALUE_NAME = "(default)"
+
+#: 우리가 직접 디코딩할 문자열 타입. 라이브러리에 맡기면 한글이 잘린다.
+STRING_TYPES = frozenset({"RegSZ", "RegExpandSZ"})
+MULTI_STRING_TYPE = "RegMultiSZ"
+
+#: nk 레코드 안에서 LastWrite FILETIME 이 있는 자리.
+NK_TIMESTAMP_OFFSET = 0x04
 
 #: 순회 깊이 상한. 손상된 하이브의 순환을 오프셋으로도 막지만,
 #: 비정상적으로 깊은 체인에서 멈출 자리도 둡니다.
@@ -142,37 +161,134 @@ def value_to_field(value: Any) -> Any:
 
     - ``RegSZ`` / ``RegExpandSZ`` → 문자열 그대로
     - ``RegDWord`` / ``RegQWord`` → 정수 그대로
-    - ``RegMultiSZ`` → **리스트 그대로.** 06단계 ``compare``가 리스트를
-      "원소 중 하나라도 일치"로 보므로, 문장이 여러 값 중 하나를 지목해도
-      검증됩니다. 문자열로 합치면 그 성질이 사라집니다.
+    - ``RegMultiSZ`` → **리스트.** 06단계 ``compare``가 리스트를 "원소 중
+      하나라도 일치"로 보므로, 문장이 여러 값 중 하나를 지목해도 검증됩니다.
+      문자열로 합치면 그 성질이 사라집니다. 끝의 빈 문자열은 뗍니다 —
+      아래 참조.
     - ``RegBin`` / 리소스 목록 → **소문자 16진 문자열.** bytes 는 JSON 으로
       나가지 않고, base64 는 사람이 읽고 대조할 수 없습니다.
+
+    **문자열 타입은 ``value.value()``를 쓰지 않습니다.** 라이브러리가
+    한글을 자릅니다 — ``_decode_utf16le`` 참조.
 
     값을 읽다 실패하면 ``None``이 아니라 예외를 올립니다. 부르는 쪽이
     세고 기록합니다 — 조용히 빈 값이 되면 "값이 없었다"와 구별되지
     않습니다.
     """
+    type_name = value.value_type_str()
+
+    if type_name in STRING_TYPES:
+        # 첫 널 문자까지가 값이다. 널은 종결자이지 내용이 아니다.
+        return _decode_utf16le(value.raw_data()).split("\x00", 1)[0]
+
+    if type_name == MULTI_STRING_TYPE:
+        return _strip_terminators(_decode_utf16le(value.raw_data()).split("\x00"))
+
     raw = value.value()
     if isinstance(raw, bytes):
         return raw.hex()
     if isinstance(raw, list):
-        return [item.hex() if isinstance(item, bytes) else item for item in raw]
+        return _strip_terminators(
+            [item.hex() if isinstance(item, bytes) else item for item in raw]
+        )
     return raw
+
+
+def _decode_utf16le(blob: bytes) -> str:
+    """UTF-16LE 로 디코딩한다. **정렬을 지킨다.**
+
+    python-registry 의 ``decode_utf16le`` 는 종결자를 ``s.index(b"\\x00\\x00")``
+    로 찾습니다. **바이트 검색이라 문자 경계를 보지 않습니다.** 앞이
+    ASCII(고위 바이트 0x00)이고 뒤가 ``U+XX00`` 형태 문자면 두 문자에
+    걸쳐 ``00 00`` 이 만들어지고, 거기서 문자열이 끊깁니다.
+
+    한글에서 흔합니다. ``U+AC00``(가) ``U+AD00``(관) 처럼 하위 바이트가
+    0x00 인 음절이 많고, 그 앞에 공백이 오는 것이 보통이기 때문입니다::
+
+        '볼륨 관리자 드라이버'
+         fc bc │ 68 b9 │ 20 00 │ 00 ad │ ...
+          볼      륨    공백    관
+                        └─ 00 00 ─┘   ← 오프셋 5(홀수)에서 끊긴다
+
+        라이브러리 : '볼륨 '
+        실제       : '볼륨 관리자 드라이버'
+
+    실측 ``evidence/[root]`` SYSTEM 하이브: 문자열 값 42,578건 중
+    **56건(0.13%)** 이 잘렸습니다. 전부 한글입니다. 서비스 표시명과
+    드라이버 설명이 주로 걸립니다.
+
+    조용히 잘리는 것이라 더 나쁩니다. 예외도 경고도 없고, 잘린 문자열은
+    그 자체로 그럴듯해 보입니다.
+
+    **홀수 길이면 마지막 바이트를 버립니다.** 반쪽짜리 문자는 어차피
+    복원할 수 없고, 라이브러리처럼 ``\\x00`` 을 붙이면 없던 문자가 생깁니다.
+    """
+    if len(blob) % 2:
+        blob = blob[:-1]
+    return blob.decode("utf-16-le", "replace")
+
+
+def _strip_terminators(items: list) -> list:
+    """``RegMultiSZ`` 끝의 빈 문자열을 뗀다.
+
+    ``MULTI_SZ``는 **각 문자열이 널로 끝나고 목록 전체가 널 하나로 더
+    끝나는** 구조입니다. python-registry는 널 기준으로 그냥 쪼개므로
+    종결자 두 개가 빈 문자열로 남습니다::
+
+        raw_data : b'r\\x00p\\x00c\\x00s\\x00s\\x00\\x00\\x00\\x00\\x00'
+        value()  : ['rpcss', '', '']      ← 라이브러리
+        실제 내용 : ['rpcss']
+
+    C 문자열의 널 종결자를 값에 포함시키지 않는 것과 같습니다. 실측
+    ``SYSTEM\\ControlSet001\\Services`` 1,754개 키 중 **249개**가 이
+    형태였습니다.
+
+    **06단계에 실제 영향이 있습니다.** ``compare``는 리스트를 "원소 중
+    하나라도 일치"로 보므로, 빈 문자열이 남아 있으면 모델이 지어낸
+    ``value: ""`` 주장이 **검증을 통과합니다.**
+
+    가운데 빈 문자열은 건드리지 않습니다. 구조적으로 있을 수 있고,
+    종결자와 달리 위치가 의미를 가집니다.
+    """
+    out = list(items)
+    while out and out[-1] == "":
+        out.pop()
+    return out
 
 
 def _timestamp(key: Any) -> "str | None":
     """키의 LastWrite. 읽을 수 없으면 ``None``.
 
+    **``key.timestamp()``를 쓰지 않습니다.** python-registry가 100ns를
+    마이크로초로 줄이면서 ``ROUND_HALF_EVEN``으로 **반올림**하기 때문입니다
+    (``RegistryParse.parse_timestamp``). 이 프로젝트의 나머지 파서는 전부
+    ``filetime_to_datetime``으로 **절삭**합니다.
+
+    1µs 차이라 허용 오차 안이지만, 문제는 값이 아니라 **표기가 사실과
+    달라지는 것**입니다. 우리 형식은 끝에 ``0``을 붙여 7자리를 만듭니다 —
+    "100ns 자릿수는 버렸다"는 뜻입니다. 반올림하면 그 자리가 6번째 자리에
+    섞여 들어가는데 표기는 여전히 버렸다고 말합니다.
+
+    실측: raw FILETIME ``128920208934228618`` (끝자리 8)
+    → 라이브러리 ``.422862`` / 정수 절삭 ``.422861``.
+
+    evtx 파서가 python-evtx의 ``timestamp()``를 우회한 것과 같은 이유입니다
+    (``parsers/evtx.py`` ``record_timestamp``). 저쪽은 float 오차였고
+    이쪽은 반올림이라 원인은 다르지만, 원본에 충실해야 한다는 결론은
+    같습니다.
+
     레코드를 버리지는 않습니다. 시각이 이상한 것 자체가 증거일 수 있고,
     키가 거기 존재한다는 사실만으로도 값이 있습니다.
     """
+    record = getattr(key, "_nkrecord", None)
+    if record is None:
+        return None
     try:
-        moment = key.timestamp()
-    except Exception:  # noqa: BLE001 - 라이브러리가 던지는 종류가 문서화돼 있지 않다
+        # nk 레코드의 0x04 에 FILETIME qword 가 있다.
+        moment = filetime_to_datetime(record.unpack_qword(NK_TIMESTAMP_OFFSET))
+    except Exception:  # noqa: BLE001 - 손상 셀에서 무엇이 나올지 모른다
         return None
-    if moment is None:
-        return None
-    return moment.strftime("%Y-%m-%dT%H:%M:%S.%f0Z")
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.%f0Z") if moment is not None else None
 
 
 class RegistryParser:
