@@ -114,8 +114,8 @@ A부를 건너뛰면 B부의 "건드리면 안 되는 것"이 왜 그런지 납�
 각 단계는 **독립 CLI**입니다. 함수 호출로 엮여 있지 않습니다.
 
 ```bash
-python -m src.stage02_normalize.normalize --in 01_input.json --out 02_scenario.json
-python -m src.stage03_select.select       --in 02_scenario.json --out 03_selection.json
+.venv/Scripts/python.exe -m src.stage02_normalize.normalize --in 01_input.json --out 02_scenario.json
+.venv/Scripts/python.exe -m src.stage03_select.select       --in 02_scenario.json --out 03_selection.json
 ...
 ```
 
@@ -403,7 +403,7 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pytest
 ```
 
-`465 passed`가 나와야 합니다. (Linux/macOS면 `.venv/bin/python`)
+`529 passed`가 나와야 합니다. (Linux/macOS면 `.venv/bin/python`)
 
 ```bash
 .venv/Scripts/python.exe tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \
@@ -621,12 +621,12 @@ FINDINGS_BODY_FIELDS = ("findings", "timeline")   # input_refs 없음
 | 실제 모델로 02가 스키마를 통과 | `--llm ollama` 실행 후 `02_scenario.json` 생성 |
 | 실제 모델로 05가 스키마를 통과 | 04 파서 완성 후 |
 | 관통 실행이 스텁 없이 완료 | `run_pipeline.sh C-001 <evidence>` (3번째 인자 없이) |
-| 회귀 없음 | `python -m pytest` → 465 passed |
+| 회귀 없음 | `.venv/Scripts/python.exe -m pytest` → 529 passed |
 
 ### 10-2. 측정해서 보고할 것
 
 ```bash
-python -c "from src.common.errors import tally; import json; \
+.venv/Scripts/python.exe -c "from src.common.errors import tally; import json; \
   print(json.dumps(tally('cases/C-001/errors.jsonl'), ensure_ascii=False, indent=2))"
 ```
 

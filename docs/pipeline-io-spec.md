@@ -565,19 +565,25 @@ $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황�
 모든 스크립트는 동일한 CLI 형태를 따릅니다.
 
 ```bash
-python normalize.py --in cases/C-001/01_input.json  --out cases/C-001/02_scenario.json
-python select.py    --in cases/C-001/02_scenario.json --out cases/C-001/03_selection.json \
-                    --mappings mappings/
-python parse.py     --in cases/C-001/03_selection.json --out cases/C-001/04_parsed/ \
-                    --evidence /mnt/evidence/WEB01
-python interpret.py --in cases/C-001/04_parsed/ --scenario cases/C-001/02_scenario.json \
-                    --out cases/C-001/05_findings.json
-python verify.py    --findings cases/C-001/05_findings.json --parsed cases/C-001/04_parsed/ \
-                    --out cases/C-001/06_verified.json
-python report.py    --in cases/C-001/06_verified.json --findings cases/C-001/05_findings.json \
-                    --selection cases/C-001/03_selection.json --out cases/C-001/07_report.md
+.venv/Scripts/python.exe -m src.stage02_normalize.normalize \
+    --in cases/C-001/01_input.json --out cases/C-001/02_scenario.json
+.venv/Scripts/python.exe -m src.stage03_select.select \
+    --in cases/C-001/02_scenario.json --out cases/C-001/03_selection.json \
+    --mappings mappings/
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
+    --in cases/C-001/03_selection.json --out cases/C-001/04_parsed/ \
+    --evidence /mnt/evidence/WEB01
+.venv/Scripts/python.exe -m src.stage05_interpret.interpret \
+    --in cases/C-001/04_parsed/ --scenario cases/C-001/02_scenario.json \
+    --out cases/C-001/05_findings.json
+.venv/Scripts/python.exe -m src.stage06_verify.verify \
+    --findings cases/C-001/05_findings.json --parsed cases/C-001/04_parsed/ \
+    --out cases/C-001/06_verified.json
+.venv/Scripts/python.exe -m src.stage07_report.report \
+    --in cases/C-001/06_verified.json --findings cases/C-001/05_findings.json \
+    --selection cases/C-001/03_selection.json --out cases/C-001/07_report.md
 ```
 
 각 스크립트는 시작 시 입력 파일을, 종료 시 출력 파일을 `schemas/` 아래 JSON Schema로 검증합니다. 검증 실패는 `errors.jsonl`에 기록 후 비정상 종료합니다.
 
-전체 실행은 셸 스크립트 한 줄로 엮되, 중간 단계부터 재실행이 가능해야 합니다. 파싱은 시간이 오래 걸리므로 `04_parsed/`가 이미 존재하면 건너뛰는 옵션(`--skip-existing`)을 두면 실험 반복이 빨라집니다.
+전체 실행은 `run_pipeline.sh`가 엮으며, 중간 단계부터 재실행할 수 있습니다. 파싱이 가장 오래 걸리므로 04단계에 `04_parsed/`가 이미 있으면 건너뛰는 `--skip-existing`이 있고, `run_pipeline.sh`는 이 옵션을 항상 붙입니다.

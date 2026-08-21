@@ -18,7 +18,7 @@
 
 ```bash
 # 아직 select.py가 없어도, 03 목업을 입력 삼아 파싱 단계를 개발할 수 있습니다
-python -m src.stage04_parse.parse \
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
   --in benchmark/datasets/C-001-webshell/mock/03_selection.json \
   --out /tmp/out/ --evidence <evidence_root>
 ```

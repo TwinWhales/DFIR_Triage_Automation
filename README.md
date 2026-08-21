@@ -16,20 +16,25 @@
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
 # source .venv/bin/activate && pip install -r requirements.txt  # Linux/macOS
-python -m pytest
+.venv/Scripts/python.exe -m pytest
 ```
+
+아래 예시는 전부 **가상환경의 파이썬을 명시적으로** 부릅니다. Windows에서
+맨 `python`은 다른 인터프리터로 잡히는 일이 흔하고, 버전이 같으면 조용히
+실행되다가 `Evtx`·`Registry` import에서야 터집니다. Linux/macOS라면
+`.venv/bin/python`으로 바꿔 읽으세요.
 
 ## 실행
 
 ```bash
-python tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01
-./run_pipeline.sh C-001 /mnt/evidence/WEB01
+.venv/Scripts/python.exe tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01
+PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01
 ```
 
 ## 평가
 
 ```bash
-python benchmark/evaluate.py --dataset benchmark/datasets/C-001-webshell
+.venv/Scripts/python.exe benchmark/evaluate.py --dataset benchmark/datasets/C-001-webshell
 ```
 
 수치만 내지 않고 **어느 단계에서 놓쳤는지**를 가릅니다. 정답 레코드마다
@@ -37,7 +42,7 @@ python benchmark/evaluate.py --dataset benchmark/datasets/C-001-webshell
 매핑인지 프롬프트인지 바로 보입니다.
 
 ```bash
-python benchmark/validator_check.py
+.venv/Scripts/python.exe benchmark/validator_check.py
 ```
 
 검증기가 과엄격해지는 것을 막는 장치입니다. 사람이 옳다고 판단한 문장
@@ -119,17 +124,17 @@ SYSTEM 34,855건·SOFTWARE 156,716건이 정확히 일치했습니다. 값 대�
 `reg load`로 남아 있습니다.
 
 ```bash
-python tools/scan_hive_cells.py --hive <volume>/Windows/System32/config/SYSTEM   --ours cases/C-001/04_parsed/registry_system.jsonl
+.venv/Scripts/python.exe tools/scan_hive_cells.py --hive <volume>/Windows/System32/config/SYSTEM   --ours cases/C-001/04_parsed/registry_system.jsonl
 ```
 
 ### 관통 실행해 보기
 
 ```bash
-python tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \
+.venv/Scripts/python.exe tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \
   --input benchmark/datasets/C-001-webshell/input.json \
   --seed-parsed benchmark/datasets/C-001-webshell/mock/04_parsed
 
-./run_pipeline.sh C-001 /mnt/evidence/WEB01 benchmark/datasets/C-001-webshell/mock
+PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01 benchmark/datasets/C-001-webshell/mock
 ```
 
 `cases/C-001/`에 01부터 07까지 쌓이고 `07_report.md`가 나옵니다.
@@ -154,7 +159,7 @@ python tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \
 `mock/`은 `cases/C-001/`과 같은 레이아웃이라 CLI 인자만 바꿔 끼우면 됩니다.
 
 ```bash
-python -m src.stage04_parse.parse \
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
   --in benchmark/datasets/C-001-webshell/mock/03_selection.json \
   --out /tmp/out/ --evidence <evidence_root>
 ```

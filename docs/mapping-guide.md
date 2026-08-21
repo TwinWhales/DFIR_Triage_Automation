@@ -174,7 +174,8 @@ XAMPP나 Tomcat 환경을 다루게 되면 별도 매핑 변형이 필요합니�
    (없으면 02단계가 스키마 위반으로 기각한다)
 2. `mappings/<os>/<기법ID>.yaml`을 만든다
 3. 필요한 아티팩트가 카탈로그에 없으면 `_artifacts.yaml`에 먼저 추가한다
-4. `python -m pytest tests/test_mapping_loader.py` 로 로드되는지 확인한다
+4. `.venv/Scripts/python.exe -m pytest tests/test_mapping_loader.py` 로
+   로드되는지 확인한다
 
 `tests/test_mapping_loader.py`는 모든 매핑에 대해 Tier 2의 `trigger` 유무,
 변수의 기본값 유무, 카탈로그 등록 여부를 자동으로 확인합니다. 새 파일도
