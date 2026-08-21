@@ -58,6 +58,7 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 | 디렉터리별 역할과 근거 | `docs/project-structure.md` |
 | 어디까지가 우리 코드인가 | `third_party/README.md` |
 | 04단계에 새 파서를 추가하는 절차 | `.claude/skills/add-parser/SKILL.md` |
+| 새 시나리오·기법에 대응하게 만드는 절차 | `.claude/skills/add-scenario/SKILL.md` |
 
 작업 전에 해당 문서를 읽는다. 여기 요약본을 만들지 않는다.
 

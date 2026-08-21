@@ -79,7 +79,8 @@ CLAUDE.md                          Claude가 매 세션 읽는 기준 문서
 ├── hooks/
 │   └── pytest-on-source-change.sh 훅이 실제로 실행하는 스크립트
 └── skills/
-    └── add-parser/SKILL.md        04단계 파서 추가 절차
+    ├── add-parser/SKILL.md        04단계 파서 추가 절차
+    └── add-scenario/SKILL.md      새 기법·시나리오 대응 절차
 ```
 
 ### `CLAUDE.md`
@@ -166,6 +167,11 @@ CLAUDE.md와 나눈 기준은 분량입니다. CLAUDE.md는 매 세션 비용이
 `add-parser`가 정당한 이유는 **이미 네 번 했기** 때문입니다 — `$MFT`,
 `$UsnJrnl`, `evtx`, `registry`.
 
+`add-scenario`는 매핑을 여섯 번 썼기 때문입니다. **다만 그 안의 flags
+추가 절차는 아직 한 번도 안 밟아 봤습니다** — 어휘를 YAML 원본으로
+바꾸면서 같이 적은 것이라 검증되지 않았습니다. 처음 쓰는 사람이 틀린
+것을 발견하면 그 자리에서 고치고 같은 커밋에 넣습니다.
+
 ### 고치는 시점
 
 **틀렸다는 게 드러났을 때만**입니다. 절차대로 했는데 안 되면 그 자리에서
@@ -195,3 +201,4 @@ CLAUDE.md와 나눈 기준은 분량입니다. CLAUDE.md는 매 세션 비용이
 - [`../CLAUDE.md`](../CLAUDE.md) — Claude가 읽는 기준 문서
 - [`../work-guide.md`](../work-guide.md) — 설계 전제와 팀 분담
 - [`../.claude/skills/add-parser/SKILL.md`](../.claude/skills/add-parser/SKILL.md) — 스킬 실물 예시
+- [`../.claude/skills/add-scenario/SKILL.md`](../.claude/skills/add-scenario/SKILL.md) — 새 기법 대응 절차
