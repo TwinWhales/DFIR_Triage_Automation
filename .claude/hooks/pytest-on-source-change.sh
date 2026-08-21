@@ -32,7 +32,7 @@ print(p.replace(chr(92), "/"))
 ')"
 
 case "$file" in
-  */src/*.py|*/tests/*.py) ;;
+  *src/*.py|*tests/*.py) ;;
   *) exit 0 ;;
 esac
 
