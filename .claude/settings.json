@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -m pytest*)",
+      "Bash(./.venv/Scripts/python.exe -m pytest*)",
+      "Bash(.venv/Scripts/python.exe -m src.stage*)",
+      "Bash(./.venv/Scripts/python.exe -m src.stage*)",
+      "Bash(.venv/Scripts/python.exe tools/*)",
+      "Bash(./.venv/Scripts/python.exe tools/*)",
+      "Bash(.venv/Scripts/python.exe benchmark/*)",
+      "Bash(./.venv/Scripts/python.exe benchmark/*)",
+      "Bash(PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh*)",
+      "Bash(PYTHON=./.venv/Scripts/python.exe bash run_pipeline.sh*)",
+
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git ls-files*)",
+      "Bash(git check-ignore*)",
+      "Bash(git --no-pager *)"
+    ]
+  }
+}

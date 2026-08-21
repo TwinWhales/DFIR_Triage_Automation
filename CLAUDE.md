@@ -73,7 +73,7 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 ## 작업 규약
 
 - **커밋**: `type(단계): 한국어 서술형` — `feat(04):`, `fix(04·07):`, `docs:`.
-  type은 `feat|fix|refactor|test|docs`. 명사 나열이 아니라 무엇을 했는지 쓴다.
+  type은 `feat|fix|refactor|test|docs|chore`. 명사 나열이 아니라 무엇을 했는지 쓴다.
 - **브랜치**: `feat/<주제>`, `fix/<주제>`. `main`에 직접 커밋하지 않는다.
 - **커밋 전 `pytest` 통과.** 파서를 고쳤으면 외부 도구나 명세와 대조한 기록을
   `docs/artifact-notes.md`에 남긴다. 대조 없는 파서 변경은 "조용히 틀리는" 쪽이다.

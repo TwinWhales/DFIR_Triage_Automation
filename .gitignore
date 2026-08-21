@@ -25,3 +25,7 @@ tests/fixtures/*.bin
 .DS_Store
 .idea/
 .vscode/
+
+# 에이전트 설정: settings.json 은 팀 공용(커밋), local 은 개인용(제외).
+# 개인 승인 항목이 팀 리포에 섞이지 않게 한다.
+.claude/settings.local.json
