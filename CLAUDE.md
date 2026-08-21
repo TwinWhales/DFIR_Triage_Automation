@@ -75,6 +75,9 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 - **커밋**: `type(단계): 한국어 서술형` — `feat(04):`, `fix(04·07):`, `docs:`.
   type은 `feat|fix|refactor|test|docs|chore`. 명사 나열이 아니라 무엇을 했는지 쓴다.
 - **브랜치**: `feat/<주제>`, `fix/<주제>`. `main`에 직접 커밋하지 않는다.
+- **`src/`·`tests/`의 `.py`를 고치면 훅이 자동으로 `pytest -q -x`를 돌린다**
+  (`.claude/hooks/pytest-on-source-change.sh`). 통과하면 조용하고, 실패하면
+  실패 내역이 돌아온다. 훅이 도는 환경이 아닐 수도 있으니 커밋 전에는 직접 확인한다.
 - **커밋 전 `pytest` 통과.** 파서를 고쳤으면 외부 도구나 명세와 대조한 기록을
   `docs/artifact-notes.md`에 남긴다. 대조 없는 파서 변경은 "조용히 틀리는" 쪽이다.
 - **라이브러리를 우회했으면 왜 우회했는지 `docs/limitations.md`에 적는다.**

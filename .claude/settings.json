@@ -22,5 +22,20 @@
       "Bash(git check-ignore*)",
       "Bash(git --no-pager *)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/pytest-on-source-change.sh\"",
+            "timeout": 180,
+            "statusMessage": "src·tests 변경 — 테스트 확인 중"
+          }
+        ]
+      }
+    ]
   }
 }
