@@ -217,12 +217,12 @@ sLLM이 채우는 유일한 구조체입니다. 여기서부터 이후 단계는
   ],
   "excluded": [
     {
-      "artifact": "prefetch",
-      "reason": "Windows Server 기본 설정에서 비활성화되어 수집 불가"
-    },
-    {
       "artifact": "$LogFile",
       "reason": "본 버전 미지원 (파싱 모듈 범위 외)"
+    },
+    {
+      "artifact": "prefetch",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     }
   ],
   "stats": {
@@ -508,8 +508,8 @@ $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황�
 ### 확인하지 못한 아티팩트
 | 아티팩트 | 사유 |
 |---|---|
-| prefetch | Windows Server 기본 비활성화로 수집 불가 |
 | $LogFile | 본 버전 파싱 모듈 미지원 |
+| prefetch | 증거 없음 — 수집되지 않았습니다 |
 | $UsnJrnl | Tier 2 루프백 미구현으로 미평가 (조건: Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시) |
 ```
 

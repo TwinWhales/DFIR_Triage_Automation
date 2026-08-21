@@ -65,13 +65,15 @@ def test_catalog_loads_every_artifact(catalog):
     # 목록이나 아티팩트의 성질(signal_source)이 바뀌면 이 값도 올린다.
     # 03_selection.json 에 실려 나가므로 산출물만 보고 어느 카탈로그로
     # 돌렸는지 되짚을 수 있어야 한다.
-    assert catalog.mapping_table_version == "0.6"
+    assert catalog.mapping_table_version == "0.7"
 
 
 def test_unsupported_artifacts_carry_a_reason(catalog):
-    assert catalog["prefetch"].unusable_reason("windows")
+    # prefetch 가 한때 이 자리에 있었다. 파서가 생기면서 $LogFile 만
+    # 남았다 — 카탈로그에서 supported 를 뒤집을 때 함께 볼 자리다.
     assert catalog["$LogFile"].unusable_reason("windows")
     assert catalog["$MFT"].unusable_reason("windows") is None
+    assert catalog["prefetch"].unusable_reason("windows") is None
 
 
 def test_windows_artifacts_are_unusable_on_linux(catalog):
@@ -376,8 +378,10 @@ def test_the_same_request_is_deferred_when_nothing_selects_it(scenario, catalog,
 def test_unsupported_artifacts_are_always_excluded(scenario, catalog, mappings):
     got, _ = select(scenario, catalog, mappings)
     excluded = {e["artifact"]: e["reason"] for e in got["excluded"]}
-    assert "미지원" in excluded["prefetch"]
     assert "미지원" in excluded["$LogFile"]
+    # 지원하지만 이 시나리오의 어느 기법도 요구하지 않은 것도 excluded 에
+    # 남는다. 사유가 다르다 — "볼 줄 모름"이 아니라 "볼 이유 없음"이다.
+    assert "미지원" not in excluded["prefetch"]
 
 
 def test_exclusion_reasons_hold_regardless_of_windows_variant(catalog):

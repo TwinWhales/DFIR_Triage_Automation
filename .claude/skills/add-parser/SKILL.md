@@ -1,11 +1,11 @@
 ---
 name: add-parser
-description: 04단계에 새 아티팩트 파서를 추가하거나 기존 파서가 맡는 아티팩트를 늘릴 때 쓴다. 등록 지점이 네 군데로 흩어져 있고 빠뜨리면 조용히 실패하는 곳이 셋 있다. $MFT·$UsnJrnl·evtx·registry를 추가하며 실제로 밟은 순서.
+description: 04단계에 새 아티팩트 파서를 추가하거나 기존 파서가 맡는 아티팩트를 늘릴 때 쓴다. 등록 지점이 네 군데로 흩어져 있고 빠뜨리면 조용히 실패하는 곳이 넷 있다. $MFT·$UsnJrnl·evtx·registry·prefetch를 추가하며 실제로 밟은 순서.
 ---
 
 # 새 아티팩트 파서 추가
 
-파서 넷(`mft` `usnjrnl` `evtx` `registry`)을 추가하며 굳어진 순서다.
+파서 다섯(`mft` `usnjrnl` `evtx` `registry` `prefetch`)을 추가하며 굳어진 순서다.
 **설계 근거는 여기 옮겨 적지 않는다** — 각 파일의 docstring이 권위다.
 
 | 알고 싶은 것 | 볼 곳 |
@@ -33,17 +33,25 @@ description: 04단계에 새 아티팩트 파서를 추가하거나 기존 파�
 수도 제외될 수도 없다. 이름은 이후 모든 단계에서 그대로 쓰이므로 여기서
 확정한다.
 
-**2. `ref` 접두어를 등록한다** — `src/common/refs.py`
+**2. `ref` 접두어를 등록한다** — `src/common/refs.py`와 스키마
 
-**두 군데다.** 딕셔너리 하나, 정규식 하나.
+**세 군데다.** `refs.py`의 딕셔너리 하나, 정규식 하나, 그리고
+`schemas/parsed_record.schema.json`의 `ref` 패턴. 스키마가 같은 정규식을
+따로 들고 있어서, 앞의 둘만 고치면 파서는 도는데 산출물이 스키마 검증에서
+전부 기각된다.
 
 ```python
 ARTIFACT_PREFIX = { ..., "registry:SYSTEM": "REG-SYS" }
 
 REF_PATTERN = re.compile(
-    r"^(?P<prefix>MFT|USN|EVTX-SEC|EVTX-SYS|REG-SYS|REG-SW)#(?P<num>0|[1-9]\d*)$"
+    r"^(?P<prefix>MFT|USN|EVTX-SEC|EVTX-SYS|REG-SYS|REG-SW|PF)#(?P<num>0|[1-9]\d*)$"
 )
 ```
+
+스키마는 **동결 대상**이다(`CLAUDE.md`). `ref` 패턴 한 줄과 아티팩트별
+`required`를 정하는 `allOf` 분기 하나면 되지만, 고치기 전에 사용자에게
+말한다. 속성은 대개 늘릴 필요가 없다 — `fields`가 자유 형식이라 아티팩트
+고유 값은 거기 담으면 된다(evtx·registry·prefetch가 그렇다).
 
 딕셔너리만 고치면 `make_ref`는 통과하는데 `parse_ref`가 기각한다.
 `tests/test_common.py`는 딕셔너리와 역방향 맵의 길이만 보므로 이 불일치를
@@ -52,6 +60,18 @@ REF_PATTERN = re.compile(
 레코드 번호로 쓸 고유값이 아티팩트 안에 있어야 한다. 없으면 만들지 말고
 기존 값을 쓴다 — 레지스트리는 NK 레코드 오프셋을 10진수로 썼다. 자체
 일련번호를 매기면 원본 대조가 불가능해진다.
+
+**2-1. 아티팩트가 파일 하나가 아니면** — `src/stage04_parse/evidence.py`
+
+프리패치는 **폴더 하나에 든 .pf 전부가 아티팩트 하나**다. 그런 경우
+`FILE_LAYOUT`에 `directory_paths`/`directory_suffix`를 쓰고
+`relative_paths`/`filenames`는 비운다. 04단계는 `open_all()`로 파일마다
+`parse()`를 부르므로, 파서는 **파일 하나**를 받고 호출 사이에 상태를
+들고 있다가 `begin_artifact()`에서 비운다.
+
+`ref`가 폴더 전체에서 유일해야 한다는 점이 함정이다. 파일마다 고유한 값이
+있어야 하고(프리패치는 헤더의 경로 해시), 겹치면 그 파일을 건너뛴다 —
+같은 `ref`가 둘이면 `io.read_parsed_records`가 05·06단계를 통째로 세운다.
 
 **3. 파서를 구현한다** — `src/stage04_parse/parsers/<name>.py`
 
@@ -132,6 +152,13 @@ OUTPUT_FILENAMES = { ..., "registry:SYSTEM": "registry_system.jsonl" }
 | `evtx` | `wevtutil` (Windows 기본 탑재), 8,257 레코드 전부 일치 |
 | `registry` | `tools/scan_hive_cells.py` — 셀을 직접 걸어 `nk`를 센다 |
 | `$MFT` | `tools/compare_mft.py` + 합성 레코드 테스트 |
+| `prefetch` | `tools/scan_prefetch.py` — 메트릭 배열을 보지 않고 문자열 블록을 쪼갠다 |
+
+외부 도구가 없는 아티팩트(프리패치가 그랬다)는 **같은 파일을 다른 경로로
+읽는 스캐너**를 만든다. 덤으로, 파일 안에 **Windows가 쓴 값**이 있으면
+그것과 맞춰 본다 — 프리패치는 헤더 해시와 .pf 파일명, 헤더의 파일 크기와
+실제 크기가 그 자리다. 우리 해석과 독립이라 오프셋을 잘못 잡았으면 맞을
+이유가 없다.
 
 **10. 못 하는 것을 적는다** — `docs/limitations.md`
 
@@ -147,7 +174,12 @@ OUTPUT_FILENAMES = { ..., "registry:SYSTEM": "registry_system.jsonl" }
 **`OUTPUT_FILENAMES`** — 등록소(4번)와 별개 테이블이라는 걸 잊는다.
 
 **`REF_PATTERN`** — `ARTIFACT_PREFIX`만 고치고 정규식을 잊는다. 테스트가
-못 잡는다.
+못 잡는다. **스키마에도 같은 정규식이 있다.**
+
+**미지원 아티팩트를 예시로 쓰던 테스트·문서.** 카탈로그에서 `supported`를
+뒤집으면 "미지원이란 이런 것"의 예시로 그 아티팩트를 쓰던 곳이 전부
+깨진다. registry·prefetch가 차례로 그랬다. `grep -rn '<이름>' tests/ docs/`
+로 한 번 훑는다.
 
 **신호가 어디서 나오는지 카탈로그에 적지 않으면 05단계에 도달하지 못한다.**
 기본값 `signal_source: flags`는 "04단계가 전부 훑고 재미있는 것에 플래그를
@@ -160,8 +192,8 @@ OUTPUT_FILENAMES = { ..., "registry:SYSTEM": "registry_system.jsonl" }
 - 전부 훑고 재미있는 것을 고르는가 → `flags`. 붙을 플래그가 실제로 있는지
   확인한다.
 - 03단계가 경로·범위로 이미 골라 오는가 → `signal_source: scope`.
-  `mappings/_artifacts.yaml`의 해당 항목에 적는다. 프리패치도 이쪽일
-  가능성이 높다 — 모든 레코드에 붙는 플래그는 필터 역할을 못 한다.
+  `mappings/_artifacts.yaml`의 해당 항목에 적는다. 레지스트리와 프리패치가
+  이쪽이다 — 모든 레코드에 붙는 플래그는 필터 역할을 못 한다.
 
 ---
 

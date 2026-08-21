@@ -226,8 +226,8 @@ A부를 건너뛰면 B부의 "건드리면 안 되는 것"이 왜 그런지 납�
   ],
   "deferred": [ ... ],
   "excluded": [
-    { "artifact": "prefetch", "reason": "Windows Server 기본 설정에서 비활성화되어 수집 불가" },
-    { "artifact": "$LogFile", "reason": "본 버전 미지원 (파싱 모듈 범위 외)" }
+    { "artifact": "$LogFile", "reason": "본 버전 미지원 (파싱 모듈 범위 외)" },
+    { "artifact": "prefetch", "reason": "식별된 기법에 매핑된 아티팩트가 아님" }
   ]
 }
 ```

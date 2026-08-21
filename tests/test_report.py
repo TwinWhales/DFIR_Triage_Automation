@@ -110,7 +110,7 @@ def test_unverifiable_statements_are_quoted_verbatim(docs):
 
 def test_scope_limits_merge_excluded_and_unfired_deferred(docs):
     limits = {entry["artifact"]: entry["reason"] for entry in _context(docs)["limits"]}
-    assert "미지원" in limits["prefetch"]
+    assert "미지원" in limits["$LogFile"]
     # Tier 2 루프백이 없으므로 조건을 **평가한 적이 없다.** "조건 미충족"은
     # 평가했는데 안 걸린 것처럼 읽혀 사실과 다르다(docs/limitations.md 3).
     for artifact in ("$UsnJrnl", "evtx:System"):

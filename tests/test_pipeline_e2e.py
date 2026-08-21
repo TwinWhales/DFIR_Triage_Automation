@@ -118,14 +118,14 @@ def test_parse_skips_artifacts_without_a_registered_parser(tmp_path):
     # 파서 등록이 유일한 확장 지점이라는 것을 고정한다. 구현된 아티팩트는
     # 인스턴스가 나오고, 아직 파서가 없는 것은 None 이라 parse 가 건너뛴다.
     #
-    # 미구현 쪽으로는 prefetch 를 쓴다. 카탈로그에 supported: false 로
+    # 미구현 쪽으로는 $LogFile 을 쓴다. 카탈로그에 supported: false 로
     # 올라 있어 항상 excluded 로 전달되며, 파서는 없다. 구현하면 이
     # 테스트가 깨지는데, 그때 함께 볼 것은 mappings/_artifacts.yaml 이다 —
     # 카탈로그와 파서가 어긋난 채로 두면 보고서가 "분석했다"고 말하면서
     # 실제로는 아무것도 읽지 않는다(docs/limitations.md 4-1).
     #
-    # registry 가 한때 이 자리에 있었다. 파서가 생기면서 옮겼고, 같은
-    # 커밋에서 카탈로그에도 등재했다.
+    # registry 와 prefetch 가 차례로 이 자리에 있었다. 파서가 생기면서
+    # 옮겼고, 같은 커밋에서 카탈로그에도 등재했다.
     from src.stage04_parse import parsers
 
     for artifact in (
@@ -135,10 +135,11 @@ def test_parse_skips_artifacts_without_a_registered_parser(tmp_path):
         "evtx:System",
         "registry:SYSTEM",
         "registry:SOFTWARE",
+        "prefetch",
     ):
         assert parsers.get(artifact) is not None, f"{artifact} 파서가 등록되지 않았다"
 
-    assert parsers.get("prefetch") is None
+    assert parsers.get("$LogFile") is None
 
 
 def test_every_supported_artifact_in_the_catalog_has_a_parser(tmp_path):

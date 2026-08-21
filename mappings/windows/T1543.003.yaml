@@ -26,3 +26,10 @@ artifacts:
     tier: 2
     trigger: Tier1에서 서비스 바이너리 경로가 확인된 경우
     rationale: 서비스 바이너리 생성 시각 및 타임스탬프 조작 여부
+
+  # 레지스트리는 "등록됐다"까지만 말한다. ImagePath 가 있어도 그 바이너리가
+  # 실제로 돌았는지는 다른 문제다. 프리패치가 그 자리를 메운다.
+  - name: prefetch
+    tier: 2
+    trigger: Tier1에서 서비스 바이너리 경로가 확인된 경우
+    rationale: 등록된 서비스 바이너리가 실제로 실행됐는지

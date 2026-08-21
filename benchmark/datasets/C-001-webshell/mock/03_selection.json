@@ -2,9 +2,9 @@
   "case_id": "C-001",
   "stage": "03_select",
   "schema_version": "1.0",
-  "generated_at": "2026-08-06T04:12:40Z",
+  "generated_at": "2026-08-21T02:05:52Z",
   "generator": "select.py",
-  "mapping_table_version": "0.6",
+  "mapping_table_version": "0.7",
   "selected": [
     {
       "artifact": "$MFT",
@@ -82,7 +82,7 @@
     },
     {
       "artifact": "prefetch",
-      "reason": "본 버전 파싱 모듈 미지원 (Windows Server에서는 기본 비활성화되어 수집되지 않는 경우도 많음)"
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
     {
       "artifact": "$LogFile",

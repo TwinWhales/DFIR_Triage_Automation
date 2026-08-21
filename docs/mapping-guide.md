@@ -145,12 +145,17 @@ followups:
 새 아티팩트를 지원하려면 파서보다 이 파일을 **먼저** 고칩니다.
 
 ```yaml
-  prefetch:
+  $LogFile:
     parser: null
     os: [windows]
     supported: false
-    exclude_reason: Windows Server 기본 설정에서 비활성화되어 수집 불가
+    exclude_reason: 본 버전 미지원 (파싱 모듈 범위 외)
 ```
+
+제외 사유는 **OS 변종과 무관하게 참이어야 합니다.** `prefetch`가 한때
+"Windows Server 기본 비활성화"였는데, 그 문장이 Windows 10 케이스 보고서에
+그대로 실려 사실과 달라졌습니다. 수집되지 않은 것은 제외 사유가 아니라
+**증거 없음**이고, 04단계가 `artifact_not_found`로 따로 기록합니다.
 
 `supported: false`면 `exclude_reason`이 **필수**입니다. 그 문장이 최종
 보고서에 그대로 실리기 때문입니다.
