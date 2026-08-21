@@ -118,17 +118,51 @@ def test_parse_skips_artifacts_without_a_registered_parser(tmp_path):
     # 파서 등록이 유일한 확장 지점이라는 것을 고정한다. 구현된 아티팩트는
     # 인스턴스가 나오고, 아직 파서가 없는 것은 None 이라 parse 가 건너뛴다.
     #
-    # 미구현 쪽으로는 registry 를 쓴다. refs 와 OUTPUT_FILENAMES 에는
-    # 자리가 있지만 파서도 카탈로그 항목도 없다. 구현하면 이 테스트가
-    # 깨지는데, 그때 함께 볼 것은 mappings/_artifacts.yaml 이다 —
+    # 미구현 쪽으로는 prefetch 를 쓴다. 카탈로그에 supported: false 로
+    # 올라 있어 항상 excluded 로 전달되며, 파서는 없다. 구현하면 이
+    # 테스트가 깨지는데, 그때 함께 볼 것은 mappings/_artifacts.yaml 이다 —
     # 카탈로그와 파서가 어긋난 채로 두면 보고서가 "분석했다"고 말하면서
     # 실제로는 아무것도 읽지 않는다(docs/limitations.md 4-1).
+    #
+    # registry 가 한때 이 자리에 있었다. 파서가 생기면서 옮겼고, 같은
+    # 커밋에서 카탈로그에도 등재했다.
     from src.stage04_parse import parsers
 
-    for artifact in ("$MFT", "$UsnJrnl", "evtx:Security", "evtx:System"):
+    for artifact in (
+        "$MFT",
+        "$UsnJrnl",
+        "evtx:Security",
+        "evtx:System",
+        "registry:SYSTEM",
+        "registry:SOFTWARE",
+    ):
         assert parsers.get(artifact) is not None, f"{artifact} 파서가 등록되지 않았다"
 
-    assert parsers.get("registry:SYSTEM") is None
+    assert parsers.get("prefetch") is None
+
+
+def test_every_supported_artifact_in_the_catalog_has_a_parser(tmp_path):
+    """카탈로그와 파서 등록소가 어긋나지 않는지 본다.
+
+    ``supported: true`` 인데 파서가 없으면 03단계가 선별하고 04단계가
+    건너뛴다. 보고서에는 "확인하지 못한 아티팩트"로 실리므로 거짓말은
+    아니지만, 카탈로그를 고치면서 파서를 안 붙인 실수는 조용히 남는다.
+
+    반대 방향(파서가 있는데 카탈로그에 없음)은 더 나쁘다. 그 아티팩트는
+    **선별될 수도 제외될 수도 없어** 보고서에 아예 나타나지 않는다
+    (docs/limitations.md 4-1-1).
+    """
+    from src.stage03_select import mapping_loader
+    from src.stage04_parse import parsers
+
+    catalog = mapping_loader.load_catalog(MAPPINGS)
+
+    for name, spec in catalog.artifacts.items():
+        if spec.supported:
+            assert parsers.get(name) is not None, f"카탈로그가 {name} 을 지원한다는데 파서가 없다"
+
+    for name in parsers.registered():
+        assert name in catalog.artifacts, f"{name} 파서가 있는데 카탈로그에 없다"
 
 
 # ============================================================ 관통 실행
@@ -204,7 +238,13 @@ def test_the_experiment_conditions_survive_in_the_output(case):
     run_pipeline(case)
     assert io.read_json(case / "02_scenario.json")["generator"].startswith("normalize.py / stub")
     assert io.read_json(case / "05_findings.json")["generator"].startswith("interpret.py / stub")
-    assert io.read_json(case / "03_selection.json")["mapping_table_version"] == "0.3"
+    # 리터럴로 박지 않는다. 여기서 볼 것은 "버전이 산출물에 실렸는가"이지
+    # 그 값이 무엇인가가 아니다. 카탈로그 내용 고정은
+    # test_mapping_loader.test_catalog_loads_every_artifact 의 몫이다.
+    from src.stage03_select import mapping_loader
+
+    catalog_version = mapping_loader.load_catalog(MAPPINGS).mapping_table_version
+    assert io.read_json(case / "03_selection.json")["mapping_table_version"] == catalog_version
 
 
 def test_the_report_only_contains_verified_statements(case):

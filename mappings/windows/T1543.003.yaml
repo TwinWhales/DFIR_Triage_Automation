@@ -10,6 +10,18 @@ artifacts:
       event_ids: [7045, 7034, 7036]
     rationale: 서비스 설치 및 상태 변경
 
+  # 7045는 설치 순간에만 남고 로그가 롤오버되면 사라진다. 레지스트리에는
+  # 현재 등록 상태가 그대로 있으므로 Tier 1로 둔다 — 이벤트 로그의 보조가
+  # 아니라 같은 층위의 1차 증거다.
+  #
+  # CurrentControlSet 은 하이브에 없는 이름이지만 그대로 쓴다. 파서가
+  # Select\Current 를 읽어 ControlSet00N 으로 바꾼다.
+  - name: registry:SYSTEM
+    tier: 1
+    scope_template:
+      path_prefix: ['SYSTEM\CurrentControlSet\Services']
+    rationale: 서비스 등록 정보 (ImagePath·Start·ObjectName)
+
   - name: $MFT
     tier: 2
     trigger: Tier1에서 서비스 바이너리 경로가 확인된 경우

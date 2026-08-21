@@ -99,6 +99,17 @@ for _artifact in ("evtx:Security", "evtx:System"):
     REFERENCE_PARSERS[_artifact] = _evtx_parser
 
 
+# 레지스트리도 온디스크 계층을 python-registry 에 맡긴다. evtx 와 근거는
+# 다르다 — regf 는 어렵지 않지만 오프셋을 이미 주므로 직접 구현할 이유가
+# 없다(parsers/registry.py 모듈 docstring). evtx 와 같이 감싸지 않는다.
+from .registry import RegistryParser  # noqa: E402 — 등록 블록 순서를 유지한다
+
+for _artifact in ("registry:SYSTEM", "registry:SOFTWARE"):
+    _registry_parser = RegistryParser(_artifact)
+    PARSERS[_artifact] = _registry_parser
+    REFERENCE_PARSERS[_artifact] = _registry_parser
+
+
 IMPLEMENTATIONS = ("native", "reference")
 
 
