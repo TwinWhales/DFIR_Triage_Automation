@@ -166,6 +166,11 @@ def test_unrelated_event_gets_no_flag():
     assert flagging.apply(_evtx(4624, TargetUserName="Administrators"))["flags"] == []
 
 
+def test_service_install_event_is_flagged():
+    record = {**_evtx(7045), "artifact": "evtx:System"}
+    assert "service_installed" in flagging.apply(record)["flags"]
+
+
 def test_privileged_groups_come_from_the_mapping_file():
     declared = yaml.safe_load(
         (REPO_ROOT / "mappings/_flags.yaml").read_text(encoding="utf-8")

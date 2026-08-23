@@ -1,0 +1,27 @@
+technique: T1547.001
+name: "Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder"
+os: windows
+
+artifacts:
+  # HKLM\...\Run·RunOnce만 커버한다. HKCU 쪽(사용자별 자동실행)은
+  # NTUSER.DAT 하이브가 필요한데 지금 카탈로그는 SYSTEM·SOFTWARE 두
+  # 볼륨 하이브만 지원한다(사용자별 하이브 다중 매칭은 work.md 트랙 A
+  # 참고). 키오스크처럼 단일 로컬 계정으로 상시 로그인된 환경에서는
+  # HKLM 쪽 비중이 커서 우선 이것만으로 채운다 — docs/limitations.md 참고.
+  - name: registry:SOFTWARE
+    tier: 1
+    scope_template:
+      path_prefix:
+        - 'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+        - 'SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
+    rationale: 시스템 전역 자동실행 등록 키(HKLM Run/RunOnce)
+
+  - name: registry:SYSTEM
+    tier: 2
+    trigger: Tier1에서 서비스로 위장한 자동실행 항목이 의심되는 경우
+    rationale: 서비스 기반 지속성(T1543.003)과의 교차 확인
+
+  - name: $MFT
+    tier: 2
+    trigger: Tier1에서 자동실행 등록 대상의 실행 파일 경로가 확인된 경우
+    rationale: 등록된 실행 파일의 생성 시각 및 타임스탬프 조작 여부

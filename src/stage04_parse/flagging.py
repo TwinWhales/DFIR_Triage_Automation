@@ -43,6 +43,7 @@ FLAGS = (
     "file_created",
     "account_created",
     "privileged_group_add",
+    "service_installed",
     "outside_time_range",
 )
 
@@ -81,6 +82,7 @@ _FILETIME_EPOCH = datetime(1601, 1, 2, tzinfo=timezone.utc)
 
 _ACCOUNT_CREATED_EVENTS = frozenset({4720})
 _GROUP_ADD_EVENTS = frozenset({4728, 4732})
+_SERVICE_INSTALL_EVENTS = frozenset({7045})
 
 
 def mappings_dir() -> Path:
@@ -270,6 +272,9 @@ def _evtx_flags(record: dict[str, Any], groups: frozenset[str]) -> list[str]:
         target = str((record.get("fields") or {}).get("TargetUserName", "")).strip().lower()
         if target in groups:
             found.append("privileged_group_add")
+
+    if event_id in _SERVICE_INSTALL_EVENTS:
+        found.append("service_installed")
 
     return found
 
