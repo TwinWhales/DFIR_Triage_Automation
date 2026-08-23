@@ -1,0 +1,37 @@
+technique: T1562.001
+name: "Impair Defenses: Disable or Modify Tools"
+os: windows
+
+artifacts:
+  # 서비스 Start 값이 4(disabled)로 바뀌었는지가 핵심이다. 값 자체는
+  # SYSTEM 하이브에 남고, 바뀐 시점은 evtx 7040에 남는다. 둘을 같이
+  # 봐야 "언제 누가"가 나온다.
+  - name: registry:SYSTEM
+    tier: 1
+    scope_template:
+      path_prefix:
+        - 'SYSTEM\CurrentControlSet\Services\WinDefend'
+        - 'SYSTEM\CurrentControlSet\Services\WdNisSvc'
+        - 'SYSTEM\CurrentControlSet\Services\Sense'
+        - 'SYSTEM\CurrentControlSet\Services\wscsvc'
+        - 'SYSTEM\CurrentControlSet\Services\EventLog'
+    rationale: 보안 관련 서비스의 시작 유형(Start) 변경 여부
+
+  - name: registry:SOFTWARE
+    tier: 1
+    scope_template:
+      path_prefix:
+        - 'SOFTWARE\Policies\Microsoft\Windows Defender'
+        - 'SOFTWARE\Microsoft\Windows Defender'
+    rationale: 실시간 보호·감시 기능 비활성화 정책 값
+
+  - name: evtx:System
+    tier: 1
+    scope_template:
+      event_ids: [7040, 7045]
+    rationale: 서비스 시작 유형 변경(7040) 및 신규 서비스 설치(7045) 시점
+
+  - name: $MFT
+    tier: 2
+    trigger: Tier1에서 보안 서비스 비활성화가 확인되어 사용된 도구를 특정해야 하는 경우
+    rationale: 비활성화 시각 전후에 생성된 실행 파일

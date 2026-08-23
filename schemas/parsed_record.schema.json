@@ -38,6 +38,9 @@
           "file_created",
           "account_created",
           "privileged_group_add",
+          "logon_success",
+          "logon_failed",
+          "service_config_changed",
           "service_installed",
           "outside_time_range"
         ]

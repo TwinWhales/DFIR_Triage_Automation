@@ -1,0 +1,24 @@
+technique: T1078.003
+name: "Valid Accounts: Local Accounts"
+os: windows
+
+artifacts:
+  # 4624 성공 / 4625 실패 / 4672 특권 로그온.
+  # 4672는 관리자 세션이 열릴 때 4624 직후에 따라붙는 동반 이벤트다.
+  # 단일 계정으로 상시 로그온된 키오스크에서는 "평소 쓰지 않는 계정의
+  # 로그온"과 "대화형 로그온 실패의 연속"이 둘 다 신호가 된다.
+  - name: evtx:Security
+    tier: 1
+    scope_template:
+      event_ids: [4624, 4625, 4672]
+    rationale: 기존 계정을 이용한 로그온 성공·실패 및 특권 부여 이력
+
+  - name: $MFT
+    tier: 2
+    trigger: Tier1에서 평소 사용되지 않던 계정의 로그온이 확인된 경우
+    rationale: 해당 계정 프로필 디렉터리의 생성·접근 시각
+
+  - name: registry:SOFTWARE
+    tier: 2
+    trigger: Tier1에서 확인된 계정의 마지막 로그온 시각을 교차 확인해야 하는 경우
+    rationale: 로그온 UI가 기록한 마지막 로그온 사용자 정보

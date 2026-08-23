@@ -1,0 +1,48 @@
+technique: T1546.008
+name: "Event Triggered Execution: Accessibility Features"
+os: windows
+
+artifacts:
+  # 물리 접근이 전제인 키오스크에서 잠금 화면을 우회하는 고전적 방법이다.
+  # 방식이 둘이고 남는 흔적이 서로 다르다.
+  #
+  #   ① IFEO Debugger 값 등록 — 레지스트리에만 남는다
+  #   ② 바이너리 자체 교체(sethc.exe ← cmd.exe) — 레지스트리에 안 남는다
+  #
+  # ②가 더 흔한데 레지스트리 흔적이 없으므로 $MFT 를 Tier 2 로 미루면
+  # 이 기법의 절반을 구조적으로 못 본다. 그래서 $MFT 도 Tier 1 이다.
+  - name: registry:SOFTWARE
+    tier: 1
+    scope_template:
+      path_prefix:
+        - 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\sethc.exe'
+        - 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\utilman.exe'
+        - 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\osk.exe'
+        - 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\Magnify.exe'
+        - 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\Narrator.exe'
+        - 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\DisplaySwitch.exe'
+        - 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\AtBroker.exe'
+    rationale: 접근성 프로그램에 대한 IFEO Debugger 등록값
+
+  # path_prefix 는 정확히 일치하는 경로도 받으므로 파일 하나씩 지정한다.
+  # System32 전체를 거는 것보다 좁고, 05단계 쿼터(60건)를 잡아먹지 않는다.
+  - name: $MFT
+    tier: 1
+    scope_template:
+      path_prefix:
+        - '{system_root}\System32\sethc.exe'
+        - '{system_root}\System32\utilman.exe'
+        - '{system_root}\System32\osk.exe'
+        - '{system_root}\System32\Magnify.exe'
+        - '{system_root}\System32\Narrator.exe'
+        - '{system_root}\System32\DisplaySwitch.exe'
+        - '{system_root}\System32\AtBroker.exe'
+    rationale: 접근성 프로그램 바이너리의 교체 여부(생성·수정 시각, $SI/$FN 불일치)
+
+  - name: $UsnJrnl
+    tier: 2
+    trigger: Tier1 $MFT에서 접근성 프로그램의 타임스탬프가 시스템 설치 시점과 어긋나는 경우
+    rationale: 해당 바이너리의 교체·삭제·재생성 이력
+
+defaults:
+  system_root: 'C:\Windows'

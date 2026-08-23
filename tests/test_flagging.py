@@ -163,12 +163,37 @@ def test_group_name_matching_ignores_case():
 
 
 def test_unrelated_event_gets_no_flag():
-    assert flagging.apply(_evtx(4624, TargetUserName="Administrators"))["flags"] == []
+    # 4634(로그오프)는 어느 룰에도 걸리지 않는다. 4624 를 쓰면 안 된다 —
+    # logon_success 가 생기면서 "관계없는 이벤트"가 아니게 됐다.
+    assert flagging.apply(_evtx(4634, TargetUserName="Administrators"))["flags"] == []
 
 
 def test_service_install_event_is_flagged():
     record = {**_evtx(7045), "artifact": "evtx:System"}
     assert "service_installed" in flagging.apply(record)["flags"]
+
+
+def test_logon_events_are_flagged():
+    # 4672 는 관리자 세션에서 4624 직후에 따라붙는다. 같은 이름으로 묶은
+    # 이유가 여기 있다 — 나누면 한 로그온이 두 어휘로 갈라진다.
+    for event_id in (4624, 4672):
+        record = {**_evtx(event_id), "artifact": "evtx:Security"}
+        assert "logon_success" in flagging.apply(record)["flags"], event_id
+
+
+def test_failed_logon_is_a_separate_flag():
+    record = {**_evtx(4625), "artifact": "evtx:Security"}
+    flags = flagging.apply(record)["flags"]
+    assert "logon_failed" in flags
+    assert "logon_success" not in flags
+
+
+def test_service_config_change_is_flagged():
+    record = {**_evtx(7040), "artifact": "evtx:System"}
+    flags = flagging.apply(record)["flags"]
+    assert "service_config_changed" in flags
+    # 7045(설치)와 뜻이 다르다. 섞이면 "언제 껐나"를 못 가린다.
+    assert "service_installed" not in flags
 
 
 def test_privileged_groups_come_from_the_mapping_file():
