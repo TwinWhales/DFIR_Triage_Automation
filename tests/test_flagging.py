@@ -223,8 +223,12 @@ def test_one_timestamp_inside_the_window_is_enough():
 
 
 def test_vocabulary_matches_the_schema():
+    # 어휘의 원본은 mappings/_flags.yaml 이고 스키마 enum 은 그것의
+    # 생성물이다. 어긋났다면 손으로 맞추지 말고 생성기를 돌린다.
     in_schema = schema.load_schema("parsed_record")["properties"]["flags"]["items"]["enum"]
-    assert set(flagging.FLAGS) == set(in_schema)
+    assert set(flagging.FLAGS) == set(in_schema), (
+        "parsed_record 스키마의 enum 이 어휘와 어긋났다. tools/sync_flag_enum.py 를 돌린다."
+    )
 
 
 def test_an_unregistered_flag_is_refused():

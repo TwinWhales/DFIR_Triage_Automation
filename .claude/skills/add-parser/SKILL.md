@@ -87,10 +87,15 @@ OUTPUT_FILENAMES = { ..., "registry:SYSTEM": "registry_system.jsonl" }
 **등록소와 별개의 테이블이다.** 4번만 하고 여기를 빠뜨리면 파서는 찾았는데
 증거를 열기도 전에 `KeyError`로 죽는다.
 
-**6. 플래그가 필요하면 두 곳을 함께 고친다**
+**6. 플래그가 필요하면 `_flags.yaml`에 적는다**
 
-`mappings/_flags.yaml`과 `schemas/parsed_record.schema.json`의 enum이
-일치해야 한다. `tests/test_mapping_loader.py`가 확인한다.
+어휘와 룰의 원본은 `mappings/_flags.yaml` 하나다. 적은 뒤
+`tools/sync_flag_enum.py`를 돌리면 스키마 enum이 따라온다.
+`tests/test_flag_rules.py`가 어긋남을 잡는다.
+
+`event_id`·USN 사유·필드값 비교로 표현되는 조건이면 **파이썬을 고칠 일이
+없다.** 타임스탬프 비교처럼 근거가 코드 주석에 붙어 있어야 하는 것만
+`flagging.py`의 `HANDLERS`에 등록하고 YAML에서 이름으로 부른다.
 
 기존 어휘로 될 일이면 새로 만들지 않는다. 이름이 갈라지면
 `record_filter.py`가 레코드를 놓치고, 그 결과가 선별 재현율 저하로 잘못

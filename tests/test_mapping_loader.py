@@ -210,12 +210,16 @@ def test_followups_are_attributed_to_their_own_technique(mappings):
 
 def test_flags_yaml_matches_the_parsed_record_schema():
     # 두 곳에 적힌 어휘가 갈라지면 파서가 만든 flag를 스키마가 거부하거나,
-    # 반대로 오타 flag가 통과한다.
+    # 반대로 오타 flag가 통과한다. YAML 이 원본이고 스키마 enum 은
+    # tools/sync_flag_enum.py 가 거기서 생성한다 — flagging 을 import 하지
+    # 않고 두 파일만 대조하는 것은, 생성기가 빠뜨려도 여기서 잡히게 하려는 것이다.
     declared = set(
         yaml.safe_load((MAPPINGS / "_flags.yaml").read_text(encoding="utf-8"))["flags"]
     )
     in_schema = set(schema.load_schema("parsed_record")["properties"]["flags"]["items"]["enum"])
-    assert declared == in_schema
+    assert declared == in_schema, (
+        "스키마 enum 이 어휘와 어긋났다. tools/sync_flag_enum.py 를 돌린다."
+    )
 
 
 def test_flags_reference_only_catalogued_artifacts(catalog):
