@@ -12,7 +12,7 @@
   "properties": {
     "ref": {
       "type": "string",
-      "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|REG-SYS|REG-SW|PF)#(0|[1-9]\\d*)$",
+      "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|REG-SYS|REG-SW|AMCACHE|PF)#(0|[1-9]\\d*)$",
       "description": "앞자리 0을 허용하지 않는다. MFT#012345와 MFT#12345가 같은 레코드를 가리키면서 문자열로 다르면 06단계의 집합 대조가 통과해야 할 것을 기각한다."
     },
     "artifact": { "type": "string", "minLength": 1 },
@@ -103,7 +103,8 @@
     {
       "if": { "properties": { "artifact": { "const": "$MFT" } }, "required": ["artifact"] },
       "then": {
-        "required": ["path", "allocated", "is_directory", "size", "si_ctime", "si_mtime", "si_atime", "si_btime", "fn_ctime", "fn_mtime", "fn_btime"]
+        "$comment": "si_*/fn_*는 required가 아니다. FILETIME이 0이거나 읽을 수 없으면 키를 빼고 낸다 — null은 스키마가 막고, 레코드를 버리면 그 이상함 자체가 증거인 경우를 놓친다($UsnJrnl·registry와 같은 규약). 실물 이미지(108,582레코드)에서 si_atime이 0인 레코드가 다수 실측됐다 — NTFS는 기본적으로 최근 접근 시각 갱신을 꺼 둔다.",
+        "required": ["path", "allocated", "is_directory", "size"]
       }
     },
     {

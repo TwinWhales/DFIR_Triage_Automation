@@ -11,16 +11,39 @@
 
 ## 1. 증거 입력
 
-### 디스크 이미지를 직접 열지 못한다
+### 디스크 이미지를 직접 열 수 있다 (**부분 해결**, `work.md` 트랙 A)
 
-`FileSource`(추출된 파일 단위)만 지원합니다. `evidence.py`의
-`VolumeSource`는 전부 `NotImplementedError`입니다.
+`evidence.py`의 `VolumeSource`가 이제 `dissect.target` 기반으로
+구현돼 있습니다. `--evidence`에 추출된 폴더 대신 raw 이미지 **파일**을
+주면 `open_source()`가 자동으로 이쪽으로 갑니다.
 
-E01/dd 이미지를 쓰려면 FTK Imager 등으로 **먼저 파일을 뽑아 두어야**
-합니다. `evidence/[root]/` 형태가 그 결과물입니다.
+**실측(`evidence/test_image.001`, 60GB raw NTFS 볼륨)** — 파티션 테이블
+없이 NTFS 볼륨 하나만 담은 형태로, 카탈로그의 7개 아티팩트
+전부($MFT·$UsnJrnl·evtx 2종·registry 3종, Amcache 포함)를 04단계
+파이프라인 전체로 관통시켜 575,992건을 확인했습니다. `dissect.util
+.stream.RunlistStream`이 `seekable() == True`이고 재읽기 값이 원본과
+일치함도 실측으로 확인했습니다(`mft.py`의 두 번 순회 패턴과 호환).
 
-**영향** — 수동 추출 단계가 항상 선행됩니다. 자동화 파이프라인으로
-쓰기 어렵습니다.
+**아직 검증 못 한 것**:
+- **파티션 테이블이 있는 전체 디스크 이미지**(MBR/GPT, EFI·복구
+  파티션이 섞인 형태)는 대조하지 못했습니다. `_open_volume_image`는
+  NTFS 파일시스템이 정확히 하나일 때만 열고, 여럿이면 실패합니다 —
+  "한 실행은 한 볼륨"을 지키기 위한 것이지만, 그 경우 어느 파티션을
+  열지 고르는 기능 자체가 없습니다.
+- **E01**은 검증하지 않았습니다. `Target.open`이 `dissect.evidence`로
+  같은 경로를 태운다고 문서화돼 있으나 실물 E01로 확인한 적은 없습니다.
+- `$UsnJrnl`은 추출 폴더용 이름 후보(`FILE_LAYOUT`)와 별개로
+  `evidence.py`의 `VOLUME_PATH_OVERRIDES`에 원본 ADS 경로
+  (`$Extend/$UsnJrnl:$J`, 콜론 포함)를 따로 둡니다 — 추출 도구가
+  콜론을 못 쓰는 것과 원본 볼륨이 콜론을 그대로 갖는 것의 차이입니다.
+
+E01/dd 이미지를 추출된 파일 단위로 다루려면 여전히 FTK Imager 등으로
+**먼저 뽑아 둘 수도 있습니다** — `FileSource`도 그대로 유지됩니다.
+`evidence/[root]/` 형태가 그 결과물입니다.
+
+**영향** — 단일 NTFS 볼륨 raw 이미지는 추출 단계 없이 바로 돌릴 수
+있습니다. 파티션 테이블이 있는 전체 디스크나 E01은 여전히 사전 추출이
+안전합니다.
 
 ### 한 실행은 한 볼륨
 
@@ -41,6 +64,7 @@ E01/dd 이미지를 쓰려면 FTK Imager 등으로 **먼저 파일을 뽑아 두
 | `$UsnJrnl:$J` | 구현 — 전부 자체 구현 |
 | `evtx:Security` / `evtx:System` | 구현 — python-evtx 기반 어댑터 |
 | `registry:SYSTEM` / `registry:SOFTWARE` | 구현 — python-registry 기반 어댑터 |
+| `registry:Amcache` | 구현 — python-registry 기반 어댑터 (SYSTEM/SOFTWARE와 같은 클래스 재사용, `work.md` 트랙 B) |
 | `prefetch` | 구현 — 전부 자체 구현 (압축 해제 포함). 아래 단서 참조 |
 | `$LogFile` | 미지원 (카탈로그에서 제외 처리) |
 
@@ -175,6 +199,39 @@ evtx가 python-evtx의 `timestamp()`를 우회한 것과 같은 결론입니다
 
 회귀 테스트는 `tests/test_registry_parser.py`에 있습니다(한글 잘림,
 `MULTI_SZ` 종결자, 가운데 빈 항목 보존, 홀수 길이).
+
+#### `registry:Amcache` — 실물 하이브 구조는 확인, 값 의미는 대조 안 함 (**부분 해결**)
+
+`Amcache.hve`도 regf 포맷이라 `RegistryParser`를 그대로 재사용했습니다
+(`work.md` 트랙 B, `HIVE_OF`에 `"registry:Amcache": "Amcache"` 추가).
+셀 구조 자체의 정확성은 위 세 가지 우회(한글 잘림·`MULTI_SZ` 종결자·
+타임스탬프 반올림)와 `docs/artifact-notes.md`의 `scan_hive_cells.py`
+대조가 이미 검증한 것을 그대로 물려받습니다 — SYSTEM/SOFTWARE와 셀
+디코딩 경로가 완전히 같기 때문입니다.
+
+**실물 이미지(`evidence/test_image.001`)로 1,140건을 뽑아 구조를
+확인했습니다.** `Amcache\Root\Programs\...`, `Amcache\Root
+\InventoryApplicationFile\...` 서브키가 예상대로 나오고,
+`InventoryApplicationFile` 레코드의 `fields`에 `LowerCaseLongPath`
+(전체 경로)·`FileId`(`0000`+SHA1로 보이는 41자리 값)·`BinFileVersion`·
+`BinaryType`·`Size`·`ProgramId`가 실제로 담겨 있음을 확인했습니다 —
+`work.md`가 기대한 "실행 파일 경로·SHA1·타임스탬프"가 맞습니다.
+
+**다만 두 가지는 여전히 안 됐습니다.**
+- **필드 이름의 의미를 우리가 해석하지 않습니다** — 그럴 필요가
+  없습니다. `registry.py`의 설계(가치가 경로·값 이름에 있지 레코드
+  자체에 있지 않음, `docs/limitations.md` 6-7)를 그대로 따라 원시
+  값만 냅니다. `Programs` 서브키의 필드는 `"0"`·`"1"`·`"17"` 같은
+  숫자 이름이라("13": 0, "a": 1787353733 등) 사람이 읽으려면 외부
+  문서 대조가 필요한데, 그건 05단계 해석의 몫입니다.
+- **매핑(`T1547.001.yaml`)의 `path_prefix`를 아직 안 정했습니다** —
+  구조는 확인했지만 "어느 서브키가 조사에 실제로 유용한가"(예:
+  `InventoryApplicationFile`만 볼지, `Programs`도 볼지)는 검증하지
+  않았습니다. 범위를 좁히면 놓칠 위험이 있어 보류합니다.
+- **외부 도구(AmcacheParser 등) 대조는 하지 않았습니다.** 지금까지의
+  확인은 "구조가 그럴듯하다"이지 "필드값이 정확하다"의 바이트 단위
+  대조가 아닙니다. `docs/artifact-notes.md`에 대조 기록을 남기려면
+  이 절차가 남아 있습니다.
 
 ### 레지스트리에서 못 보는 것
 
@@ -340,26 +397,32 @@ USN 레코드는 파일 **이름**만 담습니다. 전체 경로를 얻으려�
 #### 새 매핑이 05단계에 도달하는지 (실측)
 
 관문 4를 기법별로 확인한 결과입니다. 대표 레코드를 만들어
-`flagging.apply_all` → `record_filter.select_records`를 태웠습니다.
+`flagging.apply_all` → `allocation.allocate_records`(카탈로그의 실제
+`signal_source`를 준 상태)를 태웠습니다.
 
-| 기법 | Tier 1 아티팩트 | 05단계 도달 |
-|---|---|---|
-| T1078.003 | evtx:Security (4624·4625·4672) | **도달** (`logon_success`/`logon_failed` 신설) |
-| T1562.001 | evtx:System (7040·7045) | **도달** (`service_config_changed` 신설) |
-| T1546.008 | $MFT (접근성 바이너리) | **도달** (`timestamp_mismatch`) |
-| T1546.008 | registry:SOFTWARE (IFEO) | 도달 못 함 |
-| T1547.004 | registry:SOFTWARE (Winlogon) | 도달 못 함 |
-| T1112 | registry:SOFTWARE·SYSTEM | **도달 못 함 (전부)** |
+| 기법 | Tier 1 아티팩트 | 플래그 | 05단계 전달 |
+|---|---|---|---|
+| T1078.003 | evtx:Security (4624·4625·4672) | 5/5 | **5/5** (`logon_success`/`logon_failed` 신설) |
+| T1562.001 | evtx:System (7040·7045) | 5/5 | **5/5** (`service_config_changed` 신설) |
+| T1546.008 | $MFT (접근성 바이너리) | 5/5 | **5/5** (`timestamp_mismatch`) |
+| T1546.008 | registry:SOFTWARE (IFEO) | 0/5 | **5/5** (`signal_source: scope`) |
+| T1547.004 | registry:SOFTWARE (Winlogon) | 0/5 | **5/5** (`signal_source: scope`) |
+| T1112 | registry:SOFTWARE·SYSTEM | 0/6 | **6/6** (`signal_source: scope`) |
+| T1547.001 | registry:Amcache | 0/5 | **5/5** (`signal_source: scope`) |
 
-레지스트리 쪽이 막히는 것은 이번 매핑의 결함이 아니라 6-7의 구조 문제가
-그대로 나타난 것입니다. **`T1112`는 Tier 1이 레지스트리뿐이라 지금은
-보고서에 아무것도 남기지 못합니다** — 매핑은 있으나 사실상 작동하지 않는
-유일한 기법입니다. `T1547.004`도 레지스트리가 본체이고 $MFT는 Tier 2(루프백
-없음)라 같은 상태입니다. 6-2의 2단 쿼터 배분이 들어와야 풀립니다.
+**레지스트리 쪽 플래그가 0인 것은 그대로입니다.** 달라진 것은 그것이
+탈락 사유가 아니게 된 점입니다 — 05단계 배분이 아티팩트별로 자리를
+나누므로 질문이 "신호냐"에서 "몇 자리를 줄 것이냐"로 바뀌었습니다(6-7).
 
-`flagging.py`에 "Winlogon 하위면 신호" 같은 룰을 넣어 때우지 않았습니다.
-6-7에 적힌 이유 그대로입니다 — 선별이 이미 한 일을 한 번 더 하는 것이고,
-그러면 플래그가 "볼 만하다"는 뜻이기를 그만둡니다.
+이 매핑들을 처음 쓸 때는 `T1112`가 Tier 1이 레지스트리뿐이라 **매핑은
+있으나 사실상 작동하지 않는 유일한 기법**이었습니다. `T1547.004`도
+레지스트리가 본체이고 `$MFT`는 Tier 2(루프백 없음)라 같은 상태였습니다.
+둘 다 배분이 들어오면서 풀렸습니다.
+
+`flagging.py`에 "Winlogon 하위면 신호" 같은 룰을 넣어 때우지 않은 것은
+잘한 선택으로 남았습니다. 그렇게 했으면 지금 배분이 들어온 뒤 룰을 도로
+걷어내야 했을 것이고, 그 사이 나온 수치는 플래그가 부풀려진 값이었을
+것입니다.
 
 ---
 
@@ -903,6 +966,10 @@ LLM이 볼 증거의 양을 정하게** 됩니다. 02단계가 맞는 기법을 
 파서를 붙이면서 드러난 것이라 6장에 함께 적습니다. **04단계까지는
 정상인데 모델에 한 건도 가지 않았습니다.**
 
+`registry:Amcache`도 같은 클래스(`RegistryParser`)를 쓰므로 이 절이
+그대로 적용됩니다 — Amcache 레코드도 `flags`가 붙지 않습니다. 카탈로그에
+세 하이브 모두 `signal_source: scope`를 적어 두었습니다.
+
 실측(`evidence/[root]`, `SYSTEM\CurrentControlSet\Services`):
 
 ```
@@ -924,7 +991,6 @@ registry:SYSTEM: 1754건 (플래그 0건) → registry_system.jsonl
 신호"라고 쓰면 선별이 이미 한 일을 한 번 더 하는 것이고, 그러면 플래그가
 "볼 만하다"는 뜻이기를 그만둡니다.
 
-<<<<<<< HEAD
 6-2의 2단 배분에서 함께 풀렸습니다. 쿼터가 아티팩트별로 자리를 배분하므로
 **"신호냐"가 아니라 "몇 자리를 줄 것이냐"가 질문이 되고**, 플래그 없는
 아티팩트도 자기 몫을 받습니다.
@@ -954,11 +1020,6 @@ registry:SYSTEM: 1754건 (플래그 0건) → registry_system.jsonl
 
 세 번째 줄은 아직 **가정입니다.** 6-5대로 `priority`가 비어 있어 실제
 매핑으로는 두 번째 줄이 나옵니다.
-=======
-6-2의 2단 배분에서 함께 풀립니다. 쿼터가 아티팩트별로 자리를 배분하면
-**"신호냐"가 아니라 "몇 자리를 줄 것이냐"가 질문이 되므로**, 플래그 없는
-아티팩트도 자기 몫을 받습니다. 그때까지 레지스트리는 04단계 산출물로만
-존재하며 보고서에는 나타나지 않습니다.
 
 ### 6-8. 프리패치도 같은 자리에 있었다 (**해결됨**)
 
@@ -997,4 +1058,3 @@ prefetch: 73건 (플래그 0건) → prefetch.jsonl
 후보로 볼 것이냐**입니다 — 프리패치에서는 그 71건이 "사건 시각에 실행되지
 않았다"가 아니라 "그 프로그램이 이 시스템에서 실행된 적이 있다"이므로,
 경로를 보고 판단할 거리가 남아 있습니다.
->>>>>>> 6c77519 (feat(04): 프리패치 파서를 붙이고 폴더 단위 아티팩트를 다룰 수 있게 했다)

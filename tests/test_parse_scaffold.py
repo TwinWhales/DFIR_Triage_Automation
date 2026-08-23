@@ -320,10 +320,15 @@ def test_not_found_message_names_the_expected_place(volume):
         evidence.FileSource(volume).open("$UsnJrnl")
 
 
-def test_open_source_explains_that_images_are_unsupported(tmp_path):
+def test_open_source_rejects_an_image_without_ntfs(tmp_path):
+    """NTFS도 파티션 테이블도 아닌 파일은 dissect가 열어도 볼륨이 안 나온다.
+
+    dissect 설치 여부에 따라 메시지가 갈린다 — 없으면 설치 안내,
+    있으면 "NTFS 못 찾음". 둘 다 EvidenceError면 충분하다.
+    """
     image = tmp_path / "disk.dd"
     image.write_bytes(b"\x00" * 16)
-    with pytest.raises(evidence.EvidenceError, match="미구현"):
+    with pytest.raises(evidence.EvidenceError, match="dissect|NTFS"):
         evidence.open_source(image)
 
 
@@ -332,12 +337,124 @@ def test_open_source_rejects_a_missing_path(tmp_path):
         evidence.open_source(tmp_path / "nope")
 
 
-def test_volume_source_says_what_still_needs_building(tmp_path):
-    stream = tmp_path / "x.dd"
-    stream.write_bytes(b"\x00")
-    with stream.open("rb") as fh:
-        with pytest.raises(NotImplementedError, match="미구현"):
-            evidence.VolumeSource(fh).open("$MFT")
+# ============================================================ VolumeSource
+
+
+class _FakeStat:
+    def __init__(self, size: int) -> None:
+        self.st_size = size
+
+
+class _FakeEntry:
+    """``dissect`` ``TargetPath`` 흉내. ``VolumeSource``가 쓰는 메서드만."""
+
+    def __init__(self, size: int, *, is_dir: bool = False) -> None:
+        self._size = size
+        self._is_dir = is_dir
+
+    def exists(self) -> bool:
+        return True
+
+    def is_dir(self) -> bool:
+        return self._is_dir
+
+    def stat(self) -> _FakeStat:
+        return _FakeStat(self._size)
+
+    def open(self):
+        import io as _io
+
+        return _io.BytesIO(b"\x46\x49\x4c\x45" * (self._size // 4 or 1))
+
+    def __str__(self) -> str:  # noqa: D105
+        return "<fake volume entry>"
+
+
+class _MissingEntry:
+    def exists(self) -> bool:
+        return False
+
+
+class _FakeFilesystem:
+    """``dissect`` ``Filesystem`` 흉내. ``.path(relative)``만 있으면 된다."""
+
+    def __init__(self, table: dict[str, _FakeEntry]) -> None:
+        self._table = table
+
+    def path(self, relative: str):
+        return self._table.get(relative, _MissingEntry())
+
+
+def test_volume_source_reads_a_registered_layout_path():
+    fs = _FakeFilesystem({"$MFT": _FakeEntry(16)})
+    source = evidence.VolumeSource(fs, description="테스트 볼륨")
+
+    with source.open("$MFT") as stream:
+        assert stream.read(4) == b"FILE"
+
+    found = source.locate("$MFT")
+    assert found is not None and found.method == "volume_path"
+
+
+def test_volume_source_missing_artifact_is_not_found():
+    source = evidence.VolumeSource(_FakeFilesystem({}), description="테스트 볼륨")
+    with pytest.raises(evidence.ArtifactNotFound):
+        source.open("$MFT")
+
+
+def test_volume_source_zero_byte_file_is_empty_not_missing():
+    """추출본과 같은 이유다 — 있는데 비어 있으면 조치가 다르다."""
+    fs = _FakeFilesystem({"$MFT": _FakeEntry(0)})
+    source = evidence.VolumeSource(fs, description="테스트 볼륨")
+    with pytest.raises(evidence.EmptyArtifact):
+        source.open("$MFT")
+
+
+def test_volume_source_available_lists_only_whats_found():
+    fs = _FakeFilesystem(
+        {
+            "$MFT": _FakeEntry(16),
+            "Windows/System32/config/SYSTEM": _FakeEntry(16),
+        }
+    )
+    source = evidence.VolumeSource(fs, description="테스트 볼륨")
+
+    available = source.available()
+    assert "$MFT" in available
+    assert "registry:SYSTEM" in available
+    assert "registry:SOFTWARE" not in available
+
+
+# ================================================== 실물 이미지 (test_image.001)
+
+REAL_IMAGE = REPO_ROOT / "evidence" / "test_image.001"
+pytestmark_real_image = pytest.mark.skipif(
+    not REAL_IMAGE.exists(), reason="실물 이미지 없음 (evidence/ 는 저장소에 없다)"
+)
+
+
+@pytestmark_real_image
+def test_real_image_every_catalogued_layout_path_is_found():
+    """raw NTFS 볼륨 이미지 하나로 카탈로그의 자리 정의가 전부 맞는지 본다."""
+    source = evidence.open_source(REAL_IMAGE)
+    assert isinstance(source, evidence.VolumeSource)
+
+    missing = [name for name in evidence.FILE_LAYOUT if source.locate(name) is None]
+    assert not missing, f"이 이미지에서 못 찾은 아티팩트: {missing}"
+
+
+@pytestmark_real_image
+def test_real_image_streams_are_seekable_and_reread_matches():
+    """work.md 트랙 A의 핵심 전제 — RunlistStream이 두 번 순회를 견디는가."""
+    source = evidence.open_source(REAL_IMAGE)
+
+    with source.open("$MFT") as stream:
+        assert stream.seekable()
+        first = stream.read(4096)
+        stream.seek(0)
+        second = stream.read(4096)
+    assert first == second
+    assert first[:4] == b"FILE"
 
 
 def test_every_catalogued_artifact_has_a_layout():

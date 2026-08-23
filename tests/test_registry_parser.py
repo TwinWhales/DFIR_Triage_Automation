@@ -214,6 +214,7 @@ def test_unknown_artifact_is_refused_at_construction():
 def test_hive_designator():
     assert registry.hive_designator("registry:SYSTEM") == "SYSTEM"
     assert registry.hive_designator("registry:SOFTWARE") == "SOFTWARE"
+    assert registry.hive_designator("registry:Amcache") == "Amcache"
 
 
 # ============================================================ 값 변환
@@ -227,6 +228,30 @@ def test_strings_and_numbers_pass_through():
 def test_binary_becomes_hex_not_bytes():
     """bytes 는 JSON 으로 나가지 않고, base64 는 사람이 대조할 수 없다."""
     assert registry.value_to_field(FakeValue("x", b"\x80\x00\xff")) == "8000ff"
+
+
+def test_filetime_type_becomes_an_iso_string_not_a_raw_datetime():
+    """python-registry가 RegFileTime을 datetime으로 돌려준다 — JSON이 못 삼킨다.
+
+    실물 SYSTEM 하이브(USB\\...\\Properties\\{GUID}\\####, 디바이스 속성의
+    설치 일시)에서 실측된 값이다. 라이브러리의 datetime을 그대로 내보내면
+    04단계 전체가 json.dumps에서 TypeError로 죽는다.
+    """
+    moment = dt.datetime(2006, 6, 21, tzinfo=UTC)
+    raw = struct.pack("<Q", to_filetime(moment))
+    value = FakeValue("(default)", value_type="RegFileTime", raw=raw)
+
+    assert registry.value_to_field(value) == "2006-06-21T00:00:00.0000000Z"
+
+
+def test_filetime_type_zero_falls_back_to_hex_not_null():
+    """0은 '값 없음'이라 filetime_to_datetime이 None을 준다.
+
+    None을 그대로 내보내면 "값이 없었다"와 "0이었다"가 구별되지 않는다.
+    RegBin과 같은 표기(raw hex)로 남긴다.
+    """
+    value = FakeValue("(default)", value_type="RegFileTime", raw=b"\x00" * 8)
+    assert registry.value_to_field(value) == "0000000000000000"
 
 
 def test_multi_sz_stays_a_list():
@@ -333,6 +358,15 @@ def test_software_records_carry_the_software_prefix():
     """인스턴스를 공유하면 SOFTWARE 레코드가 REG-SYS# 로 나가 환각이 된다."""
     record = _parser("registry:SOFTWARE")._build(FakeKey("Run", 0x2000), "SOFTWARE\\...", 0x2000)
     assert record["ref"].startswith("REG-SW#")
+
+
+def test_amcache_records_carry_the_amcache_prefix():
+    """Amcache.hve도 regf라 같은 클래스를 쓴다 — 인스턴스를 공유하면 안 된다."""
+    record = _parser("registry:Amcache")._build(
+        FakeKey("00001a2b", 0x3000), "Amcache\\Root\\InventoryApplicationFile\\...", 0x3000
+    )
+    assert record["ref"].startswith("AMCACHE#")
+    assert record["ref"] == "AMCACHE#12288"
 
 
 def test_values_land_in_fields_by_name():

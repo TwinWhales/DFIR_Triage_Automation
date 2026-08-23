@@ -29,10 +29,26 @@ def test_make_ref_round_trips():
         ("$UsnJrnl", "USN#7"),
         ("evtx:Security", "EVTX-SEC#7"),
         ("evtx:System", "EVTX-SYS#7"),
+        ("registry:SYSTEM", "REG-SYS#7"),
+        ("registry:SOFTWARE", "REG-SW#7"),
+        ("registry:Amcache", "AMCACHE#7"),
     ],
 )
 def test_every_registered_artifact_has_a_prefix(artifact, expected):
     assert refs.make_ref(artifact, 7) == expected
+
+
+def test_amcache_ref_round_trips_through_parse_ref():
+    # ARTIFACT_PREFIX 만 고치고 REF_PATTERN 을 잊는 실수를
+    # make_ref 만으로는 못 잡는다 — parse_ref 까지 왕복시켜야 잡힌다.
+    ref = refs.make_ref("registry:Amcache", 0x1A2B3C)
+    assert ref == "AMCACHE#1715004"
+    parsed = refs.parse_ref(ref)
+    assert (parsed.prefix, parsed.record_num, parsed.artifact) == (
+        "AMCACHE",
+        0x1A2B3C,
+        "registry:Amcache",
+    )
 
 
 def test_unknown_artifact_is_rejected_with_the_list_of_known_ones():

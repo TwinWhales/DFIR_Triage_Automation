@@ -139,6 +139,18 @@ def test_normal_timestamps_are_not_zero_flagged():
     assert "zero_timestamp" not in flagging.apply(_mft())["flags"]
 
 
+def test_a_missing_timestamp_key_is_flagged_the_same_as_a_zero_one():
+    """mft.py는 FILETIME 0을 null이 아니라 키 생략으로 낸다(스키마가 null을
+
+    막는다 — 실물 이미지에서 실측). ``record.get()``을 쓰는 이유가
+    이것이다 — 키가 없는 것과 값이 None인 것을 같게 다뤄야 신호가
+    사라지지 않는다.
+    """
+    record = _mft()
+    del record["si_btime"]
+    assert "zero_timestamp" in flagging.apply(record)["flags"]
+
+
 # ================================================================ EVTX
 
 

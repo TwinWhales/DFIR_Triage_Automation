@@ -16,7 +16,7 @@
 # 카탈로그와 파서 등록소가 어긋나면 tests/test_pipeline_e2e.py 가 잡는다.
 # supported: true 인데 파서가 없거나, 파서가 있는데 여기 없거나 둘 다.
 
-mapping_table_version: "0.7"
+mapping_table_version: "0.8"
 
 artifacts:
   $MFT:
@@ -70,6 +70,17 @@ artifacts:
     supported: true
     signal_source: scope
     description: SOFTWARE 하이브. 설치 프로그램·자동실행·예약 작업 캐시.
+
+  # Amcache.hve도 regf 포맷이라 registry 파서를 그대로 재사용한다
+  # (work.md 트랙 B). SYSTEM/SOFTWARE와 같은 이유로 flags가 붙지 않으므로
+  # signal_source 도 같다 — 빼먹으면 파싱은 되는데 05단계에서 통째로
+  # 사라진다(docs/limitations.md 6-7).
+  registry:Amcache:
+    parser: registry
+    os: [windows]
+    supported: true
+    signal_source: scope
+    description: Amcache.hve. 실행/설치된 프로그램의 경로·SHA1·타임스탬프.
 
   # 유일한 디렉터리 아티팩트다. Windows/Prefetch 폴더 안의 .pf 전부가
   # 이 아티팩트 하나이며, 파일마다 레코드가 하나씩 나온다.

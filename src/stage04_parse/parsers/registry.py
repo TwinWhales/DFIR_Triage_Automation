@@ -96,6 +96,7 @@ __all__ = [
     "DEFAULT_VALUE_NAME",
     "STRING_TYPES",
     "MULTI_STRING_TYPE",
+    "FILETIME_TYPE",
     "MAX_DEPTH",
     "NK_TIMESTAMP_OFFSET",
     "hive_designator",
@@ -108,6 +109,7 @@ _log = logging.getLogger(__name__)
 HIVE_OF: dict[str, str] = {
     "registry:SYSTEM": "SYSTEM",
     "registry:SOFTWARE": "SOFTWARE",
+    "registry:Amcache": "Amcache",
 }
 
 #: 이름 없는 값(기본값)을 ``fields``에 담을 때 쓸 키.
@@ -127,6 +129,14 @@ DEFAULT_VALUE_NAME = "(default)"
 #: 우리가 직접 디코딩할 문자열 타입. 라이브러리에 맡기면 한글이 잘린다.
 STRING_TYPES = frozenset({"RegSZ", "RegExpandSZ"})
 MULTI_STRING_TYPE = "RegMultiSZ"
+
+#: 디바이스 속성(``...\Properties\{GUID}\####``)의 설치 일시 같은 값이
+#: 쓰는 타입. 실물 SYSTEM 하이브(``USB\...\Properties``)에서 실측으로
+#: 드러났다 — python-registry가 ``value.value()``에서 곧바로
+#: ``datetime.datetime``을 돌려주는데, 그대로 두면 ``json.dumps``가
+#: ``TypeError: Object of type datetime is not JSON serializable``로
+#: 04단계 전체를 중단시킨다.
+FILETIME_TYPE = "RegFileTime"
 
 #: nk 레코드 안에서 LastWrite FILETIME 이 있는 자리.
 NK_TIMESTAMP_OFFSET = 0x04
@@ -167,6 +177,12 @@ def value_to_field(value: Any) -> Any:
       아래 참조.
     - ``RegBin`` / 리소스 목록 → **소문자 16진 문자열.** bytes 는 JSON 으로
       나가지 않고, base64 는 사람이 읽고 대조할 수 없습니다.
+    - ``RegFileTime``(디바이스 속성의 설치 일시 등) → **ISO 8601 문자열.**
+      python-registry가 ``value.value()``에서 곧바로 ``datetime.datetime``을
+      돌려주는데, 그대로 두면 04단계 전체가 ``json.dumps``에서 죽습니다
+      (실물 SYSTEM 하이브, ``USB\\...\\Properties`` 서브트리에서 실측).
+      ``key.timestamp()``를 안 쓰는 것과 같은 이유로 raw FILETIME을 직접
+      절삭합니다 — 라이브러리의 반올림을 타지 않습니다.
 
     **문자열 타입은 ``value.value()``를 쓰지 않습니다.** 라이브러리가
     한글을 자릅니다 — ``_decode_utf16le`` 참조.
@@ -183,6 +199,19 @@ def value_to_field(value: Any) -> Any:
 
     if type_name == MULTI_STRING_TYPE:
         return _strip_terminators(_decode_utf16le(value.raw_data()).split("\x00"))
+
+    if type_name == FILETIME_TYPE:
+        # raw_data 8바이트를 우리 자신의 filetime_to_datetime으로 변환한다.
+        # value() 가 주는 datetime 을 그대로 못 믿는 것은 ①한글 잘림과
+        # 같은 급의 "라이브러리를 우회하는 이유"다 — JSON 직렬화가
+        # 안 되는 타입을 내보내는 버그이기도 하다.
+        moment = filetime_to_datetime(struct.unpack("<Q", value.raw_data())[0])
+        if moment is not None:
+            return moment.strftime("%Y-%m-%dT%H:%M:%S.%f0Z")
+        # FILETIME 이 0(값 없음)이거나 범위를 벗어나면 raw hex로 남긴다 —
+        # RegBin과 같은 표기다. None을 내면 "값이 없었다"와 "0이었다"가
+        # 구별되지 않는다.
+        return value.raw_data().hex()
 
     raw = value.value()
     if isinstance(raw, bytes):

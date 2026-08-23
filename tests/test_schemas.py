@@ -177,10 +177,23 @@ def test_unknown_flag_is_a_violation():
         schema.validate(record, "parsed_record")
 
 
-def test_mft_record_must_carry_both_si_and_fn_timestamps():
-    # $SI 와 $FN 을 다 읽지 않으면 timestamp_mismatch 자체를 판정할 수 없다.
+def test_mft_si_and_fn_timestamps_are_optional():
+    """FILETIME이 0/판독 불가면 mft.py가 null이 아니라 키를 뺀다.
+
+    null을 허용하면 스키마가 막고(타입이 string 뿐), 그렇다고 required로
+    두면 실물 데이터에서 매번 위반이 난다 — 실측(108,582레코드 MFT)에서
+    si_atime이 0인 레코드가 다수였다. NTFS는 최근 접근 시각 갱신을
+    기본적으로 꺼 둔다. $UsnJrnl·registry의 timestamp와 같은 규약이다.
+    """
     record = copy.deepcopy(next(io.read_jsonl(MOCK / "04_parsed/mft.jsonl")))
     del record["fn_ctime"]
+    del record["si_atime"]
+    schema.validate(record, "parsed_record")  # 예외가 나면 안 된다
+
+
+def test_mft_record_still_needs_its_core_fields():
+    record = copy.deepcopy(next(io.read_jsonl(MOCK / "04_parsed/mft.jsonl")))
+    del record["path"]
     with pytest.raises(schema.SchemaViolation):
         schema.validate(record, "parsed_record")
 
