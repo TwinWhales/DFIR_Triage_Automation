@@ -165,6 +165,96 @@ def test_every_supported_artifact_in_the_catalog_has_a_parser(tmp_path):
         assert name in catalog.artifacts, f"{name} 파서가 있는데 카탈로그에 없다"
 
 
+# ================================================== 크기 기반 시간 하드 컷
+
+
+def _mft_with_one_record_outside_the_window(tmp_path: Path):
+    """웹루트 트리 + 창 밖 레코드 하나를 담은 진짜 ``$MFT`` 바이트.
+
+    ``test_mft_parser.py``의 ``WEBSHELL_TREE``를 재사용해, 04단계 스캐폴딩이
+    아니라 실제 파서 출력으로 하드 컷을 확인한다.
+    """
+    import datetime as dt
+
+    from src.stage04_parse import evidence
+    from tests.test_mft_parser import WEBSHELL_TREE, build_mft
+
+    old = dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)
+    tree = dict(WEBSHELL_TREE)
+    tree[10] = {
+        **WEBSHELL_TREE[10],
+        "si_times": {k: old for k in ("btime", "ctime", "mtime", "atime")},
+    }
+
+    root = tmp_path / "C"
+    (root).mkdir()
+    (root / "$MFT").write_bytes(build_mft(tree))
+    return evidence.FileSource(root)
+
+
+def _mft_scope_dict():
+    return {"time_range": {"start": "2026-07-18T00:00:00Z", "end": "2026-07-22T23:59:59Z"}}
+
+
+def test_a_large_artifact_gets_its_out_of_range_records_cut(tmp_path):
+    source = _mft_with_one_record_outside_the_window(tmp_path)
+    out_dir = tmp_path / "04_parsed"
+    out_dir.mkdir()
+
+    entry = parse_mod.parse_artifact(
+        "$MFT", _mft_scope_dict(), source, out_dir, large_artifact_bytes=0
+    )
+
+    assert entry["time_range_pruned_count"] == 1
+    written = {r["record_num"] for r in io.read_jsonl(out_dir / entry["path"])}
+    assert 10 not in written  # 창 밖 레코드는 아예 안 나갔다
+    assert 9 in written  # 창 안 레코드는 그대로 남는다
+
+
+def test_a_small_artifact_keeps_the_soft_flag(tmp_path):
+    # 임계치 미만이면 예전과 동일하게 outside_time_range 플래그만 붙고
+    # 레코드는 그대로 남는다 — 시간 추론이 틀렸을 때 되짚을 수 있어야 한다.
+    source = _mft_with_one_record_outside_the_window(tmp_path)
+    out_dir = tmp_path / "04_parsed"
+    out_dir.mkdir()
+
+    entry = parse_mod.parse_artifact(
+        "$MFT", _mft_scope_dict(), source, out_dir, large_artifact_bytes=10 * 1024 * 1024
+    )
+
+    assert "time_range_pruned_count" not in entry
+    records = {r["record_num"]: r for r in io.read_jsonl(out_dir / entry["path"])}
+    assert "outside_time_range" in records[10]["flags"]
+
+
+def test_prune_large_artifacts_false_disables_the_hard_cut(tmp_path):
+    source = _mft_with_one_record_outside_the_window(tmp_path)
+    out_dir = tmp_path / "04_parsed"
+    out_dir.mkdir()
+
+    entry = parse_mod.parse_artifact(
+        "$MFT",
+        _mft_scope_dict(),
+        source,
+        out_dir,
+        large_artifact_bytes=0,
+        prune_large_artifacts=False,
+    )
+
+    assert "time_range_pruned_count" not in entry
+    written = {r["record_num"] for r in io.read_jsonl(out_dir / entry["path"])}
+    assert 10 in written
+
+
+def test_a_hard_cut_without_a_time_range_is_a_no_op():
+    # 시간 범위가 없으면 컷할 기준이 없다. 크기만으로 자르면 "왜 없어졌는지"
+    # 설명할 수 없는 레코드가 생긴다.
+    scope = parse_mod.Scope.from_selection({"path_prefix": ["C:\\inetpub\\wwwroot"]})
+    assert not parse_mod._should_prune_outside_range(
+        scope, 999_999_999, threshold_bytes=0, enabled=True
+    )
+
+
 # ============================================================ 관통 실행
 
 

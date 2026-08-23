@@ -112,6 +112,16 @@ flags:
           values: [4728, 4732]
       handler: target_is_privileged_group
 
+  service_installed:
+    artifacts: [evtx:System]
+    condition: EVTX 7045
+    note: T1543.003(서비스 지속성)의 대표 흔적. 설치 순간에만 남고 로그가 롤오버되면 사라진다.
+    rule:
+      when:
+        - artifact: evtx:*
+          match: event_id
+          values: [7045]
+
   outside_time_range:
     artifacts: [$MFT, $UsnJrnl, evtx:Security, evtx:System]
     condition: 선별된 시간 범위 밖

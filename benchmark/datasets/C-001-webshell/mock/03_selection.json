@@ -4,7 +4,7 @@
   "schema_version": "1.0",
   "generated_at": "2026-08-06T04:12:40Z",
   "generator": "select.py",
-  "mapping_table_version": "0.4",
+  "mapping_table_version": "0.5",
   "selected": [
     {
       "artifact": "$MFT",

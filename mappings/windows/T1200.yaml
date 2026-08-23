@@ -1,0 +1,19 @@
+technique: T1200
+name: "Hardware Additions"
+os: windows
+
+artifacts:
+  # 20001(UserPnp: 드라이버 설치 완료)·10000(Kernel-PnP: 장치 구성)은
+  # 공개 DFIR 자료 기준 추정치이며, 이 프로젝트의 실제 증거 이미지로는
+  # 아직 대조하지 않았다 — docs/limitations.md 참고. "임의로 채운" 초안.
+  - name: evtx:System
+    tier: 1
+    scope_template:
+      event_ids: [20001, 10000]
+    rationale: 신규 장치 드라이버 설치·장치 구성 이벤트(PnP)
+
+  - name: registry:SYSTEM
+    tier: 1
+    scope_template:
+      path_prefix: ['SYSTEM\CurrentControlSet\Enum\USB']
+    rationale: 신규 USB 장치 열거 정보(VID/PID, 최초 연결 시각)

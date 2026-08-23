@@ -56,10 +56,8 @@ __all__ = [
     "apply_all",
 ]
 
-
 class VocabularyError(ValueError):
     """``_flags.yaml`` 의 어휘 또는 룰 정의 오류."""
-
 
 #: ``$STANDARD_INFORMATION`` / ``$FILE_NAME``의 대응하는 타임스탬프 쌍.
 #: 순서가 서로 맞아야 한다. ``zero_timestamp``와 시간 범위 판정에 쓴다.
@@ -95,7 +93,6 @@ DEFAULT_PRIVILEGED_GROUPS = frozenset(
 
 #: FILETIME 0은 1601-01-01. 이보다 이르거나 같으면 값이 없는 것이다.
 _FILETIME_EPOCH = datetime(1601, 1, 2, tzinfo=timezone.utc)
-
 
 def mappings_dir() -> Path:
     """``mappings/`` 위치. ``src/stage04_parse/flagging.py`` 기준."""

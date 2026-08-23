@@ -16,7 +16,7 @@
 # 카탈로그와 파서 등록소가 어긋나면 tests/test_pipeline_e2e.py 가 잡는다.
 # supported: true 인데 파서가 없거나, 파서가 있는데 여기 없거나 둘 다.
 
-mapping_table_version: "0.4"
+mapping_table_version: "0.5"
 
 artifacts:
   $MFT:

@@ -64,7 +64,7 @@ def test_catalog_loads_every_artifact(catalog):
     }
     # 목록이 바뀌면 이 값도 올린다. 03_selection.json 에 실려 나가므로
     # 산출물만 보고 어느 카탈로그로 돌렸는지 되짚을 수 있어야 한다.
-    assert catalog.mapping_table_version == "0.4"
+    assert catalog.mapping_table_version == "0.5"
 
 
 def test_unsupported_artifacts_carry_a_reason(catalog):
@@ -99,7 +99,8 @@ def test_unsupported_without_a_reason_is_refused(tmp_path):
 
 def test_all_shipped_mappings_load(mappings):
     assert set(mappings) == {
-        "T1505.003", "T1136.001", "T1543.003", "T1053.005", "T1070.004", "T1070.006"
+        "T1505.003", "T1136.001", "T1543.003", "T1053.005", "T1070.004", "T1070.006",
+        "T1547.001", "T1091", "T1200",
     }
 
 

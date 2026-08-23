@@ -17,6 +17,11 @@
 증거 없이 배선만 확인하려면 목업 ``04_parsed/``를 미리 넣어 두고
 ``--skip-existing``으로 건너뛴다.
 
+**시간 범위는 기본적으로 소프트 필터다** — ``outside_time_range``만 붙이고
+전부 내보낸다(``flagging.py``). 다만 파일이 ``--large-artifact-mb``(기본
+100MB)를 넘으면 그 판정을 하드 컷으로 바꿔 아예 뺀다(``_should_prune_outside_range``).
+크기와 무관하게 소프트 방식만 쓰려면 ``--no-time-range-prune``.
+
 사용법::
 
     python -m src.stage04_parse.parse \\
@@ -46,6 +51,18 @@ __all__ = [
 ]
 
 STAGE = "04_parse"
+
+#: 파일 크기가 이보다 크면(바이트) 시간 범위 밖 레코드를 아예 뺀다.
+#:
+#: 소형 아티팩트는 그대로 둔다 — ``outside_time_range``만 붙이고 전부
+#: 내보낸다(``flagging.py`` 참조). 시간 추론이 틀렸을 때 원인을 되짚으려면
+#: 레코드가 남아 있어야 하기 때문이다. 이 트레이드오프를 무제한 유지하면
+#: 대형 ``$MFT``·``$UsnJrnl``에서 05단계로 넘어가기도 전에 디스크와 메모리
+#: 비용이 커지므로, 임계치를 넘는 것만 하드 컷으로 바꾼다.
+#:
+#: **임의로 잡은 값이다.** 실제 대형 증거로 대조한 적이 없다 —
+#: ``docs/limitations.md`` 참고.
+DEFAULT_LARGE_ARTIFACT_BYTES = 100 * 1024 * 1024  # 100MB
 
 #: 아티팩트 이름 → ``04_parsed/`` 안의 파일명.
 OUTPUT_FILENAMES: dict[str, str] = {
@@ -148,6 +165,7 @@ class _Counter:
     def __init__(self) -> None:
         self.total = 0
         self.flagged = 0
+        self.pruned = 0
 
     def __call__(self, records: "Any") -> "Any":
         for record in records:
@@ -157,6 +175,34 @@ class _Counter:
             yield record
 
 
+def _should_prune_outside_range(
+    scope: Scope, size_bytes: int, *, threshold_bytes: int, enabled: bool
+) -> bool:
+    """이 아티팩트를 시간 범위로 하드 컷할지 정한다.
+
+    시간 범위 자체가 없으면 컷할 기준이 없으므로 항상 ``False``다.
+    """
+    if not enabled or threshold_bytes < 0:
+        return False
+    if scope.start is None and scope.end is None:
+        return False
+    return size_bytes > threshold_bytes
+
+
+def _drop_outside_range(records: "Any", counter: "_Counter") -> "Any":
+    """``outside_time_range`` 가 붙은 레코드를 빼고 흘려보낸다.
+
+    ``flagging.py``가 이미 판정을 끝낸 결과를 재사용한다 — 시간 범위의
+    의미는 거기 한 곳에만 있어야 한다. 여기서는 "이번 실행에서 그 판정을
+    내보낼지 뺄지"만 결정한다.
+    """
+    for record in records:
+        if "outside_time_range" in (record.get("flags") or []):
+            counter.pruned += 1
+            continue
+        yield record
+
+
 def parse_artifact(
     artifact: str,
     scope_dict: dict[str, Any],
@@ -164,11 +210,19 @@ def parse_artifact(
     out_dir: Path,
     *,
     implementation: str = "native",
+    large_artifact_bytes: int = DEFAULT_LARGE_ARTIFACT_BYTES,
+    prune_large_artifacts: bool = True,
 ) -> dict[str, Any]:
     """아티팩트 하나를 파싱해 JSONL로 쓰고 매니페스트 항목을 돌려준다.
 
     파서가 만든 레코드에 ``flagging``이 플래그를 붙인 뒤 기록됩니다.
     파서는 플래그를 신경 쓰지 않아도 됩니다.
+
+    파일이 ``large_artifact_bytes``보다 크고 시간 범위가 지정돼 있으면,
+    ``outside_time_range`` 로 판정된 레코드를 아예 빼고 기록합니다(하드
+    컷). 그 밖에는 기존과 같이 전부 내보내고 플래그만 붙입니다(소프트).
+    ``prune_large_artifacts=False``로 끄면 크기와 무관하게 항상 소프트
+    방식입니다.
     """
     parser = parsers.get(artifact, implementation)
     if parser is None:
@@ -193,11 +247,16 @@ def parse_artifact(
     filename = OUTPUT_FILENAMES[artifact]
     counter = _Counter()
 
+    size_bytes = located.path.stat().st_size if located is not None else 0
+    prune = _should_prune_outside_range(
+        scope, size_bytes, threshold_bytes=large_artifact_bytes, enabled=prune_large_artifacts
+    )
+
     with source.open(artifact) as stream:
-        written = io.write_jsonl(
-            out_dir / filename,
-            counter(flagging.apply_all(parser.parse(stream, scope), scope)),
-        )
+        records = flagging.apply_all(parser.parse(stream, scope), scope)
+        if prune:
+            records = _drop_outside_range(records, counter)
+        written = io.write_jsonl(out_dir / filename, counter(records))
 
     # 파서가 집계를 내놓으면 받는다. 읽지 못하고 건너뛴 구간이 있는데
     # 매니페스트에 0으로 남으면, 저널의 빈 구간을 "아무 일도 없었다"로
@@ -214,6 +273,11 @@ def parse_artifact(
         # 구간 수(parse_errors)만으로는 규모를 알 수 없다. 구간 1곳이
         # 8바이트인 것과 500KB인 것은 판단이 다르다.
         entry["unreadable_bytes"] = int(stats["unreadable_bytes"])
+    if prune:
+        # 대형 아티팩트라 시간 범위 밖 레코드를 하드 컷했다는 사실 자체를
+        # 남긴다. 0건을 뺐어도 "이번 실행은 하드 컷 모드였다"는 정보다 —
+        # 조용히 넘어가면 나중에 소프트 방식과 결과를 비교할 수 없다.
+        entry["time_range_pruned_count"] = counter.pruned
     if located is not None:
         # 어느 파일에서 읽었는지 남긴다. 나중에 "이 결과가 어디서 나왔나"를
         # 되짚을 수 있어야 하고, method가 search면 제자리에 없던 것이므로
@@ -252,6 +316,21 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--errors", default=None)
+    parser.add_argument(
+        "--large-artifact-mb",
+        type=float,
+        default=DEFAULT_LARGE_ARTIFACT_BYTES / (1024 * 1024),
+        help=(
+            "이 크기(MB)를 넘는 아티팩트는 시간 범위 밖 레코드를 하드 컷한다. "
+            "기본 %(default)s MB. 임의로 잡은 값이니 실측 후 조정할 것 "
+            "(docs/limitations.md)"
+        ),
+    )
+    parser.add_argument(
+        "--no-time-range-prune",
+        action="store_true",
+        help="크기와 무관하게 항상 소프트 방식(outside_time_range 플래그만)을 쓴다",
+    )
     return parser.parse_args(argv)
 
 
@@ -321,10 +400,17 @@ def main(argv: "list[str] | None" = None) -> int:
         skipped.append({"artifact": artifact, "reason": reason, "message": message})
         print(f"[{STAGE}] {label} — {message}", file=sys.stderr)
 
+    large_artifact_bytes = int(args.large_artifact_mb * 1024 * 1024)
     for artifact, scope_dict in sorted(targets.items()):
         try:
             entry = parse_artifact(
-                artifact, scope_dict, source, out_dir, implementation=args.parser
+                artifact,
+                scope_dict,
+                source,
+                out_dir,
+                implementation=args.parser,
+                large_artifact_bytes=large_artifact_bytes,
+                prune_large_artifacts=not args.no_time_range_prune,
             )
         except LookupError as e:
             # 파서 미구현. 실패가 아니라 지원 범위 밖이며, 보고서의
@@ -343,9 +429,14 @@ def main(argv: "list[str] | None" = None) -> int:
             log.abort(STAGE, "parse_error", {"value": artifact, "message": str(e)})
 
         files.append(entry)
+        pruned_note = (
+            f", 시간범위 하드컷 {entry['time_range_pruned_count']}건 제외"
+            if "time_range_pruned_count" in entry
+            else ""
+        )
         print(
             f"  {artifact}: {entry['record_count']}건 "
-            f"(플래그 {entry['flagged_count']}건) → {entry['path']}"
+            f"(플래그 {entry['flagged_count']}건{pruned_note}) → {entry['path']}"
         )
 
     if not files:

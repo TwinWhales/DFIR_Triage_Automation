@@ -52,6 +52,9 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1543.003": "Create or Modify System Process: Windows Service",
     "T1053.005": "Scheduled Task/Job: Scheduled Task",
     "T1070.006": "Indicator Removal: Timestomp",
+    "T1547.001": "Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder",
+    "T1091": "Replication Through Removable Media",
+    "T1200": "Hardware Additions",
     # 매핑은 아직 없으나 시나리오에 자주 등장하는 기법
     "T1003.001": "OS Credential Dumping: LSASS Memory",
     "T1021.001": "Remote Services: Remote Desktop Protocol",
@@ -65,7 +68,6 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1218.011": "System Binary Proxy Execution: Rundll32",
     "T1486": "Data Encrypted for Impact",
     "T1490": "Inhibit System Recovery",
-    "T1547.001": "Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder",
 }
 
 

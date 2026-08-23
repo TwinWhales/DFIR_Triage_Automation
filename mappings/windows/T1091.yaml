@@ -1,0 +1,26 @@
+technique: T1091
+name: "Replication Through Removable Media"
+os: windows
+
+artifacts:
+  - name: registry:SYSTEM
+    tier: 1
+    scope_template:
+      path_prefix:
+        - 'SYSTEM\CurrentControlSet\Enum\USBSTOR'
+        - 'SYSTEM\CurrentControlSet\Enum\USB'
+    rationale: USB 저장장치 연결 이력(장치 시리얼, 최초/최근 연결 시각)
+
+  # extensions만 주고 path_prefix를 비운다 — 이동식 매체에서 옮겨진
+  # 파일이 어느 경로에 놓일지 미리 알 수 없다. flags(file_created)가
+  # 05단계 record_filter의 실질적인 축소 수단이다.
+  - name: $UsnJrnl
+    tier: 1
+    scope_template:
+      extensions: [".exe", ".dll", ".lnk", ".inf", ".bat", ".vbs", ".ps1"]
+    rationale: 이동식 매체 연결 전후 실행 파일 생성·복사 이력
+
+  - name: $MFT
+    tier: 2
+    trigger: Tier1 $UsnJrnl에서 실행 파일 생성 흔적이 확인된 경우
+    rationale: 생성된 실행 파일의 타임스탬프 조작 여부 확인

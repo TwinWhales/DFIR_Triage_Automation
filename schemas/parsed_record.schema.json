@@ -38,6 +38,7 @@
           "file_created",
           "account_created",
           "privileged_group_add",
+          "service_installed",
           "outside_time_range"
         ]
       }
