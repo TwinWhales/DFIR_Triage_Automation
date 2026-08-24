@@ -60,6 +60,8 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1078.003": "Valid Accounts: Local Accounts",
     "T1112": "Modify Registry",
     "T1562.001": "Impair Defenses: Disable or Modify Tools",
+    "T1562.004": "Impair Defenses: Disable or Modify System Firewall",
+    "T1197": "BITS Jobs",
     # 매핑은 아직 없으나 시나리오에 자주 등장하는 기법
     "T1003.001": "OS Credential Dumping: LSASS Memory",
     "T1021.001": "Remote Services: Remote Desktop Protocol",

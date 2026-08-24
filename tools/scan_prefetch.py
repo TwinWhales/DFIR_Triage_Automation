@@ -82,7 +82,11 @@ def scan_file(path: Path) -> dict:
         "path_hash": header.path_hash,
         "hash_from_filename": from_name,
         "declared_size": header.file_size,
-        "actual_size": path.stat().st_size,
+        # **해제된 바이트 길이와 비교한다.** 헤더의 크기는 압축을 푼
+        # .pf 의 크기이므로 온디스크 크기(``stat``)와는 압축 파일에서
+        # 절대 같아질 수 없다. 그걸 비교하면 Win10 이후 전량이 "불일치"로
+        # 나와 진짜 크기 어긋남을 가린다.
+        "actual_size": len(raw),
         "compressed": compressed,
         "names": names,
     }

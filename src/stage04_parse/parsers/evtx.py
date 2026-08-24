@@ -97,7 +97,18 @@ TIMESTAMP_OFFSET = 0x10
 
 #: ``<Channel>``이 비었을 때 쓸 값. 파일에서 유추하는 것이지 지어내는
 #: 것이 아니다 — ``evtx:Security``로 연 파일의 채널은 Security다.
-CHANNEL_FALLBACK = {"evtx:Security": "Security", "evtx:System": "System"}
+#:
+#: **이 표가 곧 지원하는 채널 목록이다.** ``EvtxParser.__init__``이 여기
+#: 없는 아티팩트를 거부하므로, 카탈로그와 등록소만 고치고 여기를 빠뜨리면
+#: import 시점에 죽는다. 조용하지는 않지만 등록 지점이 하나 더 있다는
+#: 사실 자체가 함정이다.
+CHANNEL_FALLBACK = {
+    "evtx:Security": "Security",
+    "evtx:System": "System",
+    "evtx:Firewall": "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
+    "evtx:BITS": "Microsoft-Windows-Bits-Client/Operational",
+    "evtx:NetworkProfile": "Microsoft-Windows-NetworkProfile/Operational",
+}
 
 #: 청크 하나의 크기. python-evtx가 같은 값을 쓰고 있으며, 여기서는
 #: 슬롯 수를 로그로 남길 때만 쓴다.

@@ -41,6 +41,11 @@ ARTIFACT_PREFIX: dict[str, str] = {
     "$UsnJrnl": "USN",
     "evtx:Security": "EVTX-SEC",
     "evtx:System": "EVTX-SYS",
+    # 같은 evtx 파서가 맡는 다른 채널들. 접두어를 나누는 이유는 하나다 —
+    # ref 만 보고 어느 로그에서 나온 레코드인지 되짚을 수 있어야 한다.
+    "evtx:Firewall": "EVTX-FW",
+    "evtx:BITS": "EVTX-BITS",
+    "evtx:NetworkProfile": "EVTX-NET",
     # 레지스트리는 MFT 레코드 번호 같은 일련번호가 없다. 하이브 안에서
     # 유일한 값은 NK 레코드의 오프셋이므로 그것을 10진수로 쓴다.
     # `offset` 필드에는 같은 값이 16진수로 들어간다.
@@ -60,7 +65,8 @@ PREFIX_ARTIFACT: dict[str, str] = {v: k for k, v in ARTIFACT_PREFIX.items()}
 #: 앞자리 0을 허용하지 않는다. "MFT#012345"와 "MFT#12345"가 같은 레코드를
 #: 가리키면서 문자열로는 달라지면, 06단계의 집합 대조가 통과해야 할 것을 기각한다.
 REF_PATTERN = re.compile(
-    r"^(?P<prefix>MFT|USN|EVTX-SEC|EVTX-SYS|REG-SYS|REG-SW|AMCACHE|PF)#(?P<num>0|[1-9]\d*)$"
+    r"^(?P<prefix>MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET"
+    r"|REG-SYS|REG-SW|AMCACHE|PF)#(?P<num>0|[1-9]\d*)$"
 )
 
 

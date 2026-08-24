@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.stage03_select.mapping_loader import DEFAULT_PRIORITY
-from src.stage05_interpret import allocation
+from src.stage05_interpret import allocation, record_filter
 
 INCIDENT = datetime(2026, 8, 20, 9, 17, 3, tzinfo=timezone.utc)
 
@@ -269,3 +269,84 @@ def test_the_quota_reports_the_weight_behind_the_seats():
 def test_every_priority_has_a_weight(priority):
     # 눈금이 늘었는데 가중치를 안 채우면 배분이 KeyError 로 멈춘다.
     assert allocation.PRIORITY_WEIGHT[priority] > 0
+
+
+# ==================================================== AnchorIndex (성능·동치)
+#
+# 실물 이미지에서 처음 드러난 자리입니다. 앵커마다 거리를 재던 구현이
+# $MFT 98,151건에서 3.4 × 10^10 회 비교로 불어나 05단계가 사실상 멈췄습니다.
+# 정렬 + 이분 탐색으로 바꿨고, **값이 같은지**를 여기서 못 박습니다.
+
+
+def _brute_nearest(times, anchors, window):
+    """바꾸기 전 구현. 이것과 값이 갈리면 최적화가 아니라 변경이다."""
+    best = None
+    for moment in times:
+        if moment.tzinfo is None:
+            continue
+        for anchor in anchors:
+            distance = abs((moment - anchor).total_seconds())
+            if distance <= window and (best is None or distance < best[0]):
+                best = (distance, moment)
+    return best
+
+
+def _brute_distance_to_any(times, anchors):
+    best = float("inf")
+    for moment in times:
+        if moment.tzinfo is None:
+            continue
+        for anchor in anchors:
+            best = min(best, abs((moment - anchor).total_seconds()))
+    return best
+
+
+def _spread(count, *, start=datetime(2026, 8, 24, 6, 55, 9, tzinfo=timezone.utc)):
+    """마이크로초 자리까지 흩어진 시각들. float 오차가 드러나는 자리다."""
+    return [start + timedelta(seconds=i * 7, microseconds=(i * 137) % 1_000_000)
+            for i in range(count)]
+
+
+def test_anchor_index_matches_the_brute_force_it_replaced():
+    anchors = _spread(400)
+    times = _spread(60, start=datetime(2026, 8, 24, 6, 54, 0, tzinfo=timezone.utc))
+    index = record_filter.AnchorIndex(anchors)
+
+    for window in (0.0, 1.0, 60.0, 300.0, 86400.0):
+        for moment in times:
+            assert index.nearest([moment], window) == _brute_nearest([moment], anchors, window)
+        assert index.nearest(times, window) == _brute_nearest(times, anchors, window)
+
+
+def test_anchor_index_distance_to_any_matches_too():
+    anchors = _spread(400)
+    times = _spread(60, start=datetime(2026, 8, 24, 6, 54, 0, tzinfo=timezone.utc))
+    index = record_filter.AnchorIndex(anchors)
+
+    assert index.distance_to_any(times) == _brute_distance_to_any(times, anchors)
+    for moment in times:
+        assert index.distance_to_any([moment]) == _brute_distance_to_any([moment], anchors)
+
+
+def test_microsecond_distances_survive_the_index():
+    """float 초로 재면 여기서 어긋난다. 정수 마이크로초라 어긋나지 않는다."""
+    anchor = datetime(2026, 8, 24, 6, 55, 9, 123456, tzinfo=timezone.utc)
+    index = record_filter.AnchorIndex([anchor])
+
+    moment = anchor + timedelta(microseconds=1)
+    found = index.nearest([moment], 300.0)
+    assert found is not None and found[0] == 1e-06
+
+
+def test_an_index_without_anchors_finds_nothing():
+    index = record_filter.AnchorIndex([])
+
+    assert index.nearest(_spread(3), 300.0) is None
+    assert index.distance_to_any(_spread(3)) == float("inf")
+
+
+def test_naive_anchors_are_dropped_not_crashed():
+    """시각을 못 읽는 신호는 앵커가 되지 못한다 — 창을 열 시각이 없다."""
+    index = record_filter.AnchorIndex([datetime(2026, 8, 24, 6, 55, 9)])
+
+    assert len(index) == 0

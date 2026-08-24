@@ -1,0 +1,31 @@
+technique: T1562.004
+name: "Impair Defenses: Disable or Modify System Firewall"
+os: windows
+
+artifacts:
+  # 방화벽은 "껐다"와 "구멍을 냈다"가 다르고, 남는 자리도 다르다.
+  # 끈 것은 프로필 설정(2003)과 레지스트리 EnableFirewall 값에,
+  # 구멍은 규칙 추가(2004)에 남는다. 둘 다 봐야 한다.
+  - name: evtx:Firewall
+    tier: 1
+    scope_template:
+      event_ids: [2003, 2004, 2005, 2006, 2033]
+    rationale: 방화벽 프로필 설정 변경(2003)과 규칙 추가·변경·삭제(2004/2005/2006/2033) 시점
+    # 규칙 이름·방향·동작이 fields 에 그대로 담긴다. 어느 프로그램에
+    # 구멍을 내 줬는지는 ApplicationPath 에 있다.
+
+  - name: registry:SYSTEM
+    tier: 1
+    scope_template:
+      path_prefix:
+        - 'SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy'
+        - 'SYSTEM\CurrentControlSet\Services\MpsSvc'
+    rationale: 프로필별 EnableFirewall 값과 방화벽 서비스(MpsSvc) 시작 유형
+    # FirewallPolicy 아래 StandardProfile/DomainProfile/PublicProfile 이
+    # 각각 EnableFirewall 을 들고 있다. 값에는 시각이 없으므로(레지스트리의
+    # N:1 제약) 언제 껐는지는 위 evtx 2003 과 맞춰야 나온다.
+
+  - name: $MFT
+    tier: 2
+    trigger: Tier1에서 방화벽 규칙 추가가 확인되어 그 규칙이 열어 준 실행 파일을 특정해야 하는 경우
+    rationale: 규칙의 ApplicationPath 가 가리키는 파일의 생성 시각

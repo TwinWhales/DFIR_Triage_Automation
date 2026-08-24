@@ -54,8 +54,8 @@
 형식                     상태        비고
 ======================  ==========  ==========================================
 추출된 파일 단위          **구현**    볼륨 구조 보존형과 평탄형 모두
-raw dd 이미지            미구현      파티션 테이블 → NTFS 부트섹터 → ``$MFT``
-E01 / AFF4              미구현      ``pyewf``로 열어 raw처럼 다룸
+raw dd 이미지            **구현**    ``dissect.target`` 이 볼륨 계층을 맡는다
+E01 / AFF4              미검증      같은 경로(``dissect.evidence``) — 실물 확인 전
 ======================  ==========  ==========================================
 
 raw와 E01은 결국 같습니다. **E01은 raw로 펼쳐지는 컨테이너**이므로
@@ -195,6 +195,36 @@ FILE_LAYOUT: dict[str, ArtifactLocation] = {
     "evtx:System": ArtifactLocation(
         relative_paths=("Windows/System32/winevt/Logs/System.evtx",),
         filenames=("System.evtx",),
+    ),
+    # 채널 이름의 '/' 는 온디스크에서 %4 로 인코딩된다. 추출 도구가
+    # 그대로 두는 경우와 풀어 쓰는 경우가 있어 후보를 둘 다 둔다.
+    "evtx:Firewall": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/"
+            "Microsoft-Windows-Windows Firewall With Advanced Security%4Firewall.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-Windows Firewall With Advanced Security%4Firewall.evtx",
+            "Microsoft-Windows-Windows Firewall With Advanced Security-Firewall.evtx",
+        ),
+    ),
+    "evtx:BITS": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-Bits-Client%4Operational.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-Bits-Client%4Operational.evtx",
+            "Microsoft-Windows-Bits-Client-Operational.evtx",
+        ),
+    ),
+    "evtx:NetworkProfile": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-NetworkProfile%4Operational.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-NetworkProfile%4Operational.evtx",
+            "Microsoft-Windows-NetworkProfile-Operational.evtx",
+        ),
     ),
     "registry:SYSTEM": ArtifactLocation(
         relative_paths=("Windows/System32/config/SYSTEM",),
@@ -694,6 +724,7 @@ class VolumeSource:
         self.filesystem = filesystem
         self.description = description
         self._cache: dict[str, "Located | None"] = {}
+        self._files: dict[str, "tuple[Located, ...]"] = {}
 
     def describe(self) -> str:
         return self.description
@@ -712,22 +743,98 @@ class VolumeSource:
                 continue
         return None
 
-    def locate(self, artifact: str) -> "Located | None":
-        if artifact not in self._cache:
-            entry = self._resolve(artifact)
+    def _resolve_directory(
+        self, location: ArtifactLocation
+    ) -> "tuple[Any | None, tuple[Located, ...]]":
+        """폴더 아티팩트를 볼륨에서 찾는다.
+
+        ``FileSource._collect``와 같은 규약입니다 — **이름순으로 고정하고**
+        0바이트를 뺍니다. 정렬하지 않으면 같은 이미지에서 ``prefetch.jsonl``의
+        줄 순서가 실행마다 달라져 대조가 불가능해집니다.
+        """
+        for relative in location.directory_paths:
+            try:
+                folder = self.filesystem.path(relative)
+                if not folder.exists() or not folder.is_dir():
+                    continue
+                children = sorted(folder.iterdir(), key=lambda entry: entry.name.lower())
+            except Exception:  # noqa: BLE001 - 손상 볼륨에서 무엇이 나올지 모른다
+                continue
+
+            found: list[Located] = []
+            for child in children:
+                if not child.name.lower().endswith(location.directory_suffix):
+                    continue
+                try:
+                    if not child.is_file() or child.stat().st_size == 0:
+                        continue
+                except Exception:  # noqa: BLE001 - 같은 이유
+                    continue
+                if len(found) >= MAX_DIRECTORY_FILES:
+                    _log.warning(
+                        "%s 에서 %d개까지만 읽습니다 (상한 MAX_DIRECTORY_FILES)",
+                        folder,
+                        MAX_DIRECTORY_FILES,
+                    )
+                    break
+                found.append(Located(path=child, method="volume_path"))
+            if found:
+                return folder, tuple(found)
+        return None, ()
+
+    def _populate(self, artifact: str) -> None:
+        """두 캐시를 **항상 같이** 채운다. 한쪽만 차면 매니페스트와 산출물이 갈린다."""
+        location = FILE_LAYOUT.get(artifact)
+        if location is not None and location.is_directory:
+            folder, files = self._resolve_directory(location)
             self._cache[artifact] = (
-                Located(path=entry, method="volume_path") if entry is not None else None
+                Located(path=folder, method="volume_path") if folder is not None and files else None
             )
+            self._files[artifact] = files
+            return
+        entry = self._resolve(artifact)
+        located = Located(path=entry, method="volume_path") if entry is not None else None
+        self._cache[artifact] = located
+        self._files[artifact] = (located,) if located is not None else ()
+
+    def locate(self, artifact: str) -> "Located | None":
+        """매니페스트에 적을 출처. 디렉터리 아티팩트면 **그 폴더**다."""
+        if artifact not in self._cache:
+            self._populate(artifact)
         return self._cache[artifact]
 
+    def locate_all(self, artifact: str) -> "tuple[Located, ...]":
+        """열어야 할 파일들. 파일 아티팩트면 0개나 1개."""
+        if artifact not in self._files:
+            self._populate(artifact)
+        return self._files[artifact]
+
+    def _raise_not_found(self, artifact: str) -> "NoReturn":
+        location = FILE_LAYOUT.get(artifact)
+        if location is None:
+            expected = "등록 안 됨"
+        elif location.is_directory:
+            expected = ", ".join(
+                f"{d}/*{location.directory_suffix}" for d in location.directory_paths
+            )
+        else:
+            expected = ", ".join(location.relative_paths)
+        raise ArtifactNotFound(
+            f"{artifact}: {self.description} 에서 찾지 못함 (기대 위치: {expected})"
+        )
+
     def open(self, artifact: str) -> BinaryIO:
+        """``FileSource.open``과 같은 이유로 폴더 아티팩트를 거부한다."""
+        location = FILE_LAYOUT.get(artifact)
+        if location is not None and location.is_directory:
+            raise EvidenceError(
+                f"{artifact}: 파일 하나가 아니라 폴더 단위 아티팩트입니다. "
+                "open_all() 로 여십시오."
+            )
+
         found = self.locate(artifact)
         if found is None:
-            location = FILE_LAYOUT.get(artifact)
-            expected = ", ".join(location.relative_paths) if location else "등록 안 됨"
-            raise ArtifactNotFound(
-                f"{artifact}: {self.description} 에서 찾지 못함 (기대 위치: {expected})"
-            )
+            self._raise_not_found(artifact)
         # FileSource의 0바이트 판정과 같은 이유다 — 파일은 있는데
         # 알맹이가 없으면 "수집 안 됨"과 조치가 다르다.
         if found.path.stat().st_size == 0:
@@ -735,13 +842,20 @@ class VolumeSource:
         return found.path.open()
 
     def open_all(self, artifact: str) -> Iterator[Opened]:
-        raise NotImplementedError("VolumeSource 미구현")
+        """``FileSource.open_all``과 같은 계약이다 — 못 찾으면 여기서 바로 실패한다."""
+        found = self.locate_all(artifact)
+        if not found:
+            self._raise_not_found(artifact)
+        return self._streams(found)
+
+    @staticmethod
+    def _streams(found: "tuple[Located, ...]") -> Iterator[Opened]:
+        for item in found:
+            with item.path.open() as stream:
+                yield Opened(path=item.path, stream=stream)
 
     def available(self) -> list[str]:
         return [name for name in FILE_LAYOUT if self.locate(name) is not None]
-
-    def locate_all(self, artifact: str) -> "tuple[Located, ...]":
-        raise NotImplementedError("VolumeSource 미구현")
 
 
 def volume_letter(source: "EvidenceSource | str | os.PathLike[str]") -> str:
@@ -768,11 +882,16 @@ def volume_candidates(root: Path) -> list[str]:
     return [child.name for child in children if child.is_dir() and _VOLUME_DIR.match(child.name)]
 
 
-def _open_volume_image(path: Path) -> VolumeSource:
+def _open_volume_image(path: Path, volume: int | None = None) -> VolumeSource:
     """raw dd/E01 이미지를 ``dissect.target``으로 연다.
 
     ``dissect``가 없으면 여기서만 실패합니다 — 추출된 파일 단위
     (``FileSource``)만 쓰는 실행에는 이 의존성이 필요 없습니다.
+
+    NTFS가 여럿이면 ``volume``(``--volume``)로 **사람이 고릅니다.**
+    도구가 크기나 순서로 추측하지 않습니다 — 복구 파티션과 시스템 볼륨
+    둘 다 NTFS라 자동 판별이 그럴듯하게 틀릴 수 있고, 잘못 고르면
+    "아티팩트가 없다"가 아니라 **다른 볼륨의 결과가 조용히 나옵니다.**
     """
     try:
         from dissect.target import Target
@@ -793,19 +912,47 @@ def _open_volume_image(path: Path) -> VolumeSource:
     ntfs = [fs for fs in target.filesystems if getattr(fs, "__type__", None) == "ntfs"]
     if not ntfs:
         raise EvidenceError(f"{path}: NTFS 파일시스템을 찾지 못했습니다.")
-    if len(ntfs) > 1:
-        # 한 실행은 한 볼륨이다. 여러 NTFS 파티션(예: 시스템 예약 + C:)이
-        # 섞인 전체 디스크 이미지는 아직 어느 것을 열지 추측하지 않는다.
+    if volume is not None:
+        if not 0 <= volume < len(ntfs):
+            raise EvidenceError(
+                f"{path}: --volume {volume} 은 범위 밖입니다 "
+                f"(NTFS {len(ntfs)}개, 0..{len(ntfs) - 1}).\n"
+                f"{_volume_menu(ntfs)}"
+            )
+        chosen = volume
+    elif len(ntfs) > 1:
+        # 한 실행은 한 볼륨이다. 여러 파티션이 섞인 전체 디스크 이미지에서
+        # 어느 것을 열지는 사람이 정한다.
         raise EvidenceError(
             f"{path}: NTFS 파일시스템이 {len(ntfs)}개 발견됐습니다. "
-            "한 실행은 한 볼륨만 봅니다 — 여러 파티션이 섞인 전체 디스크 "
-            "이미지에서 볼륨 하나를 고르는 기능은 아직 없습니다 "
-            "(docs/limitations.md 참고)."
+            "한 실행은 한 볼륨만 봅니다 — 어느 볼륨인지 지정하십시오.\n"
+            f"{_volume_menu(ntfs)}\n"
+            "  볼륨이 여럿이면 케이스를 나눕니다 (C-001-C, C-001-D)."
         )
-    return VolumeSource(ntfs[0], description=f"디스크 이미지 ({path})")
+    else:
+        chosen = 0
+    return VolumeSource(
+        ntfs[chosen], description=f"디스크 이미지 ({path}, 볼륨 {chosen})"
+    )
 
 
-def open_source(root: str | os.PathLike[str]) -> EvidenceSource:
+def _volume_menu(ntfs: list[Any]) -> str:
+    """``--volume`` 후보를 크기와 함께 보여 준다.
+
+    크기가 판별의 전부는 아니지만 복구 파티션(수백MB)과 시스템 볼륨(수십GB)을
+    가르는 데는 대개 충분합니다. 그래도 **고르는 것은 사람입니다.**
+    """
+    lines = []
+    for i, fs in enumerate(ntfs):
+        vol = getattr(fs, "volume", None)
+        size = getattr(vol, "size", None)
+        gib = f"{size / 1024 ** 3:.1f}GiB" if isinstance(size, int) else "크기 불명"
+        name = getattr(vol, "name", None) or "이름 없음"
+        lines.append(f"    --volume {i}    {gib}  {name}")
+    return "\n".join(lines)
+
+
+def open_source(root: str | os.PathLike[str], *, volume: int | None = None) -> EvidenceSource:
     """증거 경로를 보고 알맞은 소스를 만든다.
 
     볼륨들을 담은 폴더를 지정하면 어느 볼륨인지 안내하고 실패합니다.
@@ -814,7 +961,7 @@ def open_source(root: str | os.PathLike[str]) -> EvidenceSource:
     """
     path = Path(root)
     if path.is_file():
-        return _open_volume_image(path)
+        return _open_volume_image(path, volume)
     if not path.is_dir():
         raise EvidenceError(f"증거 경로 없음: {path}")
 

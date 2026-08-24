@@ -23,10 +23,15 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
+from pathlib import Path
+
 from src.common import refs, schema
+from src.stage03_select import mapping_loader
 from src.stage04_parse import flagging
 from src.stage04_parse.parsers import evtx
 from src.stage04_parse.parsers.base import Scope
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 UTC = dt.timezone.utc
 _FILETIME_EPOCH = dt.datetime(1601, 1, 1, tzinfo=UTC)
@@ -531,3 +536,62 @@ def test_mock_records_validate_against_the_parser_shape():
             "목업과 파서의 필드 집합이 다르다. 한쪽만 고치면 05~07이 "
             "실제 케이스에서 깨진다."
         )
+
+
+# ============================================ 채널 확장 (Firewall/BITS/NetworkProfile)
+#
+# evtx 파서가 맡는 아티팩트를 늘릴 때 등록 지점이 다섯이다. 넷은
+# add-parser 스킬에 적혀 있고, 다섯 번째가 이 파일의 CHANNEL_FALLBACK 이다.
+# 빠뜨리면 import 시점에 ValueError 로 죽는다 — 조용하지는 않지만
+# 어디를 고쳐야 하는지가 안 드러난다.
+
+NETWORK_ARTIFACTS = ("evtx:Firewall", "evtx:BITS", "evtx:NetworkProfile")
+
+
+@pytest.mark.parametrize("artifact", NETWORK_ARTIFACTS)
+def test_new_evtx_channels_are_constructible(artifact):
+    parser = evtx.EvtxParser(artifact)
+    assert parser.artifact == artifact
+
+
+def test_every_catalogued_evtx_artifact_has_a_channel_fallback():
+    """카탈로그와 CHANNEL_FALLBACK 이 어긋나면 그 아티팩트는 열리지 않는다."""
+    catalog = mapping_loader.load_catalog(REPO_ROOT / "mappings")
+    catalogued = {
+        name
+        for name, spec in catalog.artifacts.items()
+        if name.startswith("evtx:") and spec.unusable_reason("windows") is None
+    }
+    assert catalogued
+    assert catalogued <= set(evtx.CHANNEL_FALLBACK)
+
+
+def test_each_channel_keeps_its_own_ref_prefix():
+    """인스턴스를 공유하면 한 채널의 레코드가 다른 접두어로 나간다.
+
+    그건 06단계에서 "존재하지 않는 레코드" = 환각으로 집계된다.
+    """
+    from src.stage04_parse import parsers
+
+    seen = {}
+    for artifact in ("evtx:Security", "evtx:System", *NETWORK_ARTIFACTS):
+        prefix = refs.prefix_for(artifact)
+        assert prefix not in seen, f"{artifact} 와 {seen.get(prefix)} 가 {prefix} 를 공유한다"
+        seen[prefix] = artifact
+        assert parsers.PARSERS[artifact].artifact == artifact
+        assert parsers.REFERENCE_PARSERS[artifact].artifact == artifact
+
+
+@pytest.mark.parametrize("artifact", NETWORK_ARTIFACTS)
+def test_new_channels_have_an_output_filename(artifact):
+    """등록소와 별개 테이블이다. 빠뜨리면 증거를 열기도 전에 KeyError 로 죽는다."""
+    from src.stage04_parse.parse import OUTPUT_FILENAMES
+
+    assert OUTPUT_FILENAMES[artifact].endswith(".jsonl")
+
+
+def test_output_filenames_are_unique():
+    """두 아티팩트가 같은 파일에 쓰면 한쪽이 통째로 사라진다."""
+    from src.stage04_parse.parse import OUTPUT_FILENAMES
+
+    assert len(set(OUTPUT_FILENAMES.values())) == len(OUTPUT_FILENAMES)

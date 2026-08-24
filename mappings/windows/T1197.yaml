@@ -1,0 +1,26 @@
+technique: T1197
+name: "BITS Jobs"
+os: windows
+
+artifacts:
+  # BITS 는 Windows Update 가 늘 쓰는 정상 기능이라 "있다/없다"로는
+  # 가려지지 않는다. 가르는 것은 **누가 만들었고 어디로 갔는가**이고,
+  # 그 둘이 각각 이벤트 3(소유자·생성 프로세스)과 59/60(URL)에 있다.
+  - name: evtx:BITS
+    tier: 1
+    scope_template:
+      event_ids: [3, 4, 59, 60, 61]
+    rationale: BITS 작업 생성(3)·완료(4)·전송 시작과 중지(59/60)·오류(61). 59/60 에 URL 이 담긴다
+
+  # 작업 큐 자체는 파일로 남는다. 파싱은 못 하지만(ESE 포맷, 범위 밖)
+  # 사건 시각에 큐가 쓰였다는 사실은 타임스탬프만으로 확인된다.
+  - name: $MFT
+    tier: 1
+    scope_template:
+      path_prefix: ['C:\ProgramData\Microsoft\Network\Downloader']
+    rationale: BITS 작업 큐(qmgr.db)의 수정 시각 — 사건 시각에 큐가 갱신됐는지
+
+  - name: evtx:NetworkProfile
+    tier: 2
+    trigger: Tier1에서 BITS 전송이 확인되어 그 시각에 실제로 네트워크에 붙어 있었는지 확인해야 하는 경우
+    rationale: 네트워크 연결·해제 시점과의 대조

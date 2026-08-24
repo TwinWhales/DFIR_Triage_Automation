@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 __all__ = [
+    "DEFAULT_NUM_CTX",
+    "DEFAULT_TIMEOUT",
     "LLMError",
     "LLMTimeout",
     "MalformedOutput",
@@ -28,6 +30,27 @@ __all__ = [
     "build_backend",
     "extract_json",
 ]
+
+
+#: 모델 응답을 기다리는 기본 상한(초).
+#:
+#: 각 단계가 ``--timeout``으로 덮어쓴다. 단계마다 프롬프트 크기가 달라
+#: 하나로 맞출 수 없다 — 02는 서술 한 문단이고 05는 레코드 수십 건이다.
+DEFAULT_TIMEOUT = 120.0
+
+
+#: 모델에게 열어 줄 컨텍스트 창(토큰).
+#:
+#: **Ollama에 맡기면 안 된다.** 지정하지 않으면 서버가 자기 기본값
+#: (4096)으로 모델을 띄우고, 넘치는 프롬프트를 **말없이 자릅니다.**
+#: 05단계는 레코드 수십 건을 실어 보내므로 이 창을 넘기기 쉽고, 잘린
+#: 뒤에는 "모델이 그 레코드를 못 봤다"와 "보고도 언급하지 않았다"가
+#: 구별되지 않습니다 — 06단계도 잡을 수 없는 층입니다.
+#:
+#: 값은 모델이 실제로 지원하는 범위 안이어야 합니다. 넘겨도 Ollama가
+#: 거부하지 않고 조용히 깎으므로, 바꿀 때는 ``/api/ps``의
+#: ``context_length``로 실제 적용값을 확인하십시오.
+DEFAULT_NUM_CTX = 32768
 
 
 class LLMError(RuntimeError):
@@ -84,12 +107,14 @@ class OllamaBackend:
         *,
         host: str = "http://localhost:11434",
         temperature: float = 0.0,
-        timeout: float = 120.0,
+        timeout: float = DEFAULT_TIMEOUT,
+        num_ctx: int = DEFAULT_NUM_CTX,
     ) -> None:
         self.model = model
         self.host = host.rstrip("/")
         self.temperature = temperature
         self.timeout = timeout
+        self.num_ctx = num_ctx
         self.name = model
 
     def complete(self, system: str, user: str) -> str:
@@ -103,9 +128,13 @@ class OllamaBackend:
                     "system": system,
                     "prompt": user,
                     "stream": False,
-                    # 재현성이 우선이다. 같은 입력에 같은 출력이 나와야
-                    # 프롬프트 변경의 효과를 측정할 수 있다.
-                    "options": {"temperature": self.temperature},
+                    "options": {
+                        # 재현성이 우선이다. 같은 입력에 같은 출력이 나와야
+                        # 프롬프트 변경의 효과를 측정할 수 있다.
+                        "temperature": self.temperature,
+                        # 서버 기본값에 맡기면 프롬프트가 조용히 잘린다.
+                        "num_ctx": self.num_ctx,
+                    },
                 },
                 timeout=self.timeout,
             )
@@ -126,7 +155,8 @@ def build_backend(
     model: str | None = None,
     host: str = "http://localhost:11434",
     temperature: float = 0.0,
-    timeout: float = 120.0,
+    timeout: float = DEFAULT_TIMEOUT,
+    num_ctx: int = DEFAULT_NUM_CTX,
 ) -> Backend:
     """``--llm`` 값에 따라 백엔드를 만든다."""
     if kind == "stub":
@@ -136,7 +166,9 @@ def build_backend(
     if kind == "ollama":
         if not model:
             raise LLMError("ollama 백엔드에는 --model 이 필요하다")
-        return OllamaBackend(model, host=host, temperature=temperature, timeout=timeout)
+        return OllamaBackend(
+            model, host=host, temperature=temperature, timeout=timeout, num_ctx=num_ctx
+        )
     raise LLMError(f"알 수 없는 백엔드: {kind!r} (사용 가능: stub, ollama)")
 
 

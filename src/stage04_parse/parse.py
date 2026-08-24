@@ -74,6 +74,9 @@ OUTPUT_FILENAMES: dict[str, str] = {
     "$UsnJrnl": "usnjrnl.jsonl",
     "evtx:Security": "evtx_security.jsonl",
     "evtx:System": "evtx_system.jsonl",
+    "evtx:Firewall": "evtx_firewall.jsonl",
+    "evtx:BITS": "evtx_bits.jsonl",
+    "evtx:NetworkProfile": "evtx_networkprofile.jsonl",
     "registry:SYSTEM": "registry_system.jsonl",
     "registry:SOFTWARE": "registry_software.jsonl",
     "registry:Amcache": "registry_amcache.jsonl",
@@ -345,7 +348,16 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
     )
     parser.add_argument("--in", dest="in_path", required=True, help="03_selection.json 경로")
     parser.add_argument("--out", required=True, help="04_parsed/ 출력 디렉터리")
-    parser.add_argument("--evidence", required=True, help="증거 루트 경로")
+    parser.add_argument("--evidence", required=True, help="증거 루트 경로(볼륨 폴더 또는 디스크 이미지 파일)")
+    parser.add_argument(
+        "--volume",
+        type=int,
+        default=None,
+        help=(
+            "디스크 이미지에 NTFS가 여럿일 때 열 볼륨 번호. 지정하지 않으면 "
+            "후보를 보여 주고 멈춘다 — 도구가 추측하지 않는다"
+        ),
+    )
     parser.add_argument(
         "--skip-existing",
         action="store_true",
@@ -417,7 +429,7 @@ def main(argv: "list[str] | None" = None) -> int:
         )
 
     try:
-        source = evidence.open_source(args.evidence)
+        source = evidence.open_source(args.evidence, volume=args.volume)
     except evidence.NotAVolumeRoot as e:
         # 사용자 입력 문제다. 안내를 그대로 보여 주고 errors.jsonl은
         # 건드리지 않는다 — 파이프라인 실패 통계에 섞을 일이 아니다.

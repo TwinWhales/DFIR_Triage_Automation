@@ -36,6 +36,7 @@ from typing import Any
 from ..common import attack
 from ..common import errors as errlog
 from ..common import io, llm, schema
+from ..common.llm import DEFAULT_NUM_CTX, DEFAULT_TIMEOUT
 from . import alert_adapter
 from .llm_client import DEFAULT_MODEL, SCENARIO_BODY_FIELDS, NormalizeClient
 
@@ -140,6 +141,21 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_MODEL, help="ollama 모델명. 기본 %(default)s")
     parser.add_argument("--host", default="http://localhost:11434", help="ollama 호스트")
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help="모델 응답 대기 상한(초). 기본 %(default)s",
+    )
+    parser.add_argument(
+        "--num-ctx",
+        type=int,
+        default=DEFAULT_NUM_CTX,
+        help=(
+            "모델에게 열어 줄 컨텍스트 창(토큰). 기본 %(default)s. "
+            "작으면 프롬프트가 조용히 잘린다"
+        ),
+    )
     parser.add_argument("--max-attempts", type=int, default=MAX_ATTEMPTS)
     parser.add_argument("--no-fewshot", action="store_true", help="few-shot 예시를 빼고 호출")
     parser.add_argument("--errors", default=None, help="errors.jsonl 경로")
@@ -183,6 +199,8 @@ def main(argv: "list[str] | None" = None) -> int:
                 model=args.model,
                 host=args.host,
                 temperature=args.temperature,
+                timeout=args.timeout,
+                num_ctx=args.num_ctx,
             )
         except llm.LLMError as e:
             print(f"[{STAGE}] {e}", file=sys.stderr)

@@ -173,6 +173,13 @@ OUTPUT_FILENAMES = { ..., "registry:SYSTEM": "registry_system.jsonl" }
 
 **`OUTPUT_FILENAMES`** — 등록소(4번)와 별개 테이블이라는 걸 잊는다.
 
+**파서 자체의 허용 목록.** 한 파서가 여러 아티팩트를 맡으면 그 파일 안에
+목록이 하나 더 있을 수 있다. evtx 가 그렇다 — `parsers/evtx.py` 의
+`CHANNEL_FALLBACK` 에 없는 아티팩트는 `EvtxParser.__init__` 이 거부한다.
+카탈로그와 등록소만 고치면 **import 시점에 죽는다.** 조용하지는 않지만
+등록 지점이 넷이 아니라 다섯이라는 사실 자체가 함정이다
+(2026-08-24, Firewall/BITS/NetworkProfile 추가에서 밟았다).
+
 **`REF_PATTERN`** — `ARTIFACT_PREFIX`만 고치고 정규식을 잊는다. 테스트가
 못 잡는다. **스키마에도 같은 정규식이 있다.**
 
