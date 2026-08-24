@@ -16,7 +16,7 @@
 # 카탈로그와 파서 등록소가 어긋나면 tests/test_pipeline_e2e.py 가 잡는다.
 # supported: true 인데 파서가 없거나, 파서가 있는데 여기 없거나 둘 다.
 
-mapping_table_version: "0.6"
+mapping_table_version: "0.7"
 
 artifacts:
   $MFT:
@@ -71,14 +71,25 @@ artifacts:
     signal_source: scope
     description: SOFTWARE 하이브. 설치 프로그램·자동실행·예약 작업 캐시.
 
-  # 제외 사유는 OS 변종과 무관하게 참이어야 한다. 처음에는 "Windows
-  # Server 기본 비활성화"라고 적었는데, Windows 10 케이스 보고서에
-  # 그대로 실려 사실과 달라졌다. 미지원이라는 사실이 1차 사유다.
+  # 유일한 디렉터리 아티팩트다. Windows/Prefetch 폴더 안의 .pf 전부가
+  # 이 아티팩트 하나이며, 파일마다 레코드가 하나씩 나온다.
+  #
+  # 여기 supported: false 로 있던 시절의 exclude_reason 은 "본 버전 파싱
+  # 모듈 미지원"이었다. 이제 파서가 있으므로 그 문장은 사실이 아니다.
+  # 남은 사실 — Windows Server 는 기본 비활성화라 수집되지 않는 경우가
+  # 많다 — 은 제외 사유가 아니라 **증거 없음**이고, 04단계가
+  # artifact_not_found 로 기록해 보고서의 "분석 범위 한계"에 싣는다.
+  # 레지스트리와 같은 자리다(limitations.md 6-8). "CMD.EXE가 5회 실행됐다"는
+  # 그 자체로 신호가 아니고, shell.aspx 를 적재했다는 사실이 신호인데 그
+  # 판단은 선별(path_prefix)이 이미 했다. program_executed 같은 플래그를
+  # 새로 만드는 안은 접었다 — 모든 레코드에 붙으면 플래그가 "볼 만하다"는
+  # 뜻이기를 그만둔다.
   prefetch:
-    parser: null
+    parser: prefetch
     os: [windows]
-    supported: false
-    exclude_reason: 본 버전 파싱 모듈 미지원 (Windows Server에서는 기본 비활성화되어 수집되지 않는 경우도 많음)
+    supported: true
+    signal_source: scope
+    description: 프리패치. 실행 이력 — 실행 파일 경로·실행 횟수·최근 실행 시각·적재된 파일 목록.
 
   $LogFile:
     parser: null

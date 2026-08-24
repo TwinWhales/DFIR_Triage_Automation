@@ -123,7 +123,7 @@ flags:
           values: [7045]
 
   outside_time_range:
-    artifacts: [$MFT, $UsnJrnl, evtx:Security, evtx:System]
+    artifacts: [$MFT, $UsnJrnl, evtx:Security, evtx:System, prefetch]
     condition: 선별된 시간 범위 밖
     note: |
       범위 밖이라도 버리지 않고 표시만 한다. 시간 범위 추론이 틀렸을 때

@@ -5,8 +5,12 @@
 검증 자체가 불가능해진다.
 
 **현재 상태: 카탈로그(``mappings/_artifacts.yaml``)의 아티팩트에는 전부
-파서가 있다** — ``$MFT``, ``$UsnJrnl``, ``evtx:Security``, ``evtx:System``.
+파서가 있다** — ``$MFT``, ``$UsnJrnl``, evtx 2종, registry 2종, ``prefetch``.
 등록된 파서 목록은 ``parsers/__init__.py``가 들고 있다.
+
+**아티팩트가 파일 하나라고 가정하지 않는다.** ``prefetch``는 폴더 안의
+.pf 전부가 아티팩트 하나이며, ``_records``가 ``evidence.open_all``로
+파일마다 파서를 부른다. 파서는 자기가 몇 번째로 불렸는지 몰라도 된다.
 
 파서가 없거나 증거 파일이 없는 아티팩트가 선별되면 ``errors.jsonl``에
 남기고 건너뛴다 — 조용히 빈 결과를 내지 않는다. 같은 내용이
@@ -72,6 +76,7 @@ OUTPUT_FILENAMES: dict[str, str] = {
     "evtx:System": "evtx_system.jsonl",
     "registry:SYSTEM": "registry_system.jsonl",
     "registry:SOFTWARE": "registry_software.jsonl",
+    "prefetch": "prefetch.jsonl",
 }
 
 #: 합집합으로 넓히는 범위 키. 여기 없는 키는 첫 값을 쓴다.
@@ -203,6 +208,29 @@ def _drop_outside_range(records: "Any", counter: "_Counter") -> "Any":
         yield record
 
 
+def _records(
+    parser: Any,
+    source: evidence.EvidenceSource,
+    artifact: str,
+    scope: Scope,
+) -> "Any":
+    """아티팩트를 이루는 파일들을 차례로 열어 레코드를 흘려보낸다.
+
+    대부분의 아티팩트는 파일이 하나라 이 반복이 한 번 돌고 끝납니다.
+    프리패치만 폴더 안의 .pf 수만큼 돕니다. **두 경우를 한 경로로 다루는
+    것이 요점입니다** — 파서는 자기가 몇 번째로 불렸는지 몰라도 되고,
+    04단계는 아티팩트가 파일인지 폴더인지 몰라도 됩니다.
+
+    파서가 ``source_path``를 들고 있으면 파일마다 채워 줍니다. 프리패치
+    레코드가 원본 .pf 파일명을 남기는 데 씁니다.
+    """
+    wants_path = hasattr(parser, "source_path")
+    for opened in source.open_all(artifact):
+        if wants_path:
+            parser.source_path = opened.path
+        yield from parser.parse(opened.stream, scope)
+
+
 def parse_artifact(
     artifact: str,
     scope_dict: dict[str, Any],
@@ -238,25 +266,35 @@ def parse_artifact(
         )
 
     # $MFT에는 드라이브 문자가 없다. 한 실행은 한 볼륨이므로 증거 경로에서
-    # 유추해 넘긴다. 경로 접두어 비교가 이 값에 의존한다.
+    # 유추해 넘긴다. 경로 접두어 비교가 이 값에 의존한다. 프리패치도
+    # 같은 값을 쓴다 — 장치 경로를 드라이브 문자로 바꿀 때다.
     if hasattr(parser, "volume_letter"):
         parser.volume_letter = evidence.volume_letter(source)
 
+    # 폴더 단위 아티팩트는 parse() 가 파일마다 불린다. 파서가 호출 사이에
+    # 들고 있는 집계와 ref 중복 감시를 여기서 비운다.
+    begin = getattr(parser, "begin_artifact", None)
+    if begin is not None:
+        begin()
+
     located = source.locate(artifact)
+    files_read = len(source.locate_all(artifact))
     scope = Scope.from_selection(scope_dict)
     filename = OUTPUT_FILENAMES[artifact]
     counter = _Counter()
 
+    # 폴더 단위 아티팩트는 located.path 가 폴더라 st_size 가 디렉터리
+    # 엔트리 크기다. 즉 하드 컷이 사실상 걸리지 않는데, 이 임계치가 겨냥한
+    # 것이 $MFT·$J 처럼 파일 하나가 수십~수백 MB 인 경우라 그대로 둔다.
     size_bytes = located.path.stat().st_size if located is not None else 0
     prune = _should_prune_outside_range(
         scope, size_bytes, threshold_bytes=large_artifact_bytes, enabled=prune_large_artifacts
     )
 
-    with source.open(artifact) as stream:
-        records = flagging.apply_all(parser.parse(stream, scope), scope)
-        if prune:
-            records = _drop_outside_range(records, counter)
-        written = io.write_jsonl(out_dir / filename, counter(records))
+    records = flagging.apply_all(_records(parser, source, artifact, scope), scope)
+    if prune:
+        records = _drop_outside_range(records, counter)
+    written = io.write_jsonl(out_dir / filename, counter(records))
 
     # 파서가 집계를 내놓으면 받는다. 읽지 못하고 건너뛴 구간이 있는데
     # 매니페스트에 0으로 남으면, 저널의 빈 구간을 "아무 일도 없었다"로
@@ -278,6 +316,12 @@ def parse_artifact(
         # 남긴다. 0건을 뺐어도 "이번 실행은 하드 컷 모드였다"는 정보다 —
         # 조용히 넘어가면 나중에 소프트 방식과 결과를 비교할 수 없다.
         entry["time_range_pruned_count"] = counter.pruned
+    if files_read > 1:
+        # 폴더 단위 아티팩트다. source_path 는 폴더를 가리키므로 그 안에서
+        # 몇 개를 열었는지가 따로 있어야 한다 — "프리패치 3건"이 파일이
+        # 세 개뿐이었다는 뜻인지 73개 중 3개만 범위에 들었다는 뜻인지
+        # 산출물만 보고 갈릴 수 있어야 한다.
+        entry["source_file_count"] = files_read
     if located is not None:
         # 어느 파일에서 읽었는지 남긴다. 나중에 "이 결과가 어디서 나왔나"를
         # 되짚을 수 있어야 하고, method가 search면 제자리에 없던 것이므로

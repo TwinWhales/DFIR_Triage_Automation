@@ -116,10 +116,13 @@ def test_an_artifact_pushed_to_tier2_counts_as_missed(case_dir, truth, tmp_path)
 
 
 def test_an_excluded_artifact_reports_the_reason(case_dir, truth, tmp_path):
-    truth["required_artifacts"] = ["$MFT", "prefetch"]
+    # prefetch 가 한때 이 자리였다. 파서가 생겨 supported 로 뒤집히면서
+    # 제외 사유가 "미지원"에서 "매핑되지 않음"으로 바뀌었고, 이 테스트가
+    # 보려는 것은 앞엣것이라 $LogFile 로 옮겼다.
+    truth["required_artifacts"] = ["$MFT", "$LogFile"]
     result = evaluate.evaluate_case(_dataset_with(tmp_path, truth), case_dir)
 
-    row = next(r for r in result["selection"]["detail"] if r["artifact"] == "prefetch")
+    row = next(r for r in result["selection"]["detail"] if r["artifact"] == "$LogFile")
     assert row["status"] == "excluded"
     assert "미지원" in row["why"]
 

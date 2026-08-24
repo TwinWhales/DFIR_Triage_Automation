@@ -36,6 +36,18 @@
 3번까지 갔는데 후보가 여럿이면 **고른 것과 안 고른 것을 함께 돌려줍니다.**
 매니페스트에 남아 나중에 되짚을 수 있습니다.
 
+## 아티팩트가 파일 하나라고 가정하지 않는다
+
+``prefetch``는 **폴더 하나에 든 .pf 전부가 아티팩트 하나**입니다. 그래서
+접점이 하나 더 있습니다.
+
+    아티팩트 이름  →  읽을 수 있는 바이트 스트림 **여러 개**
+
+``open_all``이 그것이고, 파일 아티팩트에서는 하나만 나옵니다. 04단계는
+항상 이 쪽을 쓰므로 두 종류를 구별하지 않아도 됩니다. 반대로 ``open``은
+폴더 아티팩트를 **거부합니다** — 아무거나 하나를 골라 주면 나머지가
+조용히 빠진 결과가 "프리패치 1건"으로 보고됩니다.
+
 ## 지원 계획
 
 ======================  ==========  ==========================================
@@ -57,7 +69,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Protocol
+from typing import BinaryIO, Iterator, NoReturn, Protocol
 
 __all__ = [
     "EvidenceError",
@@ -66,12 +78,14 @@ __all__ = [
     "NotAVolumeRoot",
     "ArtifactLocation",
     "Located",
+    "Opened",
     "EvidenceSource",
     "FileSource",
     "VolumeSource",
     "open_source",
     "FILE_LAYOUT",
     "MAX_SEARCH_MATCHES",
+    "MAX_DIRECTORY_FILES",
 ]
 
 _log = logging.getLogger(__name__)
@@ -116,6 +130,13 @@ class NotAVolumeRoot(EvidenceError):
 #: 재귀 검색에서 모을 후보 수 상한. 넘으면 거기서 멈춘다.
 MAX_SEARCH_MATCHES = 8
 
+#: 디렉터리 아티팩트에서 열 파일 수 상한.
+#:
+#: 프리패치는 Windows가 128개로 제한하지만(Win8 이후 1024), 수집본에는
+#: 여러 시점의 것이 섞여 더 많을 수 있습니다. 넉넉히 잡되 상한은 둡니다 —
+#: 엉뚱한 폴더를 가리켰을 때 수만 개를 열고 앉아 있지 않게 합니다.
+MAX_DIRECTORY_FILES = 4096
+
 #: 볼륨으로 보이는 폴더 이름. ``C``, ``C:``, ``C%3A``, ``C_``.
 _VOLUME_DIR = re.compile(r"^[A-Za-z](:|%3[Aa]|_)?$")
 
@@ -125,12 +146,28 @@ _MAX_ROOT_ENTRIES = 200
 
 @dataclass(frozen=True)
 class ArtifactLocation:
-    """볼륨 안에서 아티팩트가 있어야 할 자리."""
+    """볼륨 안에서 아티팩트가 있어야 할 자리.
+
+    대부분의 아티팩트는 **파일 하나**입니다(``$MFT``, 하이브, evtx). 그런
+    것은 ``relative_paths``와 ``filenames``만 씁니다.
+
+    프리패치는 다릅니다 — **폴더 하나에 든 .pf 파일 전부가 아티팩트
+    하나**입니다. 그 경우 ``directory_paths``와 ``directory_suffix``를
+    쓰고, 앞의 둘은 비웁니다.
+    """
 
     #: 볼륨 루트 기준 경로. ``/`` 로 구분한다.
-    relative_paths: tuple[str, ...]
+    relative_paths: tuple[str, ...] = ()
     #: 평탄한 폴더용 파일명 후보. 수집 도구마다 이름이 다르다.
-    filenames: tuple[str, ...]
+    filenames: tuple[str, ...] = ()
+    #: 디렉터리 아티팩트의 볼륨 기준 폴더 후보.
+    directory_paths: tuple[str, ...] = ()
+    #: 그 폴더에서 아티팩트로 볼 파일의 확장자(소문자).
+    directory_suffix: str = ""
+
+    @property
+    def is_directory(self) -> bool:
+        return bool(self.directory_suffix)
 
 
 #: 아티팩트 이름 → 있어야 할 자리.
@@ -166,6 +203,12 @@ FILE_LAYOUT: dict[str, ArtifactLocation] = {
         relative_paths=("Windows/System32/config/SOFTWARE",),
         filenames=("SOFTWARE", "SOFTWARE.hiv"),
     ),
+    # 유일한 디렉터리 아티팩트다. 폴더 안의 .pf 전부가 아티팩트 하나이며,
+    # 파일마다 레코드가 하나씩 나온다.
+    "prefetch": ArtifactLocation(
+        directory_paths=("Windows/Prefetch", "Prefetch"),
+        directory_suffix=".pf",
+    ),
 }
 
 
@@ -190,14 +233,31 @@ class Located:
     empty_candidates: tuple[Path, ...] = ()
 
 
+@dataclass(frozen=True)
+class Opened:
+    """열린 스트림과 그것이 온 파일.
+
+    파서가 "지금 읽는 것이 어느 파일인가"를 알아야 할 때가 있습니다.
+    프리패치 레코드는 ``fields.prefetch_file``에 원본 파일명을 담고,
+    헤더 안의 해시를 그 이름과 대조합니다.
+    """
+
+    path: Path
+    stream: BinaryIO
+
+
 class EvidenceSource(Protocol):
     """아티팩트 이름을 바이트 스트림으로 바꿔 주는 것."""
 
     def open(self, artifact: str) -> BinaryIO: ...
 
+    def open_all(self, artifact: str) -> "Iterator[Opened]": ...
+
     def available(self) -> list[str]: ...
 
     def locate(self, artifact: str) -> Located | None: ...
+
+    def locate_all(self, artifact: str) -> "tuple[Located, ...]": ...
 
     def describe(self) -> str: ...
 
@@ -244,6 +304,31 @@ def _resolve(base: Path, relative: str) -> Path | None:
     return current if current.is_file() else None
 
 
+def _resolve_directory(base: Path, relative: str) -> Path | None:
+    """``_resolve``의 폴더판. 마지막이 파일이 아니라 폴더여야 한다."""
+    direct = base / relative
+    try:
+        if direct.is_dir():
+            return direct
+    except OSError:
+        return None
+
+    current = base
+    for part in relative.split("/"):
+        if not current.is_dir():
+            return None
+        try:
+            children = sorted(current.iterdir(), key=lambda p: p.name)
+        except OSError:
+            return None
+        lowered = part.lower()
+        match = next((child for child in children if child.name.lower() == lowered), None)
+        if match is None:
+            return None
+        current = match
+    return current if current.is_dir() else None
+
+
 class FileSource:
     """추출된 아티팩트가 담긴 **볼륨 루트 하나**.
 
@@ -258,7 +343,13 @@ class FileSource:
         if not self.root.is_dir():
             raise EvidenceError(f"증거 폴더 없음: {self.root}")
         self.max_search = max_search
+        #: 아티팩트 → 매니페스트에 적을 출처. 파일 아티팩트는 그 파일,
+        #: 디렉터리 아티팩트는 그 폴더다.
         self._cache: dict[str, Located | None] = {}
+        #: 아티팩트 → **열 파일들.** 파일 아티팩트는 0개나 1개다.
+        self._files: dict[str, tuple[Located, ...]] = {}
+        #: 디렉터리 아티팩트를 찾아낸 폴더.
+        self._directories: dict[str, Located] = {}
         #: 아티팩트별로 "있었지만 0바이트라 건너뛴" 후보.
         self._empties: dict[str, tuple[Path, ...]] = {}
 
@@ -266,24 +357,22 @@ class FileSource:
         return f"파일 단위 볼륨 ({self.root})"
 
     def open(self, artifact: str) -> BinaryIO:
+        """아티팩트 하나를 연다. **파일 아티팩트 전용이다.**
+
+        디렉터리 아티팩트에는 "그 파일"이 없으므로 여기서 거부합니다.
+        아무거나 하나를 골라 돌려주면 나머지가 조용히 빠진 결과가 나오고,
+        그것이 "프리패치 1건"으로 보고됩니다.
+        """
+        location = FILE_LAYOUT.get(artifact)
+        if location is not None and location.is_directory:
+            raise EvidenceError(
+                f"{artifact}: 파일 하나가 아니라 폴더 단위 아티팩트입니다. "
+                "open_all() 로 여십시오."
+            )
+
         found = self.locate(artifact)
         if found is None:
-            empties = self._empties.get(artifact, ())
-            if empties:
-                # 파일은 있는데 전부 0바이트다. "수집 안 됨"과 원인이 다르고
-                # 조치도 다르므로 메시지를 나눈다.
-                names = ", ".join(str(p.relative_to(self.root)) for p in empties)
-                raise EmptyArtifact(
-                    f"{artifact}: 파일은 있으나 0바이트입니다 ({names}). "
-                    "추출이 잘못됐을 가능성이 높습니다 — 내용이 이름 있는 "
-                    "스트림(예: $UsnJrnl:$J)에 있는데 이름 없는 $DATA 를 "
-                    "뽑았거나, 수집 중 잘렸습니다. 다시 추출하십시오."
-                )
-            location = FILE_LAYOUT.get(artifact)
-            expected = ", ".join(location.relative_paths) if location else "등록 안 됨"
-            raise ArtifactNotFound(
-                f"{artifact}: {self.root} 에서 찾지 못함 (기대 위치: {expected})"
-            )
+            self._raise_not_found(artifact)
 
         if found.empty_candidates:
             # 진짜 파일은 찾았지만 껍데기도 있었다. 추출본의 특성이므로
@@ -297,19 +386,78 @@ class FileSource:
             )
         return found.path.open("rb")
 
+    def open_all(self, artifact: str) -> Iterator[Opened]:
+        """아티팩트를 이루는 **모든** 파일을 차례로 연다.
+
+        파일 아티팩트면 하나, 디렉터리 아티팩트면 폴더 안의 파일 수만큼
+        나옵니다. 04단계는 항상 이 쪽을 씁니다 — 두 종류를 한 경로로
+        다루면 새 디렉터리 아티팩트가 생겨도 파이프라인은 그대로입니다.
+
+        **찾지 못한 것은 여기서 바로 실패합니다.** 생성기 안에서 늦게
+        터지면 이미 열린 출력 파일을 남긴 채 죽습니다.
+        """
+        found = self.locate_all(artifact)
+        if not found:
+            self._raise_not_found(artifact)
+        return self._streams(found)
+
+    @staticmethod
+    def _streams(found: "tuple[Located, ...]") -> Iterator[Opened]:
+        for item in found:
+            with item.path.open("rb") as stream:
+                yield Opened(path=item.path, stream=stream)
+
+    def _raise_not_found(self, artifact: str) -> "NoReturn":
+        """왜 못 읽었는지 나눠서 올린다. 조치가 다르기 때문이다."""
+        empties = self._empties.get(artifact, ())
+        if empties:
+            # 파일은 있는데 전부 0바이트다. "수집 안 됨"과 원인이 다르고
+            # 조치도 다르므로 메시지를 나눈다.
+            names = ", ".join(str(p.relative_to(self.root)) for p in empties)
+            raise EmptyArtifact(
+                f"{artifact}: 파일은 있으나 0바이트입니다 ({names}). "
+                "추출이 잘못됐을 가능성이 높습니다 — 내용이 이름 있는 "
+                "스트림(예: $UsnJrnl:$J)에 있는데 이름 없는 $DATA 를 "
+                "뽑았거나, 수집 중 잘렸습니다. 다시 추출하십시오."
+            )
+        location = FILE_LAYOUT.get(artifact)
+        if location is None:
+            expected = "등록 안 됨"
+        elif location.is_directory:
+            expected = ", ".join(f"{d}/*{location.directory_suffix}" for d in location.directory_paths)
+        else:
+            expected = ", ".join(location.relative_paths)
+        raise ArtifactNotFound(f"{artifact}: {self.root} 에서 찾지 못함 (기대 위치: {expected})")
+
     def available(self) -> list[str]:
         """제자리 또는 루트에서 바로 찾을 수 있는 아티팩트.
 
         재귀 검색은 하지 않습니다. 목록을 보려고 폴더 전체를 훑는 것은
         비쌉니다.
         """
-        return [name for name in FILE_LAYOUT if self._probe(name) is not None]
+        return [name for name in FILE_LAYOUT if self._probe(name)]
 
     def locate(self, artifact: str) -> Located | None:
-        """아티팩트를 찾는다. 결과는 캐시된다."""
-        if artifact not in self._cache:
-            self._cache[artifact] = self._probe(artifact) or self._search(artifact)
+        """매니페스트에 적을 출처. 디렉터리 아티팩트면 **그 폴더**다."""
+        self._resolve(artifact)
         return self._cache[artifact]
+
+    def locate_all(self, artifact: str) -> "tuple[Located, ...]":
+        """열어야 할 파일들. 파일 아티팩트면 0개나 1개."""
+        self._resolve(artifact)
+        return self._files[artifact]
+
+    def _resolve(self, artifact: str) -> None:
+        """찾아서 캐시에 넣는다. 두 캐시는 항상 같이 채워진다."""
+        if artifact in self._cache:
+            return
+        found = self._probe(artifact) or self._search(artifact)
+        self._files[artifact] = found
+        location = FILE_LAYOUT.get(artifact)
+        if location is not None and location.is_directory:
+            self._cache[artifact] = self._directories.get(artifact)
+        else:
+            self._cache[artifact] = found[0] if found else None
 
     def path_of(self, artifact: str) -> Path | None:
         found = self.locate(artifact)
@@ -317,7 +465,7 @@ class FileSource:
 
     # ------------------------------------------------------------ 내부
 
-    def _probe(self, artifact: str) -> Located | None:
+    def _probe(self, artifact: str) -> "tuple[Located, ...]":
         """``stat`` 몇 번으로 끝나는 빠른 경로.
 
         폴더 크기와 무관합니다. 10만 개 파일이 있어도 비용이 같습니다.
@@ -328,7 +476,9 @@ class FileSource:
         """
         location = FILE_LAYOUT.get(artifact)
         if location is None:
-            return None
+            return ()
+        if location.is_directory:
+            return self._probe_directory(artifact, location)
 
         empties: list[Path] = []
 
@@ -339,9 +489,7 @@ class FileSource:
             if _is_empty(found):
                 empties.append(found)
                 continue
-            return Located(
-                path=found, method="volume_path", empty_candidates=tuple(empties)
-            )
+            return (Located(path=found, method="volume_path", empty_candidates=tuple(empties)),)
 
         for filename in location.filenames:
             found = _resolve(self.root, filename)
@@ -350,16 +498,64 @@ class FileSource:
             if _is_empty(found):
                 empties.append(found)
                 continue
-            return Located(
-                path=found, method="root_file", empty_candidates=tuple(empties)
-            )
+            return (Located(path=found, method="root_file", empty_candidates=tuple(empties)),)
 
         # 후보를 찾긴 했으나 전부 비었다. _search 가 이어받을 수 있도록
-        # 여기서는 None 을 내되, 무엇이 비었는지는 남긴다.
+        # 여기서는 빈 값을 내되, 무엇이 비었는지는 남긴다.
         self._empties[artifact] = tuple(empties)
-        return None
+        return ()
 
-    def _search(self, artifact: str) -> Located | None:
+    def _probe_directory(
+        self, artifact: str, location: ArtifactLocation
+    ) -> "tuple[Located, ...]":
+        """제자리 폴더에서 확장자가 맞는 파일을 전부 모은다.
+
+        **파일 이름순으로 고정합니다.** ``iterdir``의 순서는 파일시스템에
+        의존하므로, 정렬하지 않으면 같은 증거에서 ``prefetch.jsonl``의 줄
+        순서가 기계마다 달라집니다. 산출물이 재현되지 않으면 대조가
+        불가능해집니다.
+        """
+        for relative in location.directory_paths:
+            folder = _resolve_directory(self.root, relative)
+            if folder is None:
+                continue
+            found, empties = self._collect(folder, location.directory_suffix, "volume_path")
+            self._empties[artifact] = empties
+            if found:
+                self._directories[artifact] = Located(
+                    path=folder, method="volume_path", empty_candidates=empties
+                )
+                return found
+        return ()
+
+    def _collect(
+        self, folder: Path, suffix: str, method: str
+    ) -> "tuple[tuple[Located, ...], tuple[Path, ...]]":
+        """폴더 하나에서 확장자가 맞는 파일을 모은다. 0바이트는 뺀다."""
+        try:
+            children = sorted(folder.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            return (), ()
+
+        found: list[Located] = []
+        empties: list[Path] = []
+        for child in children:
+            if not child.name.lower().endswith(suffix) or not child.is_file():
+                continue
+            if _is_empty(child):
+                empties.append(child)
+                continue
+            if len(found) >= MAX_DIRECTORY_FILES:
+                _log.warning(
+                    "%s 에서 %d개까지만 읽습니다 (상한 MAX_DIRECTORY_FILES)",
+                    folder,
+                    MAX_DIRECTORY_FILES,
+                )
+                break
+            found.append(Located(path=child, method=method))
+        return tuple(found), tuple(empties)
+
+    def _search(self, artifact: str) -> "tuple[Located, ...]":
         """마지막 수단. 폴더 전체를 훑되 정렬해 결정론적으로 고른다.
 
         ``os.walk``의 순서는 파일시스템에 의존합니다. 정렬하지 않으면
@@ -371,7 +567,9 @@ class FileSource:
         """
         location = FILE_LAYOUT.get(artifact)
         if location is None:
-            return None
+            return ()
+        if location.is_directory:
+            return self._search_directory(artifact, location)
         wanted = {name.lower() for name in location.filenames}
 
         matches: list[tuple[int, str, Path]] = []
@@ -395,14 +593,54 @@ class FileSource:
 
         self._empties[artifact] = tuple(empties)
         if not matches:
-            return None
+            return ()
         matches.sort(key=lambda item: (item[0], str(item[2]).lower()))
-        return Located(
-            path=matches[0][2],
-            method="search",
-            alternates=tuple(item[2] for item in matches[1:]),
-            empty_candidates=tuple(empties),
+        return (
+            Located(
+                path=matches[0][2],
+                method="search",
+                alternates=tuple(item[2] for item in matches[1:]),
+                empty_candidates=tuple(empties),
+            ),
         )
+
+    def _search_directory(
+        self, artifact: str, location: ArtifactLocation
+    ) -> "tuple[Located, ...]":
+        """제자리에 없을 때. 확장자가 맞는 파일이 **가장 많은** 폴더를 고른다.
+
+        파일 아티팩트의 검색과 기준이 다릅니다. 저쪽은 이름이 맞는 파일
+        하나를 고르면 되지만, 여기서는 **어느 폴더가 프리패치 폴더인가**를
+        골라야 합니다. ``.pf`` 하나가 다운로드 폴더에 굴러다닌다고 그것이
+        아티팩트가 되면 안 됩니다.
+
+        같은 수면 얕은 쪽, 그래도 같으면 경로 사전순입니다 — 재현성을
+        위해 무승부를 남기지 않습니다.
+        """
+        best: tuple[int, int, str] | None = None
+        best_found: tuple[Located, ...] = ()
+        best_folder: Path | None = None
+        best_empties: tuple[Path, ...] = ()
+
+        for dirpath, dirnames, filenames in os.walk(self.root):
+            dirnames.sort()
+            if not any(name.lower().endswith(location.directory_suffix) for name in filenames):
+                continue
+            here = Path(dirpath)
+            found, empties = self._collect(here, location.directory_suffix, "search")
+            if not found:
+                continue
+            depth = len(here.relative_to(self.root).parts)
+            key = (-len(found), depth, str(here).lower())
+            if best is None or key < best:
+                best, best_found, best_folder, best_empties = key, found, here, empties
+
+        self._empties[artifact] = best_empties
+        if best_folder is not None:
+            self._directories[artifact] = Located(
+                path=best_folder, method="search", empty_candidates=best_empties
+            )
+        return best_found
 
 
 class VolumeSource:
@@ -437,10 +675,16 @@ class VolumeSource:
             "구현 순서는 이 클래스의 docstring 참조."
         )
 
+    def open_all(self, artifact: str) -> Iterator[Opened]:
+        raise NotImplementedError("VolumeSource 미구현")
+
     def available(self) -> list[str]:
         raise NotImplementedError("VolumeSource 미구현")
 
     def locate(self, artifact: str) -> Located | None:
+        raise NotImplementedError("VolumeSource 미구현")
+
+    def locate_all(self, artifact: str) -> "tuple[Located, ...]":
         raise NotImplementedError("VolumeSource 미구현")
 
 

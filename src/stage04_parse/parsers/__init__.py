@@ -8,6 +8,8 @@
 ``$MFT`` 메인 파서는 ``mft`` (analyzeMFT 기반, MIT) 입니다.
 ``$UsnJrnl`` 파서는 ``usnjrnl`` (전부 자체 구현) 입니다.
 ``evtx:Security`` / ``evtx:System`` 은 ``evtx`` (python-evtx 기반) 입니다.
+``registry:SYSTEM`` / ``registry:SOFTWARE`` 는 ``registry`` (python-registry 기반) 입니다.
+``prefetch`` 는 ``prefetch`` (온디스크 구조도 압축 해제도 전부 자체 구현) 입니다.
 ``parse.py``는 기본적으로 ``native`` 테이블을 쓰고, ``--parser reference``도
 같은 인스턴스를 가리킵니다 — 아티팩트마다 구현이 하나씩뿐입니다.
 
@@ -16,6 +18,14 @@
 아티팩트마다 따로 만듭니다** — ``artifact``가 ``ref`` 접두어와 출력
 파일명을 정하므로, 공유하면 한쪽 레코드가 다른 쪽 접두어로 나가고
 06단계가 그것을 환각으로 집계합니다.
+
+## 파일 하나짜리 아티팩트만 있는 것은 아니다
+
+``prefetch``는 **폴더 하나가 아티팩트 하나**입니다. ``parse.py``가
+``evidence.open_all``로 .pf 파일마다 ``parse()``를 부르므로, 그 파서는
+호출 사이에 상태를 들고 있고 ``begin_artifact()``로 시작을 받습니다.
+다른 파서에는 그 메서드가 없어도 됩니다 — ``parse.py``가 있는지 보고
+부릅니다.
 
 등록되지 않은 아티팩트가 선별되면 ``parse.py``가 그 사실을
 ``errors.jsonl``에 남기고 건너뜁니다. 조용히 빈 결과를 내지 않습니다 —
@@ -108,6 +118,17 @@ for _artifact in ("registry:SYSTEM", "registry:SOFTWARE"):
     _registry_parser = RegistryParser(_artifact)
     PARSERS[_artifact] = _registry_parser
     REFERENCE_PARSERS[_artifact] = _registry_parser
+
+
+# 프리패치는 유일한 **디렉터리 아티팩트**다. 폴더 안의 .pf 전부가
+# 아티팩트 하나이며, 04단계가 파일마다 parse() 를 부른다
+# (evidence.open_all). 온디스크 구조도 MAM 압축 해제도 전부 우리
+# 구현이라 evtx·registry 와 달리 기댈 라이브러리가 없다.
+from .prefetch import PrefetchParser  # noqa: E402 — 등록 블록 순서를 유지한다
+
+_prefetch_parser = PrefetchParser()
+PARSERS["prefetch"] = _prefetch_parser
+REFERENCE_PARSERS["prefetch"] = _prefetch_parser
 
 
 IMPLEMENTATIONS = ("native", "reference")

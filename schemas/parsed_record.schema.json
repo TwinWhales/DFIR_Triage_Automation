@@ -12,14 +12,14 @@
   "properties": {
     "ref": {
       "type": "string",
-      "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|REG-SYS|REG-SW)#(0|[1-9]\\d*)$",
+      "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|REG-SYS|REG-SW|PF)#(0|[1-9]\\d*)$",
       "description": "앞자리 0을 허용하지 않는다. MFT#012345와 MFT#12345가 같은 레코드를 가리키면서 문자열로 다르면 06단계의 집합 대조가 통과해야 할 것을 기각한다."
     },
     "artifact": { "type": "string", "minLength": 1 },
     "record_num": {
       "type": "integer",
       "minimum": 0,
-      "description": "아티팩트 내부의 고유 번호를 그대로 쓴다. ref의 숫자 부분과 반드시 같아야 하며, 이 대조는 스키마가 아니라 테스트가 본다. $MFT는 MFT 레코드 번호, $UsnJrnl은 USN 값이다 — USN은 저널 스트림 안의 자기 오프셋이라 그 자체로 고유하다."
+      "description": "아티팩트 내부의 고유 번호를 그대로 쓴다. ref의 숫자 부분과 반드시 같아야 하며, 이 대조는 스키마가 아니라 테스트가 본다. $MFT는 MFT 레코드 번호, $UsnJrnl은 USN 값이다 — USN은 저널 스트림 안의 자기 오프셋이라 그 자체로 고유하다. prefetch는 실행 파일 경로 해시(.pf 파일명 뒤 8자리 16진수와 같은 값)다."
     },
     "offset": {
       "type": "string",
@@ -114,6 +114,13 @@
       "if": { "properties": { "artifact": { "pattern": "^evtx:" } }, "required": ["artifact"] },
       "then": {
         "required": ["event_id", "timestamp", "channel", "computer", "fields"]
+      }
+    },
+    {
+      "if": { "properties": { "artifact": { "const": "prefetch" } }, "required": ["artifact"] },
+      "then": {
+        "$comment": "레코드 단위는 .pf 파일 하나이고 offset은 항상 0x0이다 — 되짚을 자리가 파일 시작뿐이며, Win10 이후에는 온디스크 바이트가 압축돼 있어 해제 후 오프셋이 파일 위치와 무관하다. 어느 파일에서 나왔는지는 fields.prefetch_file이 들고 있다. path는 required가 아니다 — 헤더에는 실행 파일 이름만 있고 전체 경로는 적재 파일 목록에서 찾는데, 후보가 하나로 좁혀지지 않으면 달지 않는다(parsers/prefetch.py). timestamp도 required가 아니다($UsnJrnl·registry와 같은 규약).",
+        "required": ["name", "fields"]
       }
     },
     {

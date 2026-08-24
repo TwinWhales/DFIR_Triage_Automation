@@ -64,7 +64,7 @@ PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01
 | C-001 목업 세트 | 작성 완료 |
 | 02 시나리오 정규화 | 구현 완료 — 알럿 어댑터는 실동작, LLM은 **스텁** |
 | 03 아티팩트 선별 | 구현 완료 — 매핑 9개 + 카탈로그 (`mapping_table_version` 0.6) |
-| **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx`(python-evtx 기반), `registry`(python-registry 기반) |
+| **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx`(python-evtx 기반), `registry`(python-registry 기반), `prefetch`(자체 구현) |
 | 05 sLLM 해석 | 구현 완료 — 아티팩트별 자릿수 배분은 실동작, LLM은 **스텁** |
 | 06 근거 검증 | 구현 완료 — 체커 3종 + `--checkers` 조합 |
 | 07 결과 보고 | 구현 완료 — Jinja2 템플릿 (LLM 미사용) |
@@ -109,6 +109,12 @@ cases/C-001-D/   ← 데이터 볼륨
   우리 어댑터가 합니다. 신호가 04단계 플래그가 아니라 **선별에서** 나오는
   아티팩트라 카탈로그에 `signal_source: scope`로 표시돼 있고, 05단계 배분이
   그것을 보고 자리를 줍니다([`limitations.md`](docs/limitations.md) 6-7).
+
+- **prefetch** — 폴더 하나가 아티팩트 하나입니다. 온디스크 구조도 Win10
+  이후의 MAM(LZXPRESS Huffman) 압축 해제도 **전부 자체 구현**입니다 —
+  `ctypes`로 `RtlDecompressBufferEx`를 부르면 Windows에서만 읽히는
+  아티팩트가 됩니다. 레지스트리와 같은 이유로 `signal_source: scope`입니다
+  ([`limitations.md`](docs/limitations.md) 6-8).
 
 `$MFT` 파싱 회귀는 `tools/compare_mft.py`와 합성 레코드 테스트
 (`tests/test_mft_parser.py`)로 MFTECmd 없이 `pytest` 안에서 검증합니다.

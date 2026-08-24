@@ -353,5 +353,12 @@ def test_every_catalogued_artifact_has_a_layout():
     assert readable
     for name in readable:
         assert name in evidence.FILE_LAYOUT, name
-        assert evidence.FILE_LAYOUT[name].relative_paths
-        assert evidence.FILE_LAYOUT[name].filenames
+        location = evidence.FILE_LAYOUT[name]
+        if location.is_directory:
+            # 폴더 단위 아티팩트(프리패치). 파일 하나가 아니므로
+            # relative_paths/filenames 가 아니라 폴더 후보를 본다.
+            assert location.directory_paths, name
+            assert not location.relative_paths, name
+        else:
+            assert location.relative_paths, name
+            assert location.filenames, name
