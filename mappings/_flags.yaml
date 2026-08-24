@@ -112,6 +112,46 @@ flags:
           values: [4728, 4732]
       handler: target_is_privileged_group
 
+  logon_success:
+    artifacts: [evtx:Security]
+    condition: EVTX 4624/4672
+    note: |
+      4672(특권 부여)는 관리자 세션이 열릴 때 4624 직후에 따라붙는
+      동반 이벤트라 같은 이름으로 묶는다. 나누면 한 로그온이 두 어휘로
+      갈라져 05단계에서 짝이 끊긴다.
+
+      로그온은 정상 시스템에서도 많이 남는다. 이 flag 가 필터로 일하는
+      것은 03단계가 event_ids 와 time_range 로 이미 좁혀 준 덕이다.
+      범위 없이 evtx 전체에 붙이면 쿼터를 이것만으로 채운다.
+    rule:
+      when:
+        - artifact: evtx:*
+          match: event_id
+          values: [4624, 4672]
+
+  logon_failed:
+    artifacts: [evtx:Security]
+    condition: EVTX 4625
+    note: 성공과 나누는 이유는 뜻이 다르기 때문이다. 실패의 연속은 자격증명 추측을, 실패 뒤의 성공은 그 성공을 뜻한다.
+    rule:
+      when:
+        - artifact: evtx:*
+          match: event_id
+          values: [4625]
+
+  service_config_changed:
+    artifacts: [evtx:System]
+    condition: EVTX 7040 서비스 시작 유형 변경
+    note: |
+      보안 서비스를 죽이는 흔한 방법이 삭제가 아니라 Start 값을
+      4(disabled)로 바꾸는 것이다. 레지스트리에는 바뀐 결과만 남고
+      바뀐 시점은 이 이벤트에만 남는다 — 그래서 7045(설치)와 따로 둔다.
+    rule:
+      when:
+        - artifact: evtx:*
+          match: event_id
+          values: [7040]
+
   service_installed:
     artifacts: [evtx:System]
     condition: EVTX 7045

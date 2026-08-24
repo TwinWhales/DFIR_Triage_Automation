@@ -25,3 +25,11 @@ artifacts:
     tier: 2
     trigger: Tier1에서 자동실행 등록 대상의 실행 파일 경로가 확인된 경우
     rationale: 등록된 실행 파일의 생성 시각 및 타임스탬프 조작 여부
+
+  # 아직 실제 Amcache.hve로 대조하지 않은 채 채운 것이다 —
+  # docs/limitations.md 참고. 등록만 됐고 실행되지 않은 자동실행
+  # 항목과 실제로 실행된 항목을 가르는 것이 목적이다.
+  - name: registry:Amcache
+    tier: 2
+    trigger: Tier1에서 자동실행 등록 대상의 실행 파일 경로가 확인된 경우
+    rationale: 등록된 자동실행 대상이 실제로 실행된 적 있는지 확인

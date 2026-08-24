@@ -306,6 +306,69 @@ Windows의 `RtlCompressBuffer`로 압축한 것을 우리 구현으로 풀어
   않았으면 못 봤을 버그입니다.
 - 길이 확장에서 16비트가 0이면 32비트를 더 읽는 분기를 빠뜨렸습니다.
   청크가 64KB이고 담기는 값이 이미 +15 된 것이라 65,535를 넘을 수 있습니다.
+---
+
+### 2026-08-23 · 전 파서 관통 · 실물 raw 이미지(트랙 A 첫 실행)
+
+`work.md` 트랙 A(`VolumeSource`)를 `dissect.target` 기반으로 구현하고,
+사용자가 제공한 `evidence/test_image.001`(60GB, 파티션 테이블 없는 단일
+NTFS 볼륨)에 카탈로그 7개 아티팩트 전부를 무제한 범위로 돌렸습니다 —
+$MFT·$UsnJrnl·evtx:Security·evtx:System·registry:SYSTEM·SOFTWARE·Amcache.
+
+| 아티팩트 | 레코드 | 스키마 검증(전수) |
+|---|---|---|
+| $MFT | 108,582 | 108,582 / 108,582 통과 |
+| $UsnJrnl | 202,417 | 통과 |
+| evtx:Security | 3,106 | 통과 |
+| evtx:System | 907 | 통과 |
+| registry:Amcache | 1,140 | 통과 |
+| registry:SOFTWARE | 228,216 | 통과 |
+| registry:SYSTEM | 31,624 | 통과 |
+
+**판정: 관통 확인.** 다만 처음 돌렸을 때는 두 곳에서 죽었습니다 —
+목업 데이터로만 돌리던 지금까지는 드러나지 않던 버그입니다.
+
+**원인 / 조치**
+
+- **`registry.py`가 `datetime`을 그대로 JSON에 냈습니다.** SYSTEM 하이브의
+  `...\Properties\{GUID}\####`(디바이스 속성, 설치 일시 등) 서브트리에서
+  python-registry가 `RegFileTime`이라는, 이 프로젝트가 몰랐던 값 타입을
+  `value.value()`에서 곧바로 `datetime.datetime`으로 돌려줬습니다.
+  `value_to_field()`의 폴백 분기(`raw = value.value(); ... return raw`)가
+  이걸 그대로 통과시켜 `json.dumps`가 `TypeError`로 04단계 전체를
+  중단시켰습니다. 조치 — `raw_data()` 8바이트를 우리 `filetime_to_datetime`
+  으로 직접 변환합니다(라이브러리의 반올림을 거치지 않는 것은 ③과 같은
+  이유). FILETIME이 0이면 raw hex로 남깁니다(`RegBin`과 같은 표기, `None`을
+  내면 "값이 없었다"와 "0이었다"가 구별되지 않습니다). 실측 31,624건 중
+  나머지 `parse_errors` 2,954건은 python-registry 자체가 모르는 VK 타입
+  (`0x12`·`0x13`·`0x19` 등, DEVPROP 계열로 보임)이라 값 하나만 건너뛰고
+  키는 유지됩니다 — 라이브러리 쪽 결손이라 우리가 고칠 자리가 아닙니다.
+- **`mft.py`가 판독 불가 타임스탬프를 `null`로 냈습니다.** NTFS는 최근
+  접근 시각(atime) 갱신을 기본으로 끄므로, 108,582레코드 중 다수가
+  `si_atime` FILETIME 0을 가졌습니다. `_times()`는 이미 `None`을
+  올바르게 계산하는데, `_emit()`이 그 `None`을 `si_atime`/`si_btime` 등
+  일곱 개 키에 무조건 넣었습니다. 스키마의 `$defs/timestamp`는 문자열만
+  허용해 `si_atime: None is not of type 'string'`으로 매 레코드가
+  기각됐습니다(샘플 626건 중 5건, 전체로는 2,460/108,582 = 2.3%).
+  조치 — `registry.py`·`usnjrnl.py`와 같은 규약으로 값이 `None`이면
+  **키 자체를 뺍니다.** `flagging.py`의 `has_zero_timestamp`도
+  `if field not in record: continue`로 "키 없음"을 건너뛰고 있어서 그대로
+  두면 신호가 사라지므로, `record.get(field)`로 바꿔 "키 없음"과
+  "값이 None"을 같게 취급하게 했습니다. `schemas/parsed_record.schema.json`
+  의 `$MFT` 분기 `required`에서도 si_*/fn_* 일곱 개를 뺐습니다 — 이미
+  `$UsnJrnl`·`registry` 분기에는 있던 것과 같은 조치입니다("timestamp는
+  required가 아니다" 주석 참고).
+
+두 버그 다 **작은 목업 데이터(`benchmark/datasets/C-001-webshell/mock`)
+로는 재현되지 않았습니다.** 전자는 디바이스 드라이버 속성이 많은 실물
+SYSTEM 하이브에서만, 후자는 atime 갱신이 꺼진 실물 NTFS 볼륨에서만
+나타나는 분포입니다. `work-guide.md` 3.2가 실물 대조를 요구하는 이유가
+정확히 이것입니다 — 합성 픽스처는 "우리가 예상한 모양"만 만듭니다.
+
+**아직 확인 못 한 것** — 파티션 테이블이 있는 전체 디스크 이미지, E01.
+`docs/limitations.md` "디스크 이미지를 직접 열 수 있다" 절 참고.
+
+---
 
 ## 확인한 구조
 

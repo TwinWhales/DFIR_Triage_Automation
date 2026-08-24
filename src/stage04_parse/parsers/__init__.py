@@ -114,7 +114,7 @@ for _artifact in ("evtx:Security", "evtx:System"):
 # 없다(parsers/registry.py 모듈 docstring). evtx 와 같이 감싸지 않는다.
 from .registry import RegistryParser  # noqa: E402 — 등록 블록 순서를 유지한다
 
-for _artifact in ("registry:SYSTEM", "registry:SOFTWARE"):
+for _artifact in ("registry:SYSTEM", "registry:SOFTWARE", "registry:Amcache"):
     _registry_parser = RegistryParser(_artifact)
     PARSERS[_artifact] = _registry_parser
     REFERENCE_PARSERS[_artifact] = _registry_parser

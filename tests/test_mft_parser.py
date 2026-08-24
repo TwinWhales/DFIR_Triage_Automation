@@ -139,11 +139,19 @@ def test_timestamp_microseconds_survive(parser):
     assert records[9]["si_btime"].startswith("2026-07-20T03:14:22.123456")
 
 
-def test_zeroed_timestamps_become_null_not_1601(parser):
+def test_zeroed_timestamps_are_omitted_not_null_not_1601(parser):
+    """FILETIME 0(``1601-01-01``, ``filetime_to_datetime``의 '값 없음')은
+    ``None``이 아니라 **키 자체가 빠진다.**
+
+    스키마의 ``si_btime``은 문자열만 허용한다 — ``null``을 내보내면 04단계
+    전체가 실물 이미지에서 죽는다(실측, docs/artifact-notes.md). 키를
+    빼도 신호가 사라지지 않는 것은 ``flagging.py``의 ``has_zero_timestamp``가
+    "키가 없다"를 "0이었다"와 같게 보기 때문이다.
+    """
     tree = dict(WEBSHELL_TREE)
     tree[9] = {**WEBSHELL_TREE[9], "si_times": {"btime": dt.datetime(1601, 1, 1, tzinfo=UTC)}}
     records = {r["record_num"]: r for r in parse(parser, build_mft(tree))}
-    assert records[9]["si_btime"] is None
+    assert "si_btime" not in records[9]
 
 
 # ==================================================== scope 를 지키는가

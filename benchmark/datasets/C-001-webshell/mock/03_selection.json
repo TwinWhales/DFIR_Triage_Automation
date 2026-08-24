@@ -4,7 +4,7 @@
   "schema_version": "1.0",
   "generated_at": "2026-08-21T02:05:52Z",
   "generator": "select.py",
-  "mapping_table_version": "0.7",
+  "mapping_table_version": "0.8",
   "selected": [
     {
       "artifact": "$MFT",
@@ -81,6 +81,10 @@
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
     {
+      "artifact": "registry:Amcache",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
       "artifact": "prefetch",
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
@@ -92,6 +96,6 @@
   "stats": {
     "selected_count": 2,
     "deferred_count": 2,
-    "excluded_count": 4
+    "excluded_count": 5
   }
 }

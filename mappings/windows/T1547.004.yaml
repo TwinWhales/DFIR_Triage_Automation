@@ -1,0 +1,24 @@
+technique: T1547.004
+name: "Boot or Logon Autostart Execution: Winlogon Helper DLL"
+os: windows
+
+artifacts:
+  # 키오스크 잠금 자체가 Winlogon Shell 값으로 구현되는 경우가 많다.
+  # 즉 이 키는 "지속성이 심어진 자리"인 동시에 "정상 설정이 있던 자리"라,
+  # 값이 있다는 사실이 아니라 무엇을 가리키느냐가 판단 근거다.
+  # Shell·Userinit·Taskman·Notify 네 값이 모두 이 키 아래에 있다.
+  - name: registry:SOFTWARE
+    tier: 1
+    scope_template:
+      path_prefix:
+        - 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    rationale: 로그온 시 자동 실행되는 셸·초기화 프로그램 등록값(Shell, Userinit, Taskman, Notify)
+
+  - name: $MFT
+    tier: 2
+    trigger: Tier1에서 Shell 또는 Userinit 값이 기본값(explorer.exe·userinit.exe) 외의 경로를 가리키는 경우
+    rationale: 등록된 실행 파일의 생성 시각 및 타임스탬프 조작 여부
+
+  # registry:Amcache 를 Tier 2 로 물리면 "등록만 되고 실행된 적 없는 값"과
+  # "실제로 실행된 값"을 가를 수 있다. Amcache 파서 작업이 들어오면 T1547.001
+  # 과 같은 형태로 추가한다.

@@ -1,0 +1,33 @@
+technique: T1112
+name: "Modify Registry"
+os: windows
+
+artifacts:
+  # 이 매핑은 T1112 전체가 아니라 **정책·잠금 설정 변조**로 좁혀져 있다.
+  # 좁힌 이유는 카탈로그 주석에 있는 그대로다 — path_prefix 없이 SOFTWARE
+  # 하이브를 요청하면 156,716건이 나와 선별이 의미를 잃는다.
+  # 키오스크에서 공격자가 가장 먼저 건드리는 자리를 우선 채웠다.
+  # 다른 시나리오(예: 랜섬웨어의 복구 설정 변조)를 다루려면 이 목록을
+  # 넓혀야 한다 — docs/limitations.md 참고.
+  - name: registry:SOFTWARE
+    tier: 1
+    scope_template:
+      path_prefix:
+        - 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies'
+        - 'SOFTWARE\Policies\Microsoft\Windows'
+        - 'SOFTWARE\Microsoft\Windows\AssignedAccessConfiguration'
+    rationale: 실행 제한·작업 관리자 차단 등 잠금 정책 값의 변경 여부
+
+  - name: registry:SYSTEM
+    tier: 1
+    scope_template:
+      path_prefix:
+        - 'SYSTEM\CurrentControlSet\Control\SafeBoot'
+    rationale: 안전 모드 부팅을 통한 정책 우회 준비 흔적
+
+  # 4657은 레지스트리 감사 정책이 켜져 있어야 남는다. 키오스크 기본
+  # 설정에서는 거의 꺼져 있으므로 Tier 1로 올리면 빈 결과가 흔해진다.
+  - name: evtx:Security
+    tier: 2
+    trigger: 레지스트리 감사 정책이 활성화되어 있어 변경 시점을 특정할 수 있는 경우
+    rationale: 레지스트리 값 변경 이벤트(4657)로 변경 시각과 주체 확인

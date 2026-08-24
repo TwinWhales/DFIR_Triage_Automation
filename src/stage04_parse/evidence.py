@@ -69,7 +69,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Iterator, NoReturn, Protocol
+from typing import Any, BinaryIO, Iterator, NoReturn, Protocol
 
 __all__ = [
     "EvidenceError",
@@ -84,6 +84,7 @@ __all__ = [
     "VolumeSource",
     "open_source",
     "FILE_LAYOUT",
+    "VOLUME_PATH_OVERRIDES",
     "MAX_SEARCH_MATCHES",
     "MAX_DIRECTORY_FILES",
 ]
@@ -203,12 +204,26 @@ FILE_LAYOUT: dict[str, ArtifactLocation] = {
         relative_paths=("Windows/System32/config/SOFTWARE",),
         filenames=("SOFTWARE", "SOFTWARE.hiv"),
     ),
+    "registry:Amcache": ArtifactLocation(
+        relative_paths=("Windows/AppCompat/Programs/Amcache.hve",),
+        filenames=("Amcache.hve",),
+    ),
     # 유일한 디렉터리 아티팩트다. 폴더 안의 .pf 전부가 아티팩트 하나이며,
     # 파일마다 레코드가 하나씩 나온다.
     "prefetch": ArtifactLocation(
         directory_paths=("Windows/Prefetch", "Prefetch"),
         directory_suffix=".pf",
     ),
+}
+
+#: ``VolumeSource``에서만 쓰는 대체 경로. ``FILE_LAYOUT.relative_paths``는
+#: 추출 도구가 콜론을 못 써서 벌어지는 이름 변형을 담는데, 원본 볼륨은
+#: NTFS ADS 콜론 문법을 그대로 갖고 있다 — ``$Extend/$UsnJrnl:$J``처럼.
+#: 여기 있는 경로를 ``relative_paths``보다 먼저 시도한다.
+#: ``FileSource``는 이 테이블을 보지 않는다 — 추출 폴더의 동작을
+#: 바꾸지 않기 위해서다.
+VOLUME_PATH_OVERRIDES: dict[str, tuple[str, ...]] = {
+    "$UsnJrnl": ("$Extend/$UsnJrnl:$J",),
 }
 
 
@@ -644,45 +659,86 @@ class FileSource:
 
 
 class VolumeSource:
-    """디스크 이미지 안의 NTFS 볼륨. **미구현.**
+    """디스크 이미지 안의 NTFS 볼륨. ``dissect.target`` 기반.
 
-    raw dd와 E01이 여기로 모입니다. 생성자가 파일 같은 객체를 받으므로
-    E01은 ``pyewf`` 핸들을 넘기면 되고 볼륨 해석 코드는 공유됩니다.
+    raw dd와 E01이 여기로 모입니다. 파티션 테이블·부트섹터·``$MFT``
+    런리스트 해석은 전부 ``dissect.target``에 맡깁니다 — 이 프로젝트가
+    직접 구현하는 것은 파서(04단계)뿐이고, 볼륨 계층까지 직접 짜는 것은
+    별개의 범위입니다. E01은 ``Target.open``이 ``dissect.evidence``로
+    같은 경로를 태우므로 이 클래스 안에서는 형식을 구분하지 않습니다.
 
-    구현할 때 할 일:
+    **``target.filesystems[i]``에서 직접 찾습니다.**
+    ``target.fs``(OS 레벨 병합 뷰)로는 ``$MFT`` 같은 메타파일이 나오지
+    않는다는 것이 실측(``test_image.001``, 60GB raw NTFS 볼륨)으로
+    확인됐습니다.
 
-    1. 파티션 테이블(MBR 또는 GPT)에서 NTFS 파티션 시작 오프셋을 찾는다
-    2. 부트섹터에서 클러스터 크기와 ``$MFT`` 시작 클러스터를 읽는다
-    3. ``$MFT`` 레코드 0의 ``$DATA`` 런리스트로 전체 위치를 안다
-    4. ``open()``이 그 런리스트를 따라 읽는 파일 같은 객체를 돌려준다
+    ``dissect.util.stream.RunlistStream``이 ``open()``의 반환값입니다.
+    ``seekable() == True``이고 ``seek(0)`` 후 재읽기 값이 원본과
+    일치함을 같은 이미지로 확인했습니다 — ``mft.py``의 두 번 순회
+    패턴과 호환됩니다. 런리스트를 따라가며 읽으므로 ``$MFT`` 수백MB를
+    통째로 메모리에 올리지 않습니다.
 
-    4번을 통째로 메모리에 올리지 않는 것이 중요합니다. ``$MFT``는 수백
-    MB가 되고, 다른 아티팩트를 꺼내려면 볼륨을 계속 들고 있어야 합니다.
+    파티션이 여럿이면 **NTFS 파일시스템이 정확히 하나일 때만** 엽니다.
+    한 실행은 한 볼륨입니다 — 여러 개면 어느 것인지 도구가 추측하지
+    않고 실패합니다(``_open_volume_image`` 참조). 지금 확인된 이미지는
+    파티션 테이블 없이 NTFS 볼륨 하나만 담은 형태라 이 경로만 검증했고,
+    EFI/복구 파티션이 섞인 전체 디스크 이미지는 아직 대조하지
+    못했습니다 — ``docs/limitations.md`` 참고.
 
-    파티션이 여럿이면 **하나만 열도록** 하십시오. 한 실행은 한 볼륨입니다.
+    **추출된 폴더와 다른 점** — 볼륨은 표준 절대경로를 그대로 갖고
+    있으므로 ``FileSource``처럼 파일명 후보나 재귀 검색이 필요 없습니다.
+    ``FILE_LAYOUT``의 ``relative_paths``만 그대로 시도합니다.
     """
 
-    def __init__(self, stream: BinaryIO, *, description: str = "볼륨") -> None:
-        self.stream = stream
+    def __init__(self, filesystem: Any, *, description: str) -> None:
+        self.filesystem = filesystem
         self.description = description
+        self._cache: dict[str, "Located | None"] = {}
 
     def describe(self) -> str:
         return self.description
 
+    def _resolve(self, artifact: str) -> Any:
+        location = FILE_LAYOUT.get(artifact)
+        if location is None:
+            return None
+        candidates = VOLUME_PATH_OVERRIDES.get(artifact, ()) + location.relative_paths
+        for relative in candidates:
+            try:
+                entry = self.filesystem.path(relative)
+                if entry.exists() and not entry.is_dir():
+                    return entry
+            except Exception:  # noqa: BLE001 - 손상 볼륨에서 무엇이 나올지 모른다
+                continue
+        return None
+
+    def locate(self, artifact: str) -> "Located | None":
+        if artifact not in self._cache:
+            entry = self._resolve(artifact)
+            self._cache[artifact] = (
+                Located(path=entry, method="volume_path") if entry is not None else None
+            )
+        return self._cache[artifact]
+
     def open(self, artifact: str) -> BinaryIO:
-        raise NotImplementedError(
-            "VolumeSource 미구현. 현재는 추출된 파일 단위(FileSource)만 지원합니다. "
-            "구현 순서는 이 클래스의 docstring 참조."
-        )
+        found = self.locate(artifact)
+        if found is None:
+            location = FILE_LAYOUT.get(artifact)
+            expected = ", ".join(location.relative_paths) if location else "등록 안 됨"
+            raise ArtifactNotFound(
+                f"{artifact}: {self.description} 에서 찾지 못함 (기대 위치: {expected})"
+            )
+        # FileSource의 0바이트 판정과 같은 이유다 — 파일은 있는데
+        # 알맹이가 없으면 "수집 안 됨"과 조치가 다르다.
+        if found.path.stat().st_size == 0:
+            raise EmptyArtifact(f"{artifact}: 볼륨 안 파일이 0바이트입니다 ({found.path}).")
+        return found.path.open()
 
     def open_all(self, artifact: str) -> Iterator[Opened]:
         raise NotImplementedError("VolumeSource 미구현")
 
     def available(self) -> list[str]:
-        raise NotImplementedError("VolumeSource 미구현")
-
-    def locate(self, artifact: str) -> Located | None:
-        raise NotImplementedError("VolumeSource 미구현")
+        return [name for name in FILE_LAYOUT if self.locate(name) is not None]
 
     def locate_all(self, artifact: str) -> "tuple[Located, ...]":
         raise NotImplementedError("VolumeSource 미구현")
@@ -712,6 +768,43 @@ def volume_candidates(root: Path) -> list[str]:
     return [child.name for child in children if child.is_dir() and _VOLUME_DIR.match(child.name)]
 
 
+def _open_volume_image(path: Path) -> VolumeSource:
+    """raw dd/E01 이미지를 ``dissect.target``으로 연다.
+
+    ``dissect``가 없으면 여기서만 실패합니다 — 추출된 파일 단위
+    (``FileSource``)만 쓰는 실행에는 이 의존성이 필요 없습니다.
+    """
+    try:
+        from dissect.target import Target
+    except ImportError as e:
+        raise EvidenceError(
+            f"{path}: 디스크 이미지를 열려면 dissect.target 이 필요합니다 "
+            "(pip install dissect.target). 추출된 아티팩트가 담긴 볼륨 폴더를 "
+            "지정하는 방법도 있습니다."
+        ) from e
+
+    try:
+        target = Target.open(str(path))
+    except Exception as e:  # noqa: BLE001 - dissect가 던지는 예외 종류가 이미지마다 다르다
+        raise EvidenceError(f"{path}: 이미지를 열지 못했습니다 — {e}") from e
+
+    # target.fs(OS 레벨 병합 뷰)는 쓰지 않는다 — $MFT 같은 메타파일이
+    # 나오지 않는다는 것이 실측으로 확인됐다(VolumeSource 클래스 docstring).
+    ntfs = [fs for fs in target.filesystems if getattr(fs, "__type__", None) == "ntfs"]
+    if not ntfs:
+        raise EvidenceError(f"{path}: NTFS 파일시스템을 찾지 못했습니다.")
+    if len(ntfs) > 1:
+        # 한 실행은 한 볼륨이다. 여러 NTFS 파티션(예: 시스템 예약 + C:)이
+        # 섞인 전체 디스크 이미지는 아직 어느 것을 열지 추측하지 않는다.
+        raise EvidenceError(
+            f"{path}: NTFS 파일시스템이 {len(ntfs)}개 발견됐습니다. "
+            "한 실행은 한 볼륨만 봅니다 — 여러 파티션이 섞인 전체 디스크 "
+            "이미지에서 볼륨 하나를 고르는 기능은 아직 없습니다 "
+            "(docs/limitations.md 참고)."
+        )
+    return VolumeSource(ntfs[0], description=f"디스크 이미지 ({path})")
+
+
 def open_source(root: str | os.PathLike[str]) -> EvidenceSource:
     """증거 경로를 보고 알맞은 소스를 만든다.
 
@@ -721,11 +814,7 @@ def open_source(root: str | os.PathLike[str]) -> EvidenceSource:
     """
     path = Path(root)
     if path.is_file():
-        raise EvidenceError(
-            f"{path}: 디스크 이미지 파싱은 아직 미구현입니다. "
-            "추출된 아티팩트가 담긴 볼륨 폴더를 지정하십시오. "
-            "(지원 계획은 src/stage04_parse/evidence.py 참조)"
-        )
+        return _open_volume_image(path)
     if not path.is_dir():
         raise EvidenceError(f"증거 경로 없음: {path}")
 

@@ -11,16 +11,39 @@
 
 ## 1. 증거 입력
 
-### 디스크 이미지를 직접 열지 못한다
+### 디스크 이미지를 직접 열 수 있다 (**부분 해결**, `work.md` 트랙 A)
 
-`FileSource`(추출된 파일 단위)만 지원합니다. `evidence.py`의
-`VolumeSource`는 전부 `NotImplementedError`입니다.
+`evidence.py`의 `VolumeSource`가 이제 `dissect.target` 기반으로
+구현돼 있습니다. `--evidence`에 추출된 폴더 대신 raw 이미지 **파일**을
+주면 `open_source()`가 자동으로 이쪽으로 갑니다.
 
-E01/dd 이미지를 쓰려면 FTK Imager 등으로 **먼저 파일을 뽑아 두어야**
-합니다. `evidence/[root]/` 형태가 그 결과물입니다.
+**실측(`evidence/test_image.001`, 60GB raw NTFS 볼륨)** — 파티션 테이블
+없이 NTFS 볼륨 하나만 담은 형태로, 카탈로그의 7개 아티팩트
+전부($MFT·$UsnJrnl·evtx 2종·registry 3종, Amcache 포함)를 04단계
+파이프라인 전체로 관통시켜 575,992건을 확인했습니다. `dissect.util
+.stream.RunlistStream`이 `seekable() == True`이고 재읽기 값이 원본과
+일치함도 실측으로 확인했습니다(`mft.py`의 두 번 순회 패턴과 호환).
 
-**영향** — 수동 추출 단계가 항상 선행됩니다. 자동화 파이프라인으로
-쓰기 어렵습니다.
+**아직 검증 못 한 것**:
+- **파티션 테이블이 있는 전체 디스크 이미지**(MBR/GPT, EFI·복구
+  파티션이 섞인 형태)는 대조하지 못했습니다. `_open_volume_image`는
+  NTFS 파일시스템이 정확히 하나일 때만 열고, 여럿이면 실패합니다 —
+  "한 실행은 한 볼륨"을 지키기 위한 것이지만, 그 경우 어느 파티션을
+  열지 고르는 기능 자체가 없습니다.
+- **E01**은 검증하지 않았습니다. `Target.open`이 `dissect.evidence`로
+  같은 경로를 태운다고 문서화돼 있으나 실물 E01로 확인한 적은 없습니다.
+- `$UsnJrnl`은 추출 폴더용 이름 후보(`FILE_LAYOUT`)와 별개로
+  `evidence.py`의 `VOLUME_PATH_OVERRIDES`에 원본 ADS 경로
+  (`$Extend/$UsnJrnl:$J`, 콜론 포함)를 따로 둡니다 — 추출 도구가
+  콜론을 못 쓰는 것과 원본 볼륨이 콜론을 그대로 갖는 것의 차이입니다.
+
+E01/dd 이미지를 추출된 파일 단위로 다루려면 여전히 FTK Imager 등으로
+**먼저 뽑아 둘 수도 있습니다** — `FileSource`도 그대로 유지됩니다.
+`evidence/[root]/` 형태가 그 결과물입니다.
+
+**영향** — 단일 NTFS 볼륨 raw 이미지는 추출 단계 없이 바로 돌릴 수
+있습니다. 파티션 테이블이 있는 전체 디스크나 E01은 여전히 사전 추출이
+안전합니다.
 
 ### 한 실행은 한 볼륨
 
@@ -41,6 +64,7 @@ E01/dd 이미지를 쓰려면 FTK Imager 등으로 **먼저 파일을 뽑아 두
 | `$UsnJrnl:$J` | 구현 — 전부 자체 구현 |
 | `evtx:Security` / `evtx:System` | 구현 — python-evtx 기반 어댑터 |
 | `registry:SYSTEM` / `registry:SOFTWARE` | 구현 — python-registry 기반 어댑터 |
+| `registry:Amcache` | 구현 — python-registry 기반 어댑터 (SYSTEM/SOFTWARE와 같은 클래스 재사용, `work.md` 트랙 B) |
 | `prefetch` | 구현 — 전부 자체 구현 (압축 해제 포함). 아래 단서 참조 |
 | `$LogFile` | 미지원 (카탈로그에서 제외 처리) |
 
@@ -175,6 +199,39 @@ evtx가 python-evtx의 `timestamp()`를 우회한 것과 같은 결론입니다
 
 회귀 테스트는 `tests/test_registry_parser.py`에 있습니다(한글 잘림,
 `MULTI_SZ` 종결자, 가운데 빈 항목 보존, 홀수 길이).
+
+#### `registry:Amcache` — 실물 하이브 구조는 확인, 값 의미는 대조 안 함 (**부분 해결**)
+
+`Amcache.hve`도 regf 포맷이라 `RegistryParser`를 그대로 재사용했습니다
+(`work.md` 트랙 B, `HIVE_OF`에 `"registry:Amcache": "Amcache"` 추가).
+셀 구조 자체의 정확성은 위 세 가지 우회(한글 잘림·`MULTI_SZ` 종결자·
+타임스탬프 반올림)와 `docs/artifact-notes.md`의 `scan_hive_cells.py`
+대조가 이미 검증한 것을 그대로 물려받습니다 — SYSTEM/SOFTWARE와 셀
+디코딩 경로가 완전히 같기 때문입니다.
+
+**실물 이미지(`evidence/test_image.001`)로 1,140건을 뽑아 구조를
+확인했습니다.** `Amcache\Root\Programs\...`, `Amcache\Root
+\InventoryApplicationFile\...` 서브키가 예상대로 나오고,
+`InventoryApplicationFile` 레코드의 `fields`에 `LowerCaseLongPath`
+(전체 경로)·`FileId`(`0000`+SHA1로 보이는 41자리 값)·`BinFileVersion`·
+`BinaryType`·`Size`·`ProgramId`가 실제로 담겨 있음을 확인했습니다 —
+`work.md`가 기대한 "실행 파일 경로·SHA1·타임스탬프"가 맞습니다.
+
+**다만 두 가지는 여전히 안 됐습니다.**
+- **필드 이름의 의미를 우리가 해석하지 않습니다** — 그럴 필요가
+  없습니다. `registry.py`의 설계(가치가 경로·값 이름에 있지 레코드
+  자체에 있지 않음, `docs/limitations.md` 6-7)를 그대로 따라 원시
+  값만 냅니다. `Programs` 서브키의 필드는 `"0"`·`"1"`·`"17"` 같은
+  숫자 이름이라("13": 0, "a": 1787353733 등) 사람이 읽으려면 외부
+  문서 대조가 필요한데, 그건 05단계 해석의 몫입니다.
+- **매핑(`T1547.001.yaml`)의 `path_prefix`를 아직 안 정했습니다** —
+  구조는 확인했지만 "어느 서브키가 조사에 실제로 유용한가"(예:
+  `InventoryApplicationFile`만 볼지, `Programs`도 볼지)는 검증하지
+  않았습니다. 범위를 좁히면 놓칠 위험이 있어 보류합니다.
+- **외부 도구(AmcacheParser 등) 대조는 하지 않았습니다.** 지금까지의
+  확인은 "구조가 그럴듯하다"이지 "필드값이 정확하다"의 바이트 단위
+  대조가 아닙니다. `docs/artifact-notes.md`에 대조 기록을 남기려면
+  이 절차가 남아 있습니다.
 
 ### 레지스트리에서 못 보는 것
 
@@ -314,6 +371,58 @@ USN 레코드는 파일 **이름**만 담습니다. 전체 경로를 얻으려�
 모릅니다. 대조하면 이 절을 갱신하십시오(`work-guide.md` 3.2와 같은
 의무 — 다만 이번 건은 매핑 도메인 지식이라 파서처럼 자동화된 대조
 도구는 없고, 사람이 직접 아티팩트를 열어 확인해야 합니다).
+
+#### 2차 추가분 5종 (같은 날, `mapping_table_version` 0.7)
+
+`T1547.004`·`T1546.008`·`T1078.003`·`T1112`·`T1562.001`을 더 채웠습니다.
+**같은 성격의 임의 채움이며**, 신뢰도가 낮은 순으로 적습니다.
+
+- **`T1112.yaml`의 `AssignedAccessConfiguration` 경로** — 다중 앱 키오스크
+  설정이 이 키에 남는다는 것은 공개 자료 기준 추정입니다. 단일 앱 키오스크는
+  다른 자리(LogonUI 계열)를 쓴다고 알려져 있는데 확인하지 않았습니다.
+- **`T1112`는 기법 전체가 아니라 "정책·잠금 설정 변조"로 좁혀져 있습니다.**
+  `path_prefix` 없이 SOFTWARE를 요청하면 156,716건이 나와 선별이 의미를
+  잃기 때문입니다(`_artifacts.yaml` 주석). 랜섬웨어의 복구 설정 변조 같은
+  다른 T1112 용례는 이 매핑으로 잡히지 않습니다. 매핑 이름과 실제 범위가
+  어긋나 있다는 뜻이므로, 다른 시나리오를 붙일 때 반드시 넓혀야 합니다.
+- **`T1546.008`의 접근성 프로그램 7종 목록** — `sethc`·`utilman`은 확실하나
+  `AtBroker`·`DisplaySwitch`는 Windows 버전에 따라 존재하지 않을 수 있습니다.
+  없는 경로를 걸면 조용히 0건이 되고, 그것이 "흔적 없음"과 구별되지 않습니다.
+- **`T1562.001`의 서비스 이름 5종** — `WinDefend`·`wscsvc`·`EventLog`는
+  표준이지만 `Sense`·`WdNisSvc`는 Defender ATP 구성에 따라 없을 수 있습니다.
+
+**영향** — 위와 같습니다. 다만 이번 5종은 앞의 3종과 달리 **evtx·$MFT 경로가
+섞여 있어 일부는 실제로 05단계까지 도달합니다.** 아래 절에 가른 결과가 있습니다.
+
+#### 새 매핑이 05단계에 도달하는지 (실측)
+
+관문 4를 기법별로 확인한 결과입니다. 대표 레코드를 만들어
+`flagging.apply_all` → `allocation.allocate_records`(카탈로그의 실제
+`signal_source`를 준 상태)를 태웠습니다.
+
+| 기법 | Tier 1 아티팩트 | 플래그 | 05단계 전달 |
+|---|---|---|---|
+| T1078.003 | evtx:Security (4624·4625·4672) | 5/5 | **5/5** (`logon_success`/`logon_failed` 신설) |
+| T1562.001 | evtx:System (7040·7045) | 5/5 | **5/5** (`service_config_changed` 신설) |
+| T1546.008 | $MFT (접근성 바이너리) | 5/5 | **5/5** (`timestamp_mismatch`) |
+| T1546.008 | registry:SOFTWARE (IFEO) | 0/5 | **5/5** (`signal_source: scope`) |
+| T1547.004 | registry:SOFTWARE (Winlogon) | 0/5 | **5/5** (`signal_source: scope`) |
+| T1112 | registry:SOFTWARE·SYSTEM | 0/6 | **6/6** (`signal_source: scope`) |
+| T1547.001 | registry:Amcache | 0/5 | **5/5** (`signal_source: scope`) |
+
+**레지스트리 쪽 플래그가 0인 것은 그대로입니다.** 달라진 것은 그것이
+탈락 사유가 아니게 된 점입니다 — 05단계 배분이 아티팩트별로 자리를
+나누므로 질문이 "신호냐"에서 "몇 자리를 줄 것이냐"로 바뀌었습니다(6-7).
+
+이 매핑들을 처음 쓸 때는 `T1112`가 Tier 1이 레지스트리뿐이라 **매핑은
+있으나 사실상 작동하지 않는 유일한 기법**이었습니다. `T1547.004`도
+레지스트리가 본체이고 `$MFT`는 Tier 2(루프백 없음)라 같은 상태였습니다.
+둘 다 배분이 들어오면서 풀렸습니다.
+
+`flagging.py`에 "Winlogon 하위면 신호" 같은 룰을 넣어 때우지 않은 것은
+잘한 선택으로 남았습니다. 그렇게 했으면 지금 배분이 들어온 뒤 룰을 도로
+걷어내야 했을 것이고, 그 사이 나온 수치는 플래그가 부풀려진 값이었을
+것입니다.
 
 ---
 
@@ -856,6 +965,10 @@ LLM이 볼 증거의 양을 정하게** 됩니다. 02단계가 맞는 기법을 
 
 파서를 붙이면서 드러난 것이라 6장에 함께 적습니다. **04단계까지는
 정상인데 모델에 한 건도 가지 않았습니다.**
+
+`registry:Amcache`도 같은 클래스(`RegistryParser`)를 쓰므로 이 절이
+그대로 적용됩니다 — Amcache 레코드도 `flags`가 붙지 않습니다. 카탈로그에
+세 하이브 모두 `signal_source: scope`를 적어 두었습니다.
 
 실측(`evidence/[root]`, `SYSTEM\CurrentControlSet\Services`):
 

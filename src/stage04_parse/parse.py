@@ -76,6 +76,7 @@ OUTPUT_FILENAMES: dict[str, str] = {
     "evtx:System": "evtx_system.jsonl",
     "registry:SYSTEM": "registry_system.jsonl",
     "registry:SOFTWARE": "registry_software.jsonl",
+    "registry:Amcache": "registry_amcache.jsonl",
     "prefetch": "prefetch.jsonl",
 }
 

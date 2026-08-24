@@ -50,6 +50,8 @@ ARTIFACT_PREFIX: dict[str, str] = {
     # 실행 파일 경로 해시(파일명 뒤 8자리 16진수와 같은 값)이므로 그것을
     # 10진수로 쓴다. offset 은 0x0 이다 — 레코드가 곧 파일 하나다.
     "prefetch": "PF",
+    # Amcache.hve도 regf 포맷이라 nk 오프셋을 쓴다 — SYSTEM/SOFTWARE와 같다.
+    "registry:Amcache": "AMCACHE",
 }
 
 #: 역방향. ref만 보고 어느 파서가 만든 레코드인지 되짚을 때 쓴다.
@@ -58,7 +60,7 @@ PREFIX_ARTIFACT: dict[str, str] = {v: k for k, v in ARTIFACT_PREFIX.items()}
 #: 앞자리 0을 허용하지 않는다. "MFT#012345"와 "MFT#12345"가 같은 레코드를
 #: 가리키면서 문자열로는 달라지면, 06단계의 집합 대조가 통과해야 할 것을 기각한다.
 REF_PATTERN = re.compile(
-    r"^(?P<prefix>MFT|USN|EVTX-SEC|EVTX-SYS|REG-SYS|REG-SW|PF)#(?P<num>0|[1-9]\d*)$"
+    r"^(?P<prefix>MFT|USN|EVTX-SEC|EVTX-SYS|REG-SYS|REG-SW|AMCACHE|PF)#(?P<num>0|[1-9]\d*)$"
 )
 
 

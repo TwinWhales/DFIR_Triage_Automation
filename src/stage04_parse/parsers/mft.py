@@ -193,7 +193,7 @@ class MftParser:
             if size is None:
                 size = int(record.filesize or 0)
 
-            yield {
+            record_out: dict[str, Any] = {
                 "ref": refs.make_ref(self.artifact, number),
                 "artifact": self.artifact,
                 "record_num": number,
@@ -202,14 +202,25 @@ class MftParser:
                 "allocated": bool(record.flags & structs.RecordFlags.IN_USE),
                 "is_directory": bool(record.flags & structs.RecordFlags.DIRECTORY),
                 "size": int(size),
-                "si_btime": si["crtime"],
-                "si_ctime": si["ctime"],
-                "si_mtime": si["mtime"],
-                "si_atime": si["atime"],
-                "fn_btime": fn["crtime"],
-                "fn_ctime": fn["ctime"],
-                "fn_mtime": fn["mtime"],
             }
+            # 스키마의 si_*/fn_* 는 문자열만 허용한다(null 불가). FILETIME이
+            # 0이거나 범위를 벗어나 읽을 수 없으면 registry.py의 timestamp와
+            # 같은 규약으로 키 자체를 뺀다 — flagging.py의 has_zero_timestamp가
+            # "키가 없다"도 "0이었다"와 같게 취급하므로 신호는 그대로 남는다.
+            # 실물 108,582레코드 MFT에서 si_atime이 0인 레코드가 다수
+            # 실측됐다(NTFS는 기본적으로 최근 접근 시각 갱신을 꺼 둔다).
+            for key, value in (
+                ("si_btime", si["crtime"]),
+                ("si_ctime", si["ctime"]),
+                ("si_mtime", si["mtime"]),
+                ("si_atime", si["atime"]),
+                ("fn_btime", fn["crtime"]),
+                ("fn_ctime", fn["ctime"]),
+                ("fn_mtime", fn["mtime"]),
+            ):
+                if value is not None:
+                    record_out[key] = value
+            yield record_out
 
     @staticmethod
     def _record_number(record: MftRecord, position: int) -> int:

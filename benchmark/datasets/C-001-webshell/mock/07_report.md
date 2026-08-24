@@ -54,6 +54,7 @@
 |---|---|
 | registry:SYSTEM | 식별된 기법에 매핑된 아티팩트가 아님 |
 | registry:SOFTWARE | 식별된 기법에 매핑된 아티팩트가 아님 |
+| registry:Amcache | 식별된 기법에 매핑된 아티팩트가 아님 |
 | prefetch | 식별된 기법에 매핑된 아티팩트가 아님 |
 | $LogFile | 본 버전 미지원 (파싱 모듈 범위 외) |
 | $UsnJrnl | Tier 2 루프백 미구현으로 미평가 (조건: Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시) |

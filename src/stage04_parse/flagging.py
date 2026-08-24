@@ -246,11 +246,15 @@ def _has_zero_timestamp(record: dict[str, Any], ctx: Context) -> bool:
 
     이런 레코드를 버리지 않고 표시하는 이유는, 그 이상함 자체가 증거인
     경우가 있기 때문입니다. 조작 도구가 타임스탬프를 0으로 밀어 버립니다.
+
+    **키가 아예 없는 것도 이 조건에 든다.** ``$MFT`` 레코드는 언제나
+    여덟 개의 시각을 갖는 구조라, 파서가 그중 하나를 못 읽어 키를 뺐다는
+    것 자체가 "0/판독 불가"였다는 뜻입니다(``mft.py`` — FILETIME이 0이면
+    null을 스키마가 막으므로 키를 뺀다). ``record.get()``을 쓰는 이유가
+    이것입니다 — 값이 ``None``인 것과 키가 없는 것을 같게 다룹니다.
     """
     for field in SI_FIELDS + FN_FIELDS:
-        if field not in record:
-            continue
-        moment = parse_timestamp(record[field])
+        moment = parse_timestamp(record.get(field))
         if moment is None or moment < _FILETIME_EPOCH:
             return True
     return False
