@@ -47,7 +47,8 @@ dfir-triage/
 │   │   ├── prompts/
 │   │   │   ├── interpret_system.txt
 │   │   │   └── claims_extract.txt # 문장→claims 분리 시 2차 호출용
-│   │   ├── record_filter.py       # flags 기반 상위 N건 추출
+│   │   ├── record_filter.py       # 신호 판정·활동 시각
+│   │   ├── allocation.py          # 아티팩트별 자릿수 배분(쿼터)
 │   │   └── llm_client.py
 │   │
 │   ├── stage06_verify/

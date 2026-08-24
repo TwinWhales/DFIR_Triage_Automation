@@ -21,6 +21,10 @@ from ..common import attack
 
 __all__ = [
     "MappingError",
+    "SIGNAL_SOURCES",
+    "DEFAULT_SIGNAL_SOURCE",
+    "PRIORITIES",
+    "DEFAULT_PRIORITY",
     "ArtifactSpec",
     "Catalog",
     "ArtifactRequest",
@@ -35,6 +39,20 @@ class MappingError(ValueError):
     """매핑 파일 또는 카탈로그의 정의 오류."""
 
 
+#: 아티팩트의 신호가 어디서 나오는가. 05단계 배분이 이 값을 본다.
+#:
+#: - ``flags`` — 04단계가 전부 훑고 재미있는 것에 플래그를 붙인다.
+#:   플래그 없는 레코드는 볼 이유가 없으므로 버린다. `$MFT`·`$UsnJrnl`·evtx.
+#: - ``scope`` — 가치가 레코드가 아니라 **경로**에 있다. 03단계의
+#:   ``path_prefix``가 이미 신호 판정을 끝냈으므로 04단계가 붙일 플래그가
+#:   없고, 플래그로 거르면 선별이 정확히 골라 온 것이 전부 사라진다.
+#:   레지스트리가 그 경우다(`docs/limitations.md` 6-7).
+SIGNAL_SOURCES = ("flags", "scope")
+
+#: 적지 않은 아티팩트의 기본값. 기존 파서 셋이 전부 이쪽이다.
+DEFAULT_SIGNAL_SOURCE = "flags"
+
+
 @dataclass(frozen=True)
 class ArtifactSpec:
     """카탈로그 한 항목."""
@@ -45,6 +63,7 @@ class ArtifactSpec:
     supported: bool
     exclude_reason: str | None = None
     description: str = ""
+    signal_source: str = DEFAULT_SIGNAL_SOURCE
 
     def unusable_reason(self, target_os: str) -> str | None:
         """이 아티팩트를 읽을 수 없는 이유. 읽을 수 있으면 ``None``."""
@@ -73,6 +92,24 @@ class Catalog:
             raise MappingError(f"카탈로그에 없는 아티팩트: {name!r} (등록된 값: {known})") from None
 
 
+#: (기법, 아티팩트) 쌍의 조사 비중. **작을수록 강하다** — ``tier``와 같은 방향이다.
+#:
+#: - ``1`` 판정의 근거 그 자체. 이것이 없으면 그 기법을 말할 수 없다.
+#: - ``2`` 보조. 다른 아티팩트의 판정을 뒷받침한다. **적지 않으면 이 값.**
+#: - ``3`` 배경. 있으면 맥락이 넓어지지만 없어도 판정은 선다.
+#:
+#: 눈금을 셋으로 좁힌 것은 이 값이 **사람이 채우는 값**이기 때문이다
+#: (`docs/limitations.md` 6-5). 열 단계를 주면 채우는 사람마다 기준이
+#: 달라지고, 검토하는 사람이 3과 4의 차이를 따질 수 없다.
+#:
+#: 기법의 속성이 아니라 (기법, 아티팩트) 쌍의 속성이다. 같은 `$MFT`라도
+#: ``T1070.006``(Timestomp)에서는 1이고 ``T1053.005``에서는 2다.
+PRIORITIES = (1, 2, 3)
+
+#: 적지 않은 요청의 기본값. 중립 — 아직 사람이 판단하지 않았다는 뜻이다.
+DEFAULT_PRIORITY = 2
+
+
 @dataclass(frozen=True)
 class ArtifactRequest:
     """매핑이 요청한 아티팩트 하나."""
@@ -83,6 +120,7 @@ class ArtifactRequest:
     rationale: str
     scope_template: dict[str, Any] = field(default_factory=dict)
     trigger: str | None = None
+    priority: int = DEFAULT_PRIORITY
 
 
 @dataclass(frozen=True)
@@ -122,6 +160,13 @@ def load_catalog(mappings_dir: str | Path) -> Catalog:
         if not supported and not exclude_reason:
             # 제외 사유가 최종 보고서까지 전달되므로 비워 둘 수 없다.
             raise MappingError(f"{path}: {name}은 supported: false 인데 exclude_reason이 없음")
+        signal_source = str(spec.get("signal_source", DEFAULT_SIGNAL_SOURCE))
+        if signal_source not in SIGNAL_SOURCES:
+            raise MappingError(
+                f"{path}: {name}의 signal_source는 "
+                f"{' 또는 '.join(SIGNAL_SOURCES)}여야 함 (현재 {signal_source!r})"
+            )
+
         artifacts[name] = ArtifactSpec(
             name=name,
             parser=spec.get("parser"),
@@ -129,6 +174,7 @@ def load_catalog(mappings_dir: str | Path) -> Catalog:
             supported=supported,
             exclude_reason=exclude_reason,
             description=spec.get("description", ""),
+            signal_source=signal_source,
         )
     return Catalog(mapping_table_version=str(version), artifacts=artifacts)
 
@@ -198,6 +244,18 @@ def _build_request(
     if tier == 1 and trigger:
         raise MappingError(f"{where}: {name}은 tier 1인데 trigger가 있음")
 
+    # 없으면 기본값으로 넘어가지만, 적었는데 눈금 밖이면 멈춘다. 오타
+    # (``priority: 0``)가 조용히 흘러가면 그 아티팩트가 왜 자리를 적게
+    # 받았는지 나중에 되짚을 방법이 없다.
+    # bool 을 먼저 막는다. YAML 의 ``priority: yes`` 는 True 로 읽히고
+    # ``True in (1, 2, 3)`` 이 참이라 조용히 priority 1 이 된다 — 가장 강한
+    # 값이다. 2.0 같은 실수도 같은 이유로 막는다.
+    priority = entry.get("priority", DEFAULT_PRIORITY)
+    if isinstance(priority, bool) or not isinstance(priority, int) or priority not in PRIORITIES:
+        raise MappingError(
+            f"{where}: {name}의 priority는 {PRIORITIES} 중 하나여야 함 (현재 {priority!r})"
+        )
+
     return ArtifactRequest(
         artifact=name,
         tier=int(tier),
@@ -205,6 +263,7 @@ def _build_request(
         rationale=str(_require(entry, "rationale", f"{where} {kind}[{name}]")),
         scope_template=dict(entry.get("scope_template") or {}),
         trigger=str(trigger) if trigger else None,
+        priority=int(priority),
     )
 
 

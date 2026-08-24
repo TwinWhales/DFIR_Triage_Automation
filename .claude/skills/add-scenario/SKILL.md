@@ -88,17 +88,35 @@ MappingError: 카탈로그에 없는 아티팩트: 'evtx:PowerShell'
 .venv/Scripts/python.exe -c "
 import sys; sys.path.insert(0,'.')
 from src.stage04_parse import flagging
-from src.stage05_interpret import record_filter
+from src.stage05_interpret import allocation
 rec = [{'artifact':'evtx:System','ref':f'EVTX-SYS#{i}','event_id':7045,
         'timestamp':'2026-08-12T03:0%d:00Z'%i,'fields':{}} for i in range(5)]
 f = list(flagging.apply_all(rec))
 print('플래그:', sum(1 for r in f if r['flags']), '/', len(f))
-print('05단계 전달:', len(record_filter.select_records(f)))
+print('05단계 전달:', len(allocation.allocate_records(f)[0]))
 "
 ```
 
 **0이 나오면 그 기법은 03단계까지만 도는 것이다.** 매핑을 아무리 정확히
 써도 모델은 아무것도 못 본다.
+
+단, 신호가 **경로에서** 나오는 아티팩트라면 플래그가 0인 것이 정상이다.
+그때는 flag를 만들 것이 아니라 `mappings/_artifacts.yaml`에
+`signal_source: scope`를 적는다. 레지스트리가 그 경우다 — 위 확인 명령의
+`signal_sources` 인자로 그 상태를 재현해 볼 수 있다.
+
+```bash
+.venv/Scripts/python.exe -c "
+import sys; sys.path.insert(0,'.')
+from src.stage05_interpret import allocation
+rec = [{'artifact':'registry:SYSTEM','ref':f'REG-SYS#{i}','flags':[],
+        'path':r'SYSTEM\ControlSet001\Services\svc%d'%i,'name':'svc',
+        'timestamp':'2026-08-12T03:0%d:00Z'%i,'fields':{}} for i in range(5)]
+print('flags 로 보면 :', len(allocation.allocate_records(rec)[0]))
+print('scope 로 보면 :', len(allocation.allocate_records(
+    rec, signal_sources={'registry:SYSTEM':'scope'})[0]))
+"
+```
 
 **5. 필요하면 flag를 추가한다** — `mappings/_flags.yaml`
 

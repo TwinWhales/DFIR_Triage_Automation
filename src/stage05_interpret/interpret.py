@@ -13,8 +13,13 @@
 
     python -m src.stage05_interpret.interpret \\
         --in cases/C-001/04_parsed/ --scenario cases/C-001/02_scenario.json \\
+        --selection cases/C-001/03_selection.json \\
         --out cases/C-001/05_findings.json \\
         --llm stub --replay benchmark/datasets/C-001-webshell/mock/05_findings.json
+
+``--selection``은 선택이지만 **주는 것이 정상이다.** 없으면 모든 아티팩트가
+같은 비중으로 자리를 나눠 갖는다 — 배분은 그대로 돌지만 "이 기법 때문에 이
+아티팩트가 중요하다"는 03단계의 판단만 빠진다.
 """
 
 from __future__ import annotations
@@ -26,7 +31,8 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, llm, schema
-from . import record_filter
+from ..stage03_select import mapping_loader
+from . import allocation, record_filter
 from .llm_client import DEFAULT_MODEL, FINDINGS_BODY_FIELDS, InterpretClient
 
 __all__ = ["STAGE", "build_findings", "interpret", "main"]
@@ -100,6 +106,11 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
     )
     parser.add_argument("--in", dest="in_path", required=True, help="04_parsed/ 디렉터리")
     parser.add_argument("--scenario", required=True, help="02_scenario.json 경로")
+    parser.add_argument(
+        "--selection",
+        default=None,
+        help="03_selection.json 경로. 아티팩트별 자릿수를 시나리오에 맞춰 배분한다",
+    )
     parser.add_argument("--out", required=True, help="05_findings.json 출력 경로")
     parser.add_argument("--llm", choices=["stub", "ollama"], default="stub")
     parser.add_argument("--replay", default=None, help="stub 백엔드가 돌려줄 응답 파일")
@@ -119,6 +130,11 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         help="신호 주변으로 함께 볼 시간 폭(초). 기본 %(default)s",
     )
     parser.add_argument("--max-attempts", type=int, default=MAX_ATTEMPTS)
+    parser.add_argument(
+        "--mappings",
+        default="mappings",
+        help="매핑 디렉터리. 아티팩트의 signal_source를 읽는다. 기본 %(default)s",
+    )
     parser.add_argument("--errors", default=None)
     return parser.parse_args(argv)
 
@@ -150,18 +166,44 @@ def main(argv: "list[str] | None" = None) -> int:
             {"message": f"파싱 결과가 비어 있음: {args.in_path}. 04단계를 먼저 실행한다."},
         )
 
-    records = record_filter.select_records(
-        parsed.values(), limit=args.limit, window_seconds=args.window_seconds
+    # priority는 **이 케이스의 판단**이라 03단계 산출물에서 읽는다. 매핑을
+    # 다시 읽으면 그 사이 매핑이 바뀌었을 때 보고서와 대조가 되지 않는다.
+    priorities: dict[str, int] = {}
+    if args.selection:
+        selection = io.read_json(args.selection)
+        try:
+            io.check_header(selection, expected_stage="03_select")
+            schema.validate(selection, "selection")
+        except schema.SchemaViolation as violation:
+            log.abort(STAGE, "schema_violation", violation.as_detail())
+        except io.HeaderError as e:
+            log.abort(STAGE, "schema_violation", {"field": "<header>", "message": str(e)})
+        priorities = allocation.priorities_from_selection(selection)
+
+    # signal_source는 반대로 **아티팩트의 고정된 성질**이다. 케이스마다
+    # 달라지지 않으므로 카탈로그가 원본이고 여기서 그대로 읽는다.
+    try:
+        catalog = mapping_loader.load_catalog(args.mappings)
+    except mapping_loader.MappingError as e:
+        log.abort(STAGE, "schema_violation", {"field": "<mappings>", "message": str(e)})
+    signal_sources = {name: spec.signal_source for name, spec in catalog.artifacts.items()}
+
+    records, quotas = allocation.allocate_records(
+        parsed.values(),
+        priorities=priorities,
+        signal_sources=signal_sources,
+        limit=args.limit,
+        window_seconds=args.window_seconds,
     )
     if not records:
-        # 파싱은 됐는데 신호가 하나도 없다. 모델을 부를 이유가 없고,
+        # 파싱은 됐는데 후보가 하나도 없다. 모델을 부를 이유가 없고,
         # 빈 findings를 만들면 06단계 통계가 0/0이 되어 무의미해진다.
         log.abort(
             STAGE,
             "empty_result",
             {
                 "message": (
-                    f"전달할 레코드가 없음 (파싱 {len(parsed)}건 중 신호 0건). "
+                    f"전달할 레코드가 없음 (파싱 {len(parsed)}건 중 후보 0건). "
                     "flags 룰 또는 선별 범위를 확인한다."
                 )
             },
@@ -184,6 +226,15 @@ def main(argv: "list[str] | None" = None) -> int:
     )
     io.write_json(out_path, findings)
 
+    # 배분 내역을 찍는다. "왜 이 60건입니까"에 답할 수 있어야 하고, 어느
+    # 아티팩트가 후보를 다 못 넣었는지가 여기서만 보인다.
+    for quota in quotas:
+        short = "전량" if quota.seats >= quota.candidates else f"{quota.candidates}건 중"
+        print(
+            f"  {quota.artifact:<18} priority {quota.priority}  "
+            f"파싱 {quota.parsed}건 / 후보 {quota.candidates}건 / "
+            f"전달 {quota.seats}건 ({short})"
+        )
     print(
         f"{out_path}: 레코드 {len(parsed)}건 중 {len(records)}건 전달, "
         f"findings {len(findings['findings'])}건 / generator {findings['generator']}"

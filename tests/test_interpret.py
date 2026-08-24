@@ -10,6 +10,7 @@ import pytest
 
 from src.common import errors as errlog
 from src.common import io, schema
+from src.stage05_interpret import allocation
 from src.stage05_interpret import interpret as interpret_mod
 from src.stage05_interpret import record_filter
 from src.stage05_interpret.interpret import build_findings, interpret
@@ -54,19 +55,24 @@ def _mft(ref, **fields):
     return record
 
 
+def _selected(records, **kwargs):
+    """배분 결과에서 레코드만. 이 블록의 관심사는 자릿수가 아니라 판정이다."""
+    return allocation.allocate_records(records, **kwargs)[0]
+
+
 # ========================================================= record_filter
 
 
 def test_reproduces_the_mock_input_refs(records):
     # 목업의 input_refs가 곧 이 함수의 기대 출력이다. MFT#12400은
     # 파싱은 됐으나 전달되지 않은 레코드로 일부러 넣어 둔 것이다.
-    selected = record_filter.select_records(records.values())
+    selected = _selected(records.values())
     assert [r["ref"] for r in selected] == io.read_json(MOCK / "05_findings.json")["input_refs"]
 
 
 def test_flagged_records_are_always_included():
     flagged = _mft("MFT#1", si_ctime="2020-01-01T00:00:00Z", flags=["timestamp_mismatch"])
-    assert record_filter.select_records([flagged]) == [flagged]
+    assert _selected([flagged]) == [flagged]
 
 
 def test_outside_time_range_is_not_treated_as_a_signal():
@@ -74,7 +80,7 @@ def test_outside_time_range_is_not_treated_as_a_signal():
     # 시간 범위를 좁힌 의미가 사라진다.
     record = _mft("MFT#1", si_ctime="2020-01-01T00:00:00Z", flags=["outside_time_range"])
     assert not record_filter.is_signal(record)
-    assert record_filter.select_records([record]) == []
+    assert _selected([record]) == []
 
 
 def test_unflagged_records_near_a_signal_come_along():
@@ -82,15 +88,15 @@ def test_unflagged_records_near_a_signal_come_along():
     near = _mft("MFT#2", si_ctime="2026-07-20T03:15:01Z")
     far = _mft("MFT#3", si_ctime="2026-07-19T11:40:05Z")
 
-    refs = [r["ref"] for r in record_filter.select_records([signal, near, far])]
+    refs = [r["ref"] for r in _selected([signal, near, far])]
     assert refs == ["MFT#1", "MFT#2"]
 
 
 def test_the_context_window_is_configurable():
     signal = _mft("MFT#1", si_ctime="2026-07-20T03:14:22Z", flags=["deleted"])
     far = _mft("MFT#2", si_ctime="2026-07-20T04:00:00Z")
-    assert len(record_filter.select_records([signal, far], window_seconds=60)) == 1
-    assert len(record_filter.select_records([signal, far], window_seconds=3600)) == 2
+    assert len(_selected([signal, far], window_seconds=60)) == 1
+    assert len(_selected([signal, far], window_seconds=3600)) == 2
 
 
 def test_fn_timestamps_do_not_drive_ordering():
@@ -111,17 +117,17 @@ def test_the_limit_caps_the_payload():
         _mft(f"MFT#{i}", si_ctime=f"2026-07-20T03:{i:02d}:00Z", flags=["deleted"])
         for i in range(10)
     ]
-    assert len(record_filter.select_records(signals, limit=3)) == 3
+    assert len(_selected(signals, limit=3)) == 3
 
 
 def test_signals_win_the_available_slots():
     signal = _mft("MFT#1", si_ctime="2026-07-20T03:14:22Z", flags=["deleted"])
     near = _mft("MFT#2", si_ctime="2026-07-20T03:14:30Z")
-    assert [r["ref"] for r in record_filter.select_records([near, signal], limit=1)] == ["MFT#1"]
+    assert [r["ref"] for r in _selected([near, signal], limit=1)] == ["MFT#1"]
 
 
 def test_no_signals_means_nothing_to_send():
-    assert record_filter.select_records([_mft("MFT#1", si_ctime="2026-07-20T03:14:22Z")]) == []
+    assert _selected([_mft("MFT#1", si_ctime="2026-07-20T03:14:22Z")]) == []
 
 
 def test_a_signal_without_a_readable_time_sorts_last_instead_of_crashing():
@@ -134,7 +140,7 @@ def test_a_signal_without_a_readable_time_sorts_last_instead_of_crashing():
     timed = _mft("MFT#1", si_ctime="2026-07-20T03:14:22Z", flags=["deleted"])
     untimed = _mft("MFT#2", si_btime=None, si_ctime=None, flags=["zero_timestamp"])
 
-    selected = record_filter.select_records([timed, untimed])
+    selected = _selected([timed, untimed])
 
     # 버려지지 않고, 시각을 아는 것 뒤에 온다.
     assert [r["ref"] for r in selected] == ["MFT#1", "MFT#2"]
@@ -145,7 +151,7 @@ def test_a_timeless_signal_does_not_open_a_context_window():
     untimed = _mft("MFT#1", si_ctime=None, flags=["zero_timestamp"])
     other = _mft("MFT#2", si_ctime="2026-07-20T03:14:30Z")
 
-    assert [r["ref"] for r in record_filter.select_records([untimed, other])] == ["MFT#1"]
+    assert [r["ref"] for r in _selected([untimed, other])] == ["MFT#1"]
 
 
 # ============================================================ 문서 조립
@@ -160,7 +166,7 @@ def test_input_refs_come_from_us_not_from_the_model():
 
 
 def test_output_matches_the_findings_schema(records, scenario, tmp_path):
-    selected = record_filter.select_records(records.values())
+    selected = _selected(records.values())
     client = InterpretClient(
         FakeBackend((MOCK / "05_findings.json").read_text(encoding="utf-8"))
     )
@@ -170,7 +176,7 @@ def test_output_matches_the_findings_schema(records, scenario, tmp_path):
 
 def test_reproduces_the_findings_fixture(records, scenario, tmp_path):
     expected = io.read_json(MOCK / "05_findings.json")
-    selected = record_filter.select_records(records.values())
+    selected = _selected(records.values())
     client = InterpretClient(
         FakeBackend((MOCK / "05_findings.json").read_text(encoding="utf-8"))
     )
@@ -183,7 +189,7 @@ def test_reproduces_the_findings_fixture(records, scenario, tmp_path):
 
 
 def test_the_prompt_tells_the_model_which_refs_exist(records, scenario, tmp_path):
-    selected = record_filter.select_records(records.values())
+    selected = _selected(records.values())
     backend = FakeBackend((MOCK / "05_findings.json").read_text(encoding="utf-8"))
     interpret(scenario, selected, InterpretClient(backend), errlog.ErrorLog.for_case(tmp_path))
 
@@ -200,7 +206,7 @@ def test_a_schema_violation_is_retried(records, scenario, tmp_path):
         json.dumps(broken, ensure_ascii=False),
         (MOCK / "05_findings.json").read_text(encoding="utf-8"),
     )
-    selected = record_filter.select_records(records.values())
+    selected = _selected(records.values())
     interpret(scenario, selected, InterpretClient(backend), log)
 
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))

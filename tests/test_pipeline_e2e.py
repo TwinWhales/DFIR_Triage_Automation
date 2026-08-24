@@ -284,6 +284,7 @@ def run_pipeline(case_dir: Path) -> None:
     ) == 0
     assert interpret_mod.main(
         ["--in", f"{c}/04_parsed", "--scenario", f"{c}/02_scenario.json",
+         "--selection", f"{c}/03_selection.json", "--mappings", str(MAPPINGS),
          "--out", f"{c}/05_findings.json",
          "--llm", "stub", "--replay", str(MOCK / "05_findings.json")]
     ) == 0

@@ -83,6 +83,12 @@ def select(
                     {
                         "artifact": request.artifact,
                         "tier": 1,
+                        # 05단계가 레코드 자리를 배분할 때 쓴다. 매핑에서
+                        # 읽은 값을 케이스 산출물에 그대로 실어 두는 이유는
+                        # "왜 이 60건입니까"에 답할 근거가 나중에도 남아야
+                        # 하기 때문이다. 05단계가 mappings/ 를 다시 읽으면
+                        # 그 사이 매핑이 바뀌었을 때 대조가 불가능해진다.
+                        "priority": request.priority,
                         "scope": scope_resolver.resolve(
                             request.scope_template, context, time_range
                         ),

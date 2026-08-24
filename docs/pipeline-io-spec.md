@@ -182,6 +182,7 @@ sLLM이 채우는 유일한 구조체입니다. 여기서부터 이후 단계는
     {
       "artifact": "$MFT",
       "tier": 1,
+      "priority": 2,
       "scope": {
         "path_prefix": ["C:\\inetpub\\wwwroot"],
         "extensions": [".aspx", ".asp", ".ashx", ".asmx"],
@@ -192,6 +193,7 @@ sLLM이 채우는 유일한 구조체입니다. 여기서부터 이후 단계는
     {
       "artifact": "evtx:Security",
       "tier": 1,
+      "priority": 2,
       "scope": {
         "event_ids": [4720, 4728, 4732],
         "time_range": { "start": "2026-07-18T00:00:00Z", "end": "2026-07-22T23:59:59Z" }
@@ -568,6 +570,7 @@ $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황�
     --evidence /mnt/evidence/WEB01
 .venv/Scripts/python.exe -m src.stage05_interpret.interpret \
     --in cases/C-001/04_parsed/ --scenario cases/C-001/02_scenario.json \
+    --selection cases/C-001/03_selection.json \
     --out cases/C-001/05_findings.json
 .venv/Scripts/python.exe -m src.stage06_verify.verify \
     --findings cases/C-001/05_findings.json --parsed cases/C-001/04_parsed/ \

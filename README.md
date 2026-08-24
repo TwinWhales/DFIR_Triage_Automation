@@ -63,9 +63,9 @@ PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01
 | `src/common/` | 구현 완료 — `io` `schema` `errors` `refs` `attack` |
 | C-001 목업 세트 | 작성 완료 |
 | 02 시나리오 정규화 | 구현 완료 — 알럿 어댑터는 실동작, LLM은 **스텁** |
-| 03 아티팩트 선별 | 구현 완료 — 매핑 6개 + 카탈로그 (`mapping_table_version` 0.4) |
+| 03 아티팩트 선별 | 구현 완료 — 매핑 9개 + 카탈로그 (`mapping_table_version` 0.6) |
 | **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx`(python-evtx 기반), `registry`(python-registry 기반) |
-| 05 sLLM 해석 | 구현 완료 — 레코드 추림은 실동작, LLM은 **스텁** |
+| 05 sLLM 해석 | 구현 완료 — 아티팩트별 자릿수 배분은 실동작, LLM은 **스텁** |
 | 06 근거 검증 | 구현 완료 — 체커 3종 + `--checkers` 조합 |
 | 07 결과 보고 | 구현 완료 — Jinja2 템플릿 (LLM 미사용) |
 | **평가 (`benchmark/`)** | **구현 완료** — 단계별 진단 + 검증기 오탐 확인 |
@@ -106,9 +106,9 @@ cases/C-001-D/   ← 데이터 볼륨
 
 - **registry** — `SYSTEM`·`SOFTWARE` 하이브. 온디스크 계층은 python-registry가
   맡고, 경로 재구성·`CurrentControlSet` 해석·범위 밖 서브트리 가지치기는
-  우리 어댑터가 합니다. **다만 05단계에 도달하지 못합니다** —
-  플래그가 붙지 않는 아티팩트라 `record_filter`가 전부 버립니다
-  ([`limitations.md`](docs/limitations.md) 6-7).
+  우리 어댑터가 합니다. 신호가 04단계 플래그가 아니라 **선별에서** 나오는
+  아티팩트라 카탈로그에 `signal_source: scope`로 표시돼 있고, 05단계 배분이
+  그것을 보고 자리를 줍니다([`limitations.md`](docs/limitations.md) 6-7).
 
 `$MFT` 파싱 회귀는 `tools/compare_mft.py`와 합성 레코드 테스트
 (`tests/test_mft_parser.py`)로 MFTECmd 없이 `pytest` 안에서 검증합니다.

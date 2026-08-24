@@ -1,11 +1,16 @@
-"""LLM에 전달할 레코드를 추린다.
+"""레코드 하나가 볼 만한가 — 신호 판정과 활동 시각.
 
 선별(03단계)이 아티팩트 단위로 좁힌 뒤에도 레코드는 수천 건이 남는다.
-소형 모델 컨텍스트에 다 넣을 수 없으므로 한 번 더 줄인다.
+소형 모델 컨텍스트에 다 넣을 수 없으므로 한 번 더 줄인다. 그 줄이기가
+두 가지 질문으로 나뉜다.
+
+- **이 레코드가 볼 만한가** — 이 모듈. 신호 판정(``is_signal``)과
+  활동 시각(``activity_times``), 신호까지의 거리(``nearest``).
+- **어느 아티팩트에 몇 자리를 줄 것인가** — ``allocation``.
 
 **규칙은 두 가지다.**
 
-1. **신호 플래그가 붙은 레코드는 전부 넣는다.** 룰 기반으로 이미
+1. **신호 플래그가 붙은 레코드는 먼저 넣는다.** 룰 기반으로 이미
    "볼 만하다"고 판정된 것들이다.
 2. **신호 주변의 레코드를 함께 넣는다.** 플래그가 붙은 시각 ±``window``
    안에서 활동한 레코드다.
@@ -15,15 +20,15 @@
 함께 봐야 판단이 선다. 전부 주는 것과 신호만 주는 것 사이의 절충이다.
 
 **여기서 빠진 레코드는 06단계가 환각으로 잡는다.** 모델이 전달받지
-않은 레코드를 언급하면 ``ref_not_in_input``이다. 그래서 이 함수가
-무엇을 넣고 뺐는지가 그대로 ``input_refs``가 되어야 하며, 모델이
-보고하는 값을 믿어서는 안 된다.
+않은 레코드를 언급하면 ``ref_not_in_input``이다. 그래서 배분이 무엇을
+넣고 뺐는지가 그대로 ``input_refs``가 되어야 하며, 모델이 보고하는
+값을 믿어서는 안 된다.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any
 
 from ..common.io import parse_timestamp
 
@@ -35,7 +40,7 @@ __all__ = [
     "SI_TIME_FIELDS",
     "activity_times",
     "is_signal",
-    "select_records",
+    "nearest",
 ]
 
 #: 전달할 최대 레코드 수. 7B 모델 컨텍스트를 기준으로 잡은 값이다.
@@ -78,7 +83,9 @@ def is_signal(record: dict[str, Any]) -> bool:
 
 def activity_times(record: dict[str, Any]) -> list[datetime]:
     """이 레코드가 나타내는 활동 시각들."""
-    if "timestamp" in record:  # EVTX
+    # evtx·$UsnJrnl·레지스트리는 레코드마다 시각이 하나다. $MFT만 넷을
+    # 들고 있어 아래에서 따로 모은다.
+    if "timestamp" in record:
         parsed = parse_timestamp(record["timestamp"])
         return [parsed] if parsed else []
 
@@ -91,51 +98,7 @@ def activity_times(record: dict[str, Any]) -> list[datetime]:
     return times
 
 
-def select_records(
-    records: Iterable[dict[str, Any]],
-    *,
-    limit: int = DEFAULT_LIMIT,
-    window_seconds: float = DEFAULT_WINDOW_SECONDS,
-) -> list[dict[str, Any]]:
-    """전달할 레코드를 시간순으로 돌려준다.
-
-    각 레코드는 "포함된 이유가 된 시각"을 기준으로 정렬된다. 플래그가
-    붙은 레코드는 가장 이른 활동 시각, 주변 레코드는 신호에 가장 가까웠던
-    활동 시각이 기준이다. 그래야 모델이 받는 순서가 사건 순서와 맞는다.
-    """
-    signals: list[tuple[datetime, dict[str, Any]]] = []
-    others: list[dict[str, Any]] = []
-
-    for record in records:
-        times = activity_times(record)
-        if is_signal(record):
-            # 시각을 못 읽는 레코드도 신호라면 버리지 않는다.
-            signals.append((min(times) if times else NO_TIME, record))
-        else:
-            others.append(record)
-
-    # 시각 없는 신호는 주변 레코드를 끌어올 앵커가 되지 못한다. "그 시각
-    # 주변"이라고 할 시각이 없기 때문이다. 자기는 전달되되 창은 안 연다.
-    anchors = [anchor for anchor, _ in signals if anchor is not NO_TIME]
-
-    context: list[tuple[float, datetime, dict[str, Any]]] = []
-    for record in others:
-        nearest = _nearest(activity_times(record), anchors, window_seconds)
-        if nearest is not None:
-            distance, moment = nearest
-            context.append((distance, moment, record))
-
-    # 신호가 자리를 먼저 차지하고, 남는 자리를 가까운 순으로 채운다.
-    chosen: list[tuple[datetime, dict[str, Any]]] = [(t, r) for t, r in signals][:limit]
-    context.sort(key=lambda item: item[0])
-    for _distance, moment, record in context[: max(0, limit - len(chosen))]:
-        chosen.append((moment, record))
-
-    chosen.sort(key=lambda item: item[0])
-    return [record for _moment, record in chosen]
-
-
-def _nearest(
+def nearest(
     times: list[datetime], anchors: list[datetime], window_seconds: float
 ) -> tuple[float, datetime] | None:
     """신호에 가장 가까웠던 활동 시각과 그 거리. 창 밖이면 ``None``."""
