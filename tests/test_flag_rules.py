@@ -228,6 +228,10 @@ def test_the_sync_tool_reports_no_drift():
         capture_output=True,
         text=True,
         encoding="utf-8",
+        # 도구가 UTF-8 로 찍지 못하는 상황이 와도 실패 내역은 읽혀야 한다.
+        # 이것이 없으면 디코딩이 터져 stdout 이 None 이 되고, 아래 assert 가
+        # 진짜 원인 대신 TypeError 를 낸다.
+        errors="replace",
         cwd=REPO_ROOT,
     )
     assert result.returncode == 0, result.stdout + result.stderr

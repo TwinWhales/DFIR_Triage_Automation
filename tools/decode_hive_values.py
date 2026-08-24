@@ -44,6 +44,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.common import io  # noqa: E402
 from src.stage04_parse import parsers  # noqa: E402
 from src.stage04_parse.parsers.base import Scope  # noqa: E402
 
@@ -236,6 +237,7 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--show", type=int, default=10, help="불일치 예시 출력 수")
     args = parser.parse_args(argv)
 
+    io.configure_console()
     config = Path(args.evidence) / "Windows" / "System32" / "config"
     if not config.is_dir():
         print(f"오류: {config} 가 없습니다. --evidence 는 볼륨 루트여야 합니다.", file=sys.stderr)

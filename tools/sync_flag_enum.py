@@ -33,6 +33,10 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from src.common import io  # noqa: E402
+
 FLAGS_YAML = REPO_ROOT / "mappings/_flags.yaml"
 SCHEMA = REPO_ROOT / "schemas/parsed_record.schema.json"
 
@@ -91,6 +95,7 @@ def main(argv: "list[str] | None" = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    io.configure_console()
     flags = declared_flags()
     text = SCHEMA.read_text(encoding="utf-8")
     current = schema_flags(text)
