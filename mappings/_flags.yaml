@@ -162,8 +162,61 @@ flags:
           match: event_id
           values: [7045]
 
+  # ----------------------------------------------------------- 네트워크
+  #
+  # 아래 셋은 `evtx:*` 가 아니라 **정확한 아티팩트 이름**으로 건다.
+  # EventID 는 제공자 안에서만 유일하기 때문이다(docs/limitations.md
+  # "EventID만으로 이벤트를 특정하지 않습니다"). 실제로 겹친다 —
+  # NetworkProfile 의 10000(네트워크 연결)은 T1200 매핑이 evtx:System 에
+  # 요청하는 Kernel-PnP 10000 과 번호가 같다. `evtx:*` 로 걸면 장치 구성
+  # 이벤트에 network_state_changed 가 붙는다.
+
+  firewall_config_changed:
+    artifacts: [evtx:Firewall]
+    condition: 방화벽 규칙 추가·변경·삭제(2004/2005/2006/2033) 또는 프로필 설정 변경(2003)
+    note: |
+      규칙 추가와 프로필 끄기를 한 어휘로 묶는다. 조사에서 묻는 것이
+      "방화벽 구성이 사건 시각에 손댔는가" 하나이고, 어느 쪽이었는지는
+      fields 의 RuleName·Direction·Action 을 보면 나온다.
+
+      2033(모든 규칙 삭제)은 드물지만 강한 신호라 같이 넣는다.
+    rule:
+      when:
+        - artifact: evtx:Firewall
+          match: event_id
+          values: [2003, 2004, 2005, 2006, 2033]
+
+  bits_transfer:
+    artifacts: [evtx:BITS]
+    condition: BITS 전송 작업 생성·시작·중지·오류 (3/59/60/61)
+    note: |
+      BITS 는 Windows Update 가 늘 쓰는 정상 기능이라 그 자체로는
+      의심 신호가 아니다. 값이 있는 것은 **59/60 이 URL 을 들고 있다**는
+      점이다 — 어디로 갔는지가 fields 에 남는 몇 안 되는 자리다.
+
+      3(작업 생성)은 소유자와 생성 프로세스를 담는다. 정상 트래픽과
+      가르는 것은 이 flag 가 아니라 그 필드를 읽는 05단계의 몫이다.
+    rule:
+      when:
+        - artifact: evtx:BITS
+          match: event_id
+          values: [3, 59, 60, 61]
+
+  network_state_changed:
+    artifacts: [evtx:NetworkProfile]
+    condition: 네트워크 연결(10000)·해제(10001)
+    note: |
+      단독으로는 약한 신호다. 쓰임은 다른 흔적의 시각을 가르는 데 있다 —
+      "그때 네트워크에 붙어 있었는가"가 외부 전송 가능성의 전제다.
+    rule:
+      when:
+        - artifact: evtx:NetworkProfile
+          match: event_id
+          values: [10000, 10001]
+
   outside_time_range:
-    artifacts: [$MFT, $UsnJrnl, evtx:Security, evtx:System, prefetch]
+    artifacts: [$MFT, $UsnJrnl, evtx:Security, evtx:System, evtx:Firewall,
+                evtx:BITS, evtx:NetworkProfile, prefetch]
     condition: 선별된 시간 범위 밖
     note: |
       범위 밖이라도 버리지 않고 표시만 한다. 시간 범위 추론이 틀렸을 때

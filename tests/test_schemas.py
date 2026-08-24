@@ -219,3 +219,58 @@ def test_iter_violations_reports_every_problem_at_once():
     doc["target_os"] = "macos"
     fields = {v.field for v in schema.iter_violations(doc, "scenario")}
     assert {"target_os", "techniques[0].confidence"} <= fields
+
+
+# --------------------------------------------------- ref 접두어 (스키마 ↔ refs.py)
+#
+# 실물 이미지 관통에서 드러난 자리입니다. 프리패치 파서를 붙이면서
+# parsed_record 의 패턴에는 PF 를 넣었는데 findings 쪽을 빠뜨렸고,
+# **프리패치가 05단계에 닿는 케이스가 통째로 기각**됐습니다.
+# input_refs 는 우리 코드가 만드는 값이라 모델이 무엇을 내든 통과할 수
+# 없었고, 집계에는 모델의 schema_violation 으로 잡혔습니다.
+
+
+def _ref_patterns() -> "list[tuple[str, str]]":
+    """``ref`` 를 제약하는 스키마들. (파일명, 패턴).
+
+    두 군데를 본다 — ``findings`` 는 ``$defs.ref`` 로 빼 두었고
+    ``parsed_record`` 는 ``properties.ref`` 에 바로 적었다. 자리가 다른
+    것이 이번 결함이 눈에 안 띈 이유 중 하나다.
+    """
+    found = []
+    for path in sorted((REPO_ROOT / "schemas").glob("*.json")):
+        document = io.read_json(path)
+        for holder in (document.get("$defs", {}), document.get("properties", {})):
+            pattern = holder.get("ref", {}).get("pattern")
+            if pattern:
+                found.append((path.name, pattern))
+                break
+    return found
+
+
+def test_the_schemas_that_constrain_refs_are_the_ones_we_expect():
+    """새 스키마가 ref 를 제약하기 시작하면 아래 대조 대상에 자동으로 든다."""
+    names = [name for name, _ in _ref_patterns()]
+    assert names == ["findings.schema.json", "parsed_record.schema.json"]
+
+
+@pytest.mark.parametrize("name,pattern", _ref_patterns())
+def test_every_prefix_in_refs_py_is_accepted(name, pattern):
+    """``refs.py``가 만드는 ref 를 스키마가 거부하면 그 아티팩트는 못 지나간다."""
+    import re
+
+    rejected = [
+        prefix for prefix in sorted(refs.PREFIX_ARTIFACT) if not re.match(pattern, f"{prefix}#1")
+    ]
+    assert rejected == [], f"{name} 이 거부하는 접두어: {rejected}"
+
+
+@pytest.mark.parametrize("name,pattern", _ref_patterns())
+def test_the_pattern_invents_no_prefix_of_its_own(name, pattern):
+    """반대 방향. 스키마에만 있는 접두어는 아무도 만들지 못한다."""
+    import re
+
+    inside = re.match(r"\^\(([^)]+)\)#", pattern)
+    assert inside is not None, f"{name}: ref 패턴 모양이 바뀌었다 — {pattern}"
+    unknown = sorted(set(inside.group(1).split("|")) - set(refs.PREFIX_ARTIFACT))
+    assert unknown == [], f"{name} 에만 있는 접두어: {unknown}"

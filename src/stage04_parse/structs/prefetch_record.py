@@ -182,6 +182,15 @@ FILE_INFORMATION: dict[tuple[int, int], FileInfoLayout] = {
         volume_entry_size=96,
         source="[LIBSCCA] Windows 10 (1809 이하)",
     ),
+    (30, 220): FileInfoLayout(
+        size=220,
+        run_time_offset=0x2C,
+        run_time_count=8,
+        run_count_offset=0x7C,
+        metrics_entry_size=32,
+        volume_entry_size=96,
+        source="실측 evidence/0824test.001 137건 (Windows 10)",
+    ),
     (30, 216): FileInfoLayout(
         size=216,
         run_time_offset=0x2C,

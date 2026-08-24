@@ -31,6 +31,7 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, llm, schema
+from ..common.llm import DEFAULT_NUM_CTX, DEFAULT_TIMEOUT
 from ..stage03_select import mapping_loader
 from . import allocation, record_filter
 from .llm_client import DEFAULT_MODEL, FINDINGS_BODY_FIELDS, InterpretClient
@@ -117,6 +118,24 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--host", default="http://localhost:11434")
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help=(
+            "모델 응답 대기 상한(초). 기본 %(default)s. 05단계 프롬프트는 "
+            "레코드가 실려 02단계보다 훨씬 크므로, 느린 장비에서는 올려야 한다"
+        ),
+    )
+    parser.add_argument(
+        "--num-ctx",
+        type=int,
+        default=DEFAULT_NUM_CTX,
+        help=(
+            "모델에게 열어 줄 컨텍스트 창(토큰). 기본 %(default)s. "
+            "작으면 프롬프트가 조용히 잘린다"
+        ),
+    )
     parser.add_argument(
         "--limit",
         type=int,
@@ -216,6 +235,8 @@ def main(argv: "list[str] | None" = None) -> int:
             model=args.model,
             host=args.host,
             temperature=args.temperature,
+            timeout=args.timeout,
+            num_ctx=args.num_ctx,
         )
     except llm.LLMError as e:
         print(f"[{STAGE}] {e}", file=sys.stderr)

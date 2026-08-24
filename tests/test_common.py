@@ -32,10 +32,26 @@ def test_make_ref_round_trips():
         ("registry:SYSTEM", "REG-SYS#7"),
         ("registry:SOFTWARE", "REG-SW#7"),
         ("registry:Amcache", "AMCACHE#7"),
+        ("evtx:Firewall", "EVTX-FW#7"),
+        ("evtx:BITS", "EVTX-BITS#7"),
+        ("evtx:NetworkProfile", "EVTX-NET#7"),
+        ("prefetch", "PF#7"),
     ],
 )
 def test_every_registered_artifact_has_a_prefix(artifact, expected):
     assert refs.make_ref(artifact, 7) == expected
+
+
+@pytest.mark.parametrize("artifact", sorted(refs.ARTIFACT_PREFIX))
+def test_every_prefix_survives_a_round_trip(artifact):
+    """``ARTIFACT_PREFIX`` 만 고치고 ``REF_PATTERN`` 을 잊는 실수를 잡는다.
+
+    ``make_ref`` 는 딕셔너리만 보므로 통과하고, ``parse_ref`` 에서 터진다.
+    접두어가 서로의 접두사인 경우(``EVTX-BITS`` 와 ``EVTX-B...``)도 여기서
+    갈린다 — 정규식 대안의 순서가 틀리면 왕복이 깨진다.
+    """
+    parsed = refs.parse_ref(refs.make_ref(artifact, 7))
+    assert (parsed.record_num, parsed.artifact) == (7, artifact)
 
 
 def test_amcache_ref_round_trips_through_parse_ref():

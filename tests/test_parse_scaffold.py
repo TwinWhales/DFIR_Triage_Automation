@@ -348,15 +348,19 @@ class _FakeStat:
 class _FakeEntry:
     """``dissect`` ``TargetPath`` 흉내. ``VolumeSource``가 쓰는 메서드만."""
 
-    def __init__(self, size: int, *, is_dir: bool = False) -> None:
+    def __init__(self, size: int, *, is_dir: bool = False, name: str = "") -> None:
         self._size = size
         self._is_dir = is_dir
+        self.name = name
 
     def exists(self) -> bool:
         return True
 
     def is_dir(self) -> bool:
         return self._is_dir
+
+    def is_file(self) -> bool:
+        return not self._is_dir
 
     def stat(self) -> _FakeStat:
         return _FakeStat(self._size)
@@ -367,7 +371,28 @@ class _FakeEntry:
         return _io.BytesIO(b"\x46\x49\x4c\x45" * (self._size // 4 or 1))
 
     def __str__(self) -> str:  # noqa: D105
-        return "<fake volume entry>"
+        return self.name or "<fake volume entry>"
+
+
+class _FakeDirectory:
+    """``.pf`` 가 든 폴더 흉내. 폴더 아티팩트 경로만 건드린다."""
+
+    def __init__(self, children: "list[_FakeEntry]", *, name: str = "Prefetch") -> None:
+        self._children = children
+        self.name = name
+
+    def exists(self) -> bool:
+        return True
+
+    def is_dir(self) -> bool:
+        return True
+
+    def iterdir(self):
+        # 일부러 뒤섞어 둔다 — 정렬은 VolumeSource 의 책임이다.
+        return list(reversed(self._children))
+
+    def __str__(self) -> str:  # noqa: D105
+        return self.name
 
 
 class _MissingEntry:
@@ -423,6 +448,187 @@ def test_volume_source_available_lists_only_whats_found():
     assert "$MFT" in available
     assert "registry:SYSTEM" in available
     assert "registry:SOFTWARE" not in available
+
+
+# ------------------------------------------- 폴더 아티팩트 (프리패치)
+
+
+def _prefetch_filesystem(children: "list[_FakeEntry]") -> _FakeFilesystem:
+    return _FakeFilesystem({"Windows/Prefetch": _FakeDirectory(children)})
+
+
+def test_volume_source_collects_every_pf_in_the_folder():
+    fs = _prefetch_filesystem(
+        [_FakeEntry(16, name="A.EXE-1111.pf"), _FakeEntry(16, name="B.EXE-2222.pf")]
+    )
+    source = evidence.VolumeSource(fs, description="테스트 볼륨")
+
+    assert [f.path.name for f in source.locate_all("prefetch")] == [
+        "A.EXE-1111.pf",
+        "B.EXE-2222.pf",
+    ]
+
+
+def test_volume_source_pf_order_is_stable_not_filesystem_order():
+    """정렬하지 않으면 같은 이미지에서 prefetch.jsonl 의 줄 순서가 달라진다."""
+    fs = _prefetch_filesystem(
+        [_FakeEntry(16, name="a.pf"), _FakeEntry(16, name="B.pf"), _FakeEntry(16, name="c.pf")]
+    )
+    source = evidence.VolumeSource(fs, description="테스트 볼륨")
+
+    assert [f.path.name for f in source.locate_all("prefetch")] == ["a.pf", "B.pf", "c.pf"]
+
+
+def test_volume_source_ignores_non_pf_and_zero_byte_files():
+    fs = _prefetch_filesystem(
+        [
+            _FakeEntry(16, name="real.pf"),
+            _FakeEntry(16, name="ReadyBoot.etl"),
+            _FakeEntry(0, name="hollow.pf"),
+        ]
+    )
+    source = evidence.VolumeSource(fs, description="테스트 볼륨")
+
+    assert [f.path.name for f in source.locate_all("prefetch")] == ["real.pf"]
+
+
+def test_volume_source_locate_points_at_the_folder_for_the_manifest():
+    fs = _prefetch_filesystem([_FakeEntry(16, name="real.pf")])
+    source = evidence.VolumeSource(fs, description="테스트 볼륨")
+
+    found = source.locate("prefetch")
+    assert found is not None and str(found.path) == "Prefetch"
+
+
+def test_volume_source_open_all_yields_one_stream_per_pf():
+    fs = _prefetch_filesystem(
+        [_FakeEntry(16, name="A.pf"), _FakeEntry(16, name="B.pf")]
+    )
+    source = evidence.VolumeSource(fs, description="테스트 볼륨")
+
+    assert [opened.path.name for opened in source.open_all("prefetch")] == ["A.pf", "B.pf"]
+
+
+def test_volume_source_open_refuses_a_folder_artifact():
+    """아무거나 하나를 골라 주면 나머지가 조용히 빠진 결과가 나온다."""
+    fs = _prefetch_filesystem([_FakeEntry(16, name="real.pf")])
+    source = evidence.VolumeSource(fs, description="테스트 볼륨")
+
+    with pytest.raises(evidence.EvidenceError, match="open_all"):
+        source.open("prefetch")
+
+
+def test_volume_source_empty_prefetch_folder_is_not_found():
+    fs = _prefetch_filesystem([])
+    source = evidence.VolumeSource(fs, description="테스트 볼륨")
+
+    assert source.locate_all("prefetch") == ()
+    assert "prefetch" not in source.available()
+    with pytest.raises(evidence.ArtifactNotFound, match=r"Windows/Prefetch/\*\.pf"):
+        list(source.open_all("prefetch"))
+
+
+# ------------------------------------------- 볼륨 선택 (--volume)
+
+
+class _FakeVolume:
+    def __init__(self, size: int, name: str) -> None:
+        self.size = size
+        self.name = name
+
+
+class _FakeNtfs(_FakeFilesystem):
+    """``__type__``과 ``volume``을 갖춘 파일시스템. 볼륨 선택이 이 둘을 본다."""
+
+    __type__ = "ntfs"
+
+    def __init__(self, table, *, size: int, name: str = "Basic data partition") -> None:
+        super().__init__(table)
+        self.volume = _FakeVolume(size, name)
+
+
+@pytest.fixture
+def image_of(monkeypatch, tmp_path):
+    """``dissect.target``을 갈아 끼워 이미지 파일 하나를 흉내 낸다.
+
+    실물 이미지 없이 볼륨 선택 분기를 돌리기 위한 것이다. ``dissect``가
+    설치돼 있든 아니든 같게 동작한다.
+    """
+    import sys as _sys
+    import types as _types
+
+    def install(*filesystems):
+        image = tmp_path / "disk.001"
+        image.write_bytes(b"\x00" * 16)
+
+        module = _types.ModuleType("dissect.target")
+
+        class _Target:
+            @staticmethod
+            def open(_path):
+                target = _types.SimpleNamespace()
+                target.filesystems = list(filesystems)
+                return target
+
+        module.Target = _Target
+        package = _types.ModuleType("dissect")
+        package.target = module
+        monkeypatch.setitem(_sys.modules, "dissect", package)
+        monkeypatch.setitem(_sys.modules, "dissect.target", module)
+        return image
+
+    return install
+
+
+def test_one_ntfs_needs_no_volume_flag(image_of):
+    """볼륨이 하나면 고를 것이 없다. --volume 을 요구하면 회귀다."""
+    image = image_of(_FakeNtfs({"$MFT": _FakeEntry(16)}, size=60 * 1024**3))
+
+    source = evidence.open_source(image)
+
+    assert isinstance(source, evidence.VolumeSource)
+    assert "$MFT" in source.available()
+
+
+def test_two_ntfs_volumes_stop_and_show_the_choices(image_of):
+    """복구 파티션도 NTFS다. 도구가 크기로 추측하면 조용히 틀린다."""
+    image = image_of(
+        _FakeNtfs({"$MFT": _FakeEntry(16)}, size=471858688),
+        _FakeNtfs({"$MFT": _FakeEntry(16)}, size=63829966336),
+    )
+
+    with pytest.raises(evidence.EvidenceError) as caught:
+        evidence.open_source(image)
+
+    message = str(caught.value)
+    assert "--volume 0" in message and "--volume 1" in message
+    assert "0.4GiB" in message and "59.4GiB" in message
+
+
+def test_volume_flag_picks_the_named_one(image_of):
+    image = image_of(
+        _FakeNtfs({}, size=471858688),
+        _FakeNtfs({"Windows/System32/config/SYSTEM": _FakeEntry(16)}, size=63829966336),
+    )
+
+    source = evidence.open_source(image, volume=1)
+
+    assert "registry:SYSTEM" in source.available()
+    assert "볼륨 1" in source.describe()
+
+
+def test_a_volume_out_of_range_names_the_range(image_of):
+    image = image_of(_FakeNtfs({}, size=471858688), _FakeNtfs({}, size=63829966336))
+
+    with pytest.raises(evidence.EvidenceError, match=r"0\.\.1"):
+        evidence.open_source(image, volume=2)
+
+
+def test_no_ntfs_at_all_is_a_different_message(image_of):
+    image = image_of()
+
+    with pytest.raises(evidence.EvidenceError, match="NTFS 파일시스템을 찾지 못했습니다"):
+        evidence.open_source(image)
 
 
 # ================================================== 실물 이미지 (test_image.001)

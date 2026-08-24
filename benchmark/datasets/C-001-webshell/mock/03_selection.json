@@ -2,9 +2,9 @@
   "case_id": "C-001",
   "stage": "03_select",
   "schema_version": "1.0",
-  "generated_at": "2026-08-21T02:05:52Z",
+  "generated_at": "2026-08-24T09:54:04Z",
   "generator": "select.py",
-  "mapping_table_version": "0.8",
+  "mapping_table_version": "0.9",
   "selected": [
     {
       "artifact": "$MFT",
@@ -73,6 +73,18 @@
   ],
   "excluded": [
     {
+      "artifact": "evtx:Firewall",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:BITS",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:NetworkProfile",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
       "artifact": "registry:SYSTEM",
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
@@ -96,6 +108,6 @@
   "stats": {
     "selected_count": 2,
     "deferred_count": 2,
-    "excluded_count": 5
+    "excluded_count": 8
   }
 }

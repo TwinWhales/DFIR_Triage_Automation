@@ -52,9 +52,9 @@ from .record_filter import (
     DEFAULT_LIMIT,
     DEFAULT_WINDOW_SECONDS,
     NO_TIME,
+    AnchorIndex,
     activity_times,
     is_signal,
-    nearest,
 )
 
 __all__ = [
@@ -199,10 +199,14 @@ def allocate_records(
             if is_signal(record):
                 anchors.extend(activity_times(record))
 
+    # 앵커는 한 번만 정렬해 아티팩트마다 돌려 쓴다. 아티팩트마다 새로
+    # 만들면 정렬 비용이 아티팩트 수만큼 붙는다.
+    anchor_index = AnchorIndex(anchors)
+
     ranked = {
         artifact: _rank(
             artifact_records,
-            anchors,
+            anchor_index,
             window_seconds,
             signal_sources.get(artifact, DEFAULT_SIGNAL_SOURCE),
         )
@@ -235,7 +239,7 @@ def allocate_records(
 
 def _rank(
     records: Sequence[dict[str, Any]],
-    anchors: list[datetime],
+    anchors: "AnchorIndex",
     window_seconds: float,
     signal_source: str,
 ) -> list[tuple[tuple[Any, ...], datetime, dict[str, Any]]]:
@@ -267,7 +271,7 @@ def _rank(
             entries.append(((0, moment, ref), moment, record))
             continue
 
-        found = nearest(times, anchors, window_seconds)
+        found = anchors.nearest(times, window_seconds)
         if found is not None:
             distance, moment = found
             entries.append(((1, distance, moment, ref), moment, record))
@@ -279,18 +283,10 @@ def _rank(
             # 없으면 파일에 있던 순서를 쓴다 — 근거가 아니라 재현성을 위한
             # 것이며, 6-6이 말하는 "임시"가 바로 이 자리다.
             moment = min(times) if times else NO_TIME
-            entries.append(((2, _distance_to_any(times, anchors), index), moment, record))
+            entries.append(((2, anchors.distance_to_any(times), index), moment, record))
 
     entries.sort(key=lambda item: item[0])
     return entries
 
 
-def _distance_to_any(times: list[datetime], anchors: list[datetime]) -> float:
-    """창을 무시한 최단 거리(초). 잴 수 없으면 무한대."""
-    best = float("inf")
-    for moment in times:
-        if moment.tzinfo is None:
-            continue
-        for anchor in anchors:
-            best = min(best, abs((moment - anchor).total_seconds()))
-    return best
+

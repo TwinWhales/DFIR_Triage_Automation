@@ -103,7 +103,13 @@ from .evtx import EvtxParser  # noqa: E402 — 등록 블록 순서를 유지한
 # **아티팩트마다 인스턴스를 따로 만든다.** artifact 가 ref 접두어와 출력
 # 파일명을 정하므로, 공유하면 System 레코드가 EVTX-SEC# 으로 나가고
 # 06단계가 그것을 환각으로 집계한다.
-for _artifact in ("evtx:Security", "evtx:System"):
+for _artifact in (
+    "evtx:Security",
+    "evtx:System",
+    "evtx:Firewall",
+    "evtx:BITS",
+    "evtx:NetworkProfile",
+):
     _evtx_parser = EvtxParser(_artifact)
     PARSERS[_artifact] = _evtx_parser
     REFERENCE_PARSERS[_artifact] = _evtx_parser

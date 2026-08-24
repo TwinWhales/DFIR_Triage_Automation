@@ -16,7 +16,7 @@
 # 카탈로그와 파서 등록소가 어긋나면 tests/test_pipeline_e2e.py 가 잡는다.
 # supported: true 인데 파서가 없거나, 파서가 있는데 여기 없거나 둘 다.
 
-mapping_table_version: "0.8"
+mapping_table_version: "0.9"
 
 artifacts:
   $MFT:
@@ -42,6 +42,32 @@ artifacts:
     os: [windows]
     supported: true
     description: 시스템 이벤트 로그. 서비스·드라이버.
+
+  # 아래 셋은 evtx 파서를 그대로 재사용한다 — 채널만 다르고 온디스크
+  # 형식이 같다. Security/System 만 보던 동안 네트워크 쪽 흔적은 카탈로그에
+  # 없어서 "확인하지 못한 아티팩트"에도 나타나지 않았다(2026-08-24 실측,
+  # docs/limitations.md "네트워크 흔적을 볼 수 없다").
+  #
+  # 셋 다 로그가 작다(실측 394·118·30건). Security 처럼 event_ids 로
+  # 좁히지 않아도 쿼터를 잡아먹지 않으므로 signal_source 는 기본값(flags)을
+  # 쓴다 — 붙일 플래그가 실제로 있다(_flags.yaml).
+  evtx:Firewall:
+    parser: evtx
+    os: [windows]
+    supported: true
+    description: Windows 방화벽(WFP) 로그. 규칙 추가·변경·삭제와 프로필 설정 변경.
+
+  evtx:BITS:
+    parser: evtx
+    os: [windows]
+    supported: true
+    description: BITS 클라이언트 로그. 백그라운드 전송 작업의 생성·URL·완료.
+
+  evtx:NetworkProfile:
+    parser: evtx
+    os: [windows]
+    supported: true
+    description: 네트워크 프로필 로그. 네트워크 연결·해제 시점.
 
   # 레지스트리는 다른 아티팩트와 선별 방식이 다르다. 다른 것들은 전부
   # 훑고 flags 로 추리지만, 레지스트리는 가치가 레코드가 아니라 경로에
