@@ -4,11 +4,12 @@
   "schema_version": "1.0",
   "generated_at": "2026-08-06T04:12:40Z",
   "generator": "select.py",
-  "mapping_table_version": "0.5",
+  "mapping_table_version": "0.6",
   "selected": [
     {
       "artifact": "$MFT",
       "tier": 1,
+      "priority": 2,
       "scope": {
         "path_prefix": [
           "C:\\inetpub\\wwwroot"
@@ -32,6 +33,7 @@
     {
       "artifact": "evtx:Security",
       "tier": 1,
+      "priority": 2,
       "scope": {
         "event_ids": [
           4720,

@@ -41,11 +41,17 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["artifact", "tier", "scope", "reason"],
+        "required": ["artifact", "tier", "priority", "scope", "reason"],
         "additionalProperties": false,
         "properties": {
           "artifact": { "type": "string", "minLength": 1 },
           "tier": { "type": "integer", "minimum": 1, "maximum": 2 },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3,
+            "description": "이 (기법, 아티팩트) 쌍의 조사 비중. 작을수록 강하다(tier와 같은 방향). 05단계가 이 값으로 레코드 자리를 배분한다. 적지 않은 매핑은 2(중립)로 나온다. 값의 뜻은 mappings/_artifacts.yaml 옆 mapping-guide.md 참조."
+          },
           "scope": {
             "type": "object",
             "description": "범위 한정 읽기의 조건. 파서가 이 값만 보고 어디를 읽을지 정한다. 아티팩트마다 쓰는 키가 달라 additionalProperties를 막지 않는다.",

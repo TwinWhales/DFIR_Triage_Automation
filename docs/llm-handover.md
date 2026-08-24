@@ -403,7 +403,7 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pytest
 ```
 
-`529 passed`가 나와야 합니다. (Linux/macOS면 `.venv/bin/python`)
+`588 passed`가 나와야 합니다. (Linux/macOS면 `.venv/bin/python`)
 
 ```bash
 .venv/Scripts/python.exe tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \
@@ -577,7 +577,7 @@ Ollama 호출은 `src/common/llm.py`의 `OllamaBackend`에 있습니다.
 FINDINGS_BODY_FIELDS = ("findings", "timeline")   # input_refs 없음
 ```
 
-`input_refs`는 `record_filter`가 **실제로 전달한** 레코드 목록으로 채웁니다.
+`input_refs`는 배분(`allocation`)이 **실제로 전달한** 레코드 목록으로 채웁니다.
 모델이 보고하게 바꾸면, 모델이 받지도 않은 레코드를 목록에 넣어
 **`ref_not_in_input` 검사를 스스로 무력화**할 수 있습니다.
 
@@ -621,7 +621,7 @@ FINDINGS_BODY_FIELDS = ("findings", "timeline")   # input_refs 없음
 | 실제 모델로 02가 스키마를 통과 | `--llm ollama` 실행 후 `02_scenario.json` 생성 |
 | 실제 모델로 05가 스키마를 통과 | 04 파서 완성 후 |
 | 관통 실행이 스텁 없이 완료 | `run_pipeline.sh C-001 <evidence>` (3번째 인자 없이) |
-| 회귀 없음 | `.venv/Scripts/python.exe -m pytest` → 529 passed |
+| 회귀 없음 | `.venv/Scripts/python.exe -m pytest` → 588 passed |
 
 ### 10-2. 측정해서 보고할 것
 
@@ -696,7 +696,8 @@ src/
 ├── stage05_interpret/   ★ 당신 담당
 │   ├── interpret.py     CLI + 재시도 루프
 │   ├── llm_client.py    이 단계의 프롬프트·파라미터
-│   ├── record_filter.py 전달할 레코드 추림 (완성)
+│   ├── record_filter.py 신호 판정·활동 시각 (완성)
+│   ├── allocation.py    아티팩트별 자릿수 배분 (완성)
 │   └── prompts/
 │
 ├── stage03_select/      선별 (다른 담당)

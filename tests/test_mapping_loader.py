@@ -62,9 +62,10 @@ def test_catalog_loads_every_artifact(catalog):
         "prefetch",
         "$LogFile",
     }
-    # 목록이 바뀌면 이 값도 올린다. 03_selection.json 에 실려 나가므로
-    # 산출물만 보고 어느 카탈로그로 돌렸는지 되짚을 수 있어야 한다.
-    assert catalog.mapping_table_version == "0.5"
+    # 목록이나 아티팩트의 성질(signal_source)이 바뀌면 이 값도 올린다.
+    # 03_selection.json 에 실려 나가므로 산출물만 보고 어느 카탈로그로
+    # 돌렸는지 되짚을 수 있어야 한다.
+    assert catalog.mapping_table_version == "0.6"
 
 
 def test_unsupported_artifacts_carry_a_reason(catalog):
@@ -91,6 +92,41 @@ def test_unsupported_without_a_reason_is_refused(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(mapping_loader.MappingError, match="exclude_reason"):
+        mapping_loader.load_catalog(tmp_path)
+
+
+def test_the_registry_hives_declare_their_signal_source(catalog):
+    """레지스트리는 신호가 04단계가 아니라 선별에서 나온다.
+
+    05단계가 이것을 모르면 플래그 없는 레코드를 전부 버려서, 선별이
+    ``path_prefix``로 정확히 골라 온 1,754건이 한 건도 모델에 가지 않는다
+    (``docs/limitations.md`` 6-7 실측).
+    """
+    assert catalog["registry:SYSTEM"].signal_source == "scope"
+    assert catalog["registry:SOFTWARE"].signal_source == "scope"
+
+
+def test_artifacts_that_say_nothing_are_flag_driven(catalog):
+    # 기존 파서 셋은 전부 "훑고 재미있는 것에 플래그" 모델이다.
+    for name in ("$MFT", "$UsnJrnl", "evtx:Security", "evtx:System"):
+        assert catalog[name].signal_source == "flags"
+
+
+def test_an_unknown_signal_source_is_refused(tmp_path):
+    # 오타가 조용히 흘러가면 그 아티팩트가 왜 05단계에 안 갔는지
+    # 되짚을 방법이 없다.
+    (tmp_path / "_artifacts.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "mapping_table_version": "0.1",
+                "artifacts": {
+                    "$MFT": {"parser": "mft", "supported": True, "signal_source": "flag"}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(mapping_loader.MappingError, match="signal_source"):
         mapping_loader.load_catalog(tmp_path)
 
 
@@ -196,6 +232,46 @@ def test_missing_rationale_is_refused(tmp_path, catalog):
     )
     with pytest.raises(mapping_loader.MappingError, match="rationale"):
         mapping_loader.load_mapping(path, catalog)
+
+
+def test_a_request_without_a_priority_reads_as_neutral(mappings):
+    """``priority``는 사람이 채우는 값이고 아직 채워지지 않았다.
+
+    ``docs/limitations.md`` 6-5 — 어떤 자동 규칙에서도 나오지 않는 값이라
+    분석가가 판단해 적고 다른 사람이 검토해야 나온다. 그때까지는 중립이며,
+    배분에서 빠지는 것이 아니라 같은 몫을 받는다.
+    """
+    for mapping in mappings.values():
+        for request in mapping.requests:
+            assert request.priority in mapping_loader.PRIORITIES
+
+
+@pytest.mark.parametrize("priority", [0, 4, "1", 2.0, True])
+def test_a_priority_outside_the_scale_is_refused(tmp_path, catalog, priority):
+    path = _write_mapping(
+        tmp_path,
+        {
+            "technique": "T1505.003",
+            "artifacts": [
+                {"name": "$MFT", "tier": 1, "rationale": "x", "priority": priority}
+            ],
+        },
+        "T1505.003.yaml",
+    )
+    with pytest.raises(mapping_loader.MappingError, match="priority"):
+        mapping_loader.load_mapping(path, catalog)
+
+
+def test_a_declared_priority_is_carried_through(tmp_path, catalog):
+    path = _write_mapping(
+        tmp_path,
+        {
+            "technique": "T1505.003",
+            "artifacts": [{"name": "$MFT", "tier": 1, "rationale": "x", "priority": 1}],
+        },
+        "T1505.003.yaml",
+    )
+    assert mapping_loader.load_mapping(path, catalog).requests[0].priority == 1
 
 
 def test_followups_are_attributed_to_their_own_technique(mappings):

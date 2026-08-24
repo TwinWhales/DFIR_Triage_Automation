@@ -16,7 +16,7 @@
 # 카탈로그와 파서 등록소가 어긋나면 tests/test_pipeline_e2e.py 가 잡는다.
 # supported: true 인데 파서가 없거나, 파서가 있는데 여기 없거나 둘 다.
 
-mapping_table_version: "0.5"
+mapping_table_version: "0.6"
 
 artifacts:
   $MFT:
@@ -51,16 +51,24 @@ artifacts:
   # CurrentControlSet 은 그대로 써도 된다. 파서가 Select\Current 를
   # 읽어 ControlSet00N 으로 바꾼다 — 매핑 작성자가 하이브 내부 사정을
   # 몰라도 되게 한 것이다.
+  #
+  # signal_source: scope 인 이유가 여기 있다. 다른 아티팩트는 04단계가
+  # 전부 훑고 재미있는 것에 플래그를 붙이지만, 레지스트리는 붙일 플래그가
+  # 없다 — 위 문단대로 판정이 이미 path_prefix 에서 끝났기 때문이다.
+  # 05단계가 이것을 모르면 플래그 없는 레코드를 전부 버려서 선별이 정확히
+  # 골라 온 것이 한 건도 모델에 가지 않는다(limitations.md 6-7 실측).
   registry:SYSTEM:
     parser: registry
     os: [windows]
     supported: true
+    signal_source: scope
     description: SYSTEM 하이브. 서비스·드라이버·장치 설정.
 
   registry:SOFTWARE:
     parser: registry
     os: [windows]
     supported: true
+    signal_source: scope
     description: SOFTWARE 하이브. 설치 프로그램·자동실행·예약 작업 캐시.
 
   # 제외 사유는 OS 변종과 무관하게 참이어야 한다. 처음에는 "Windows
