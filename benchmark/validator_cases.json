@@ -1,248 +1,559 @@
 {
   "note": "사람이 '이건 맞는 문장'이라고 판단한 사례. 06단계 검증기가 이걸 기각하면 검증기가 과엄격한 것이다. C-001 목업 파싱 결과(benchmark/datasets/C-001-webshell/mock/04_parsed)를 대상으로 한다.",
   "policy": "여기 있는 문장은 전부 통과하거나(claims 있음) 검증불가로 분류되어야(claims 없음) 한다. 하나라도 rejected면 검증기 결함이다. 새 비교 규칙을 넣을 때마다 여기에 사례를 추가한다.",
-  "input_refs": ["MFT#12345", "MFT#12346", "MFT#12400", "EVTX-SEC#40912", "EVTX-SEC#40915"],
+  "input_refs": [
+    "MFT#12345",
+    "MFT#12346",
+    "MFT#12400",
+    "EVTX-SEC#40912",
+    "EVTX-SEC#40915"
+  ],
   "cases": [
     {
-      "id": "V1", "risk": "타임스탬프 절삭",
+      "id": "V1",
+      "risk": "타임스탬프 절삭",
       "why": "분석가는 초 단위로 인용한다. 100ns 자리까지 적으라고 요구하면 정상 문장이 대량 기각된다.",
       "statement": "shell.aspx는 2026-07-20 03:14:22에 생성되었습니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "si_btime", "value": "2026-07-20T03:14:22Z" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "si_btime",
+          "value": "2026-07-20T03:14:22Z"
+        }
+      ]
     },
     {
-      "id": "V2", "risk": "타임스탬프 전체 정밀도",
+      "id": "V2",
+      "risk": "타임스탬프 전체 정밀도",
       "why": "레코드에 적힌 그대로 옮긴 경우도 당연히 통과해야 한다.",
       "statement": "shell.aspx의 $SI 생성 시각은 2026-07-20T03:14:22.1234567Z입니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "si_btime", "value": "2026-07-20T03:14:22.1234567Z" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "si_btime",
+          "value": "2026-07-20T03:14:22.1234567Z"
+        }
+      ]
     },
     {
-      "id": "V3", "risk": "타임스탬프 공백 구분자",
+      "id": "V3",
+      "risk": "타임스탬프 공백 구분자",
       "why": "MFTECmd 등 외부 도구 출력을 옮기면 T 대신 공백이 온다.",
       "statement": "계정 생성 이벤트는 2026-07-20 03:22:15에 기록되었습니다.",
-      "refs": ["EVTX-SEC#40912"],
-      "claims": [{ "ref": "EVTX-SEC#40912", "field": "timestamp", "value": "2026-07-20 03:22:15Z" }]
+      "refs": [
+        "EVTX-SEC#40912"
+      ],
+      "claims": [
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "timestamp",
+          "value": "2026-07-20 03:22:15Z"
+        }
+      ]
     },
     {
-      "id": "V4", "risk": "타임존 표기 없음",
+      "id": "V4",
+      "risk": "타임존 표기 없음",
       "why": "파이프라인 전체가 UTC로 고정되어 있으므로 Z를 빠뜨린 것은 오류가 아니다.",
       "statement": "svc_backup 계정이 03:22:15에 생성되었습니다.",
-      "refs": ["EVTX-SEC#40912"],
-      "claims": [{ "ref": "EVTX-SEC#40912", "field": "timestamp", "value": "2026-07-20T03:22:15" }]
+      "refs": [
+        "EVTX-SEC#40912"
+      ],
+      "claims": [
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "timestamp",
+          "value": "2026-07-20T03:22:15"
+        }
+      ]
     },
     {
-      "id": "V5", "risk": "타임존 오프셋 표기",
+      "id": "V5",
+      "risk": "타임존 오프셋 표기",
       "why": "한국 시각으로 적은 경우. 같은 시점이므로 통과해야 한다.",
       "statement": "shell.aspx는 KST 기준 2026-07-20 12:14:22에 생성되었습니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "si_ctime", "value": "2026-07-20T12:14:22+09:00" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "si_ctime",
+          "value": "2026-07-20T12:14:22+09:00"
+        }
+      ]
     },
     {
-      "id": "V6", "risk": "$FN 타임스탬프 인용",
+      "id": "V6",
+      "risk": "$FN 타임스탬프 인용",
       "why": "조작 판정의 근거가 되는 값이라 자주 인용된다.",
       "statement": "shell.aspx의 $FN 생성 시각은 2026-07-21 09:02:11로 $SI보다 늦습니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "fn_btime", "value": "2026-07-21T09:02:11Z" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "fn_btime",
+          "value": "2026-07-21T09:02:11Z"
+        }
+      ]
     },
     {
-      "id": "V7", "risk": "경로 정확 표기",
+      "id": "V7",
+      "risk": "경로 정확 표기",
       "statement": "웹루트 하위 upload 디렉터리에 shell.aspx가 있습니다.",
       "why": "가장 기본. 이게 안 되면 나머지는 볼 것도 없다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "path", "value": "C:\\inetpub\\wwwroot\\upload\\shell.aspx" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "path",
+          "value": "C:\\inetpub\\wwwroot\\upload\\shell.aspx"
+        }
+      ]
     },
     {
-      "id": "V8", "risk": "경로 구분자 차이",
+      "id": "V8",
+      "risk": "경로 구분자 차이",
       "why": "리눅스 분석 장비에서 작업하면 슬래시로 쓰게 된다.",
       "statement": "C:/inetpub/wwwroot/upload/shell.aspx가 확인됩니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "path", "value": "C:/inetpub/wwwroot/upload/shell.aspx" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "path",
+          "value": "C:/inetpub/wwwroot/upload/shell.aspx"
+        }
+      ]
     },
     {
-      "id": "V9", "risk": "경로 대소문자",
+      "id": "V9",
+      "risk": "경로 대소문자",
       "why": "NTFS는 대소문자를 구별하지 않는다. 이건 정책이 아니라 파일시스템 사실이다.",
       "statement": "C:\\INETPUB\\WWWROOT\\UPLOAD\\SHELL.ASPX가 확인됩니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "path", "value": "C:\\INETPUB\\WWWROOT\\UPLOAD\\SHELL.ASPX" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "path",
+          "value": "C:\\INETPUB\\WWWROOT\\UPLOAD\\SHELL.ASPX"
+        }
+      ]
     },
     {
-      "id": "V10", "risk": "다른 레코드의 경로",
+      "id": "V10",
+      "risk": "다른 레코드의 경로",
       "why": "정상 파일도 근거로 인용된다. 웹셸만 다루는 게 아니다.",
       "statement": "같은 디렉터리에 index.aspx가 존재합니다.",
-      "refs": ["MFT#12346"],
-      "claims": [{ "ref": "MFT#12346", "field": "path", "value": "C:\\inetpub\\wwwroot\\upload\\index.aspx" }]
+      "refs": [
+        "MFT#12346"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12346",
+          "field": "path",
+          "value": "C:\\inetpub\\wwwroot\\upload\\index.aspx"
+        }
+      ]
     },
     {
-      "id": "V11", "risk": "숫자를 숫자로",
+      "id": "V11",
+      "risk": "숫자를 숫자로",
       "why": "모델이 JSON 숫자로 낼 수도 있다.",
       "statement": "shell.aspx의 크기는 4821바이트입니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "size", "value": 4821 }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "size",
+          "value": 4821
+        }
+      ]
     },
     {
-      "id": "V12", "risk": "숫자를 문자열로",
+      "id": "V12",
+      "risk": "숫자를 문자열로",
       "why": "표기 차이를 위반으로 잡으면 환각률이 형식 문제로 부풀려진다.",
       "statement": "shell.aspx의 크기는 4821바이트입니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "size", "value": "4821" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "size",
+          "value": "4821"
+        }
+      ]
     },
     {
-      "id": "V13", "risk": "레코드 번호 인용",
+      "id": "V13",
+      "risk": "레코드 번호 인용",
       "why": "보고서에서 레코드 번호를 근거로 대는 것은 표준 관행이다.",
       "statement": "해당 파일은 MFT 레코드 12345에 있습니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "record_num", "value": 12345 }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "record_num",
+          "value": 12345
+        }
+      ]
     },
     {
-      "id": "V14", "risk": "오프셋 인용",
+      "id": "V14",
+      "risk": "오프셋 인용",
       "why": "원본 위치를 대는 것이 이 도구의 핵심 주장이다.",
       "statement": "해당 레코드는 오프셋 0x1E000에 있습니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "offset", "value": "0x1E000" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "offset",
+          "value": "0x1E000"
+        }
+      ]
     },
     {
-      "id": "V15", "risk": "bool 참",
+      "id": "V15",
+      "risk": "bool 참",
       "why": "삭제 여부는 자주 언급된다.",
       "statement": "해당 레코드는 할당된 상태입니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "allocated", "value": true }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "allocated",
+          "value": true
+        }
+      ]
     },
     {
-      "id": "V16", "risk": "bool 거짓",
+      "id": "V16",
+      "risk": "bool 거짓",
       "why": "false를 '값 없음'으로 잘못 처리하는 구현이 흔하다.",
       "statement": "해당 항목은 디렉터리가 아니라 파일입니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "is_directory", "value": false }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "is_directory",
+          "value": false
+        }
+      ]
     },
     {
-      "id": "V17", "risk": "bool을 문자열로",
+      "id": "V17",
+      "risk": "bool을 문자열로",
       "why": "모델이 \"true\"로 낼 수 있다. 주장하는 사실은 같다.",
       "statement": "해당 레코드는 할당된 상태입니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "allocated", "value": "true" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "allocated",
+          "value": "true"
+        }
+      ]
     },
     {
-      "id": "V18", "risk": "flags 배열 멤버십",
+      "id": "V18",
+      "risk": "flags 배열 멤버십",
       "why": "문장은 플래그 하나를 지목하는데 레코드는 배열을 들고 있다.",
       "statement": "해당 레코드에 타임스탬프 불일치 플래그가 붙어 있습니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "flags", "value": "timestamp_mismatch" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "flags",
+          "value": "timestamp_mismatch"
+        }
+      ]
     },
     {
-      "id": "V19", "risk": "flags 멤버십 (EVTX)",
+      "id": "V19",
+      "risk": "flags 멤버십 (EVTX)",
       "statement": "계정 생성 플래그가 부여된 이벤트입니다.",
       "why": "아티팩트가 달라도 같은 규칙이 적용되어야 한다.",
-      "refs": ["EVTX-SEC#40912"],
-      "claims": [{ "ref": "EVTX-SEC#40912", "field": "flags", "value": "account_created" }]
+      "refs": [
+        "EVTX-SEC#40912"
+      ],
+      "claims": [
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "flags",
+          "value": "account_created"
+        }
+      ]
     },
     {
-      "id": "V20", "risk": "중첩 필드",
+      "id": "V20",
+      "risk": "중첩 필드",
       "why": "EVTX의 값은 전부 fields 아래에 있다. 점 표기가 안 되면 EVTX 문장을 하나도 검증할 수 없다.",
       "statement": "생성된 계정 이름은 svc_backup입니다.",
-      "refs": ["EVTX-SEC#40912"],
-      "claims": [{ "ref": "EVTX-SEC#40912", "field": "fields.TargetUserName", "value": "svc_backup" }]
+      "refs": [
+        "EVTX-SEC#40912"
+      ],
+      "claims": [
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "fields.TargetUserName",
+          "value": "svc_backup"
+        }
+      ]
     },
     {
-      "id": "V21", "risk": "중첩 필드 — 백슬래시 포함 값",
+      "id": "V21",
+      "risk": "중첩 필드 — 백슬래시 포함 값",
       "why": "도메인\\계정 표기가 경로로 오인되면 안 된다.",
       "statement": "계정을 만든 주체는 IIS 애플리케이션 풀 계정입니다.",
-      "refs": ["EVTX-SEC#40912"],
-      "claims": [{ "ref": "EVTX-SEC#40912", "field": "fields.SubjectUserName", "value": "IIS APPPOOL\\DefaultAppPool" }]
+      "refs": [
+        "EVTX-SEC#40912"
+      ],
+      "claims": [
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "fields.SubjectUserName",
+          "value": "IIS APPPOOL\\DefaultAppPool"
+        }
+      ]
     },
     {
-      "id": "V22", "risk": "중첩 필드 — 다른 이벤트",
+      "id": "V22",
+      "risk": "중첩 필드 — 다른 이벤트",
       "why": "4732에서 TargetUserName은 그룹 이름이다. 계정 이름은 MemberName이다.",
       "statement": "svc_backup이 Administrators 그룹에 추가되었습니다.",
-      "refs": ["EVTX-SEC#40915"],
+      "refs": [
+        "EVTX-SEC#40915"
+      ],
       "claims": [
-        { "ref": "EVTX-SEC#40915", "field": "fields.TargetUserName", "value": "Administrators" },
-        { "ref": "EVTX-SEC#40915", "field": "fields.MemberName", "value": "svc_backup" }
+        {
+          "ref": "EVTX-SEC#40915",
+          "field": "fields.TargetUserName",
+          "value": "Administrators"
+        },
+        {
+          "ref": "EVTX-SEC#40915",
+          "field": "fields.MemberName",
+          "value": "svc_backup"
+        }
       ]
     },
     {
-      "id": "V23", "risk": "값 앞뒤 공백",
+      "id": "V23",
+      "risk": "값 앞뒤 공백",
       "why": "모델 출력에 공백이 섞이는 일이 잦다. 사실은 같다.",
       "statement": "생성된 계정은 svc_backup입니다.",
-      "refs": ["EVTX-SEC#40912"],
-      "claims": [{ "ref": "EVTX-SEC#40912", "field": "fields.TargetUserName", "value": " svc_backup " }]
+      "refs": [
+        "EVTX-SEC#40912"
+      ],
+      "claims": [
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "fields.TargetUserName",
+          "value": " svc_backup "
+        }
+      ]
     },
     {
-      "id": "V24", "risk": "event_id 숫자",
+      "id": "V24",
+      "risk": "event_id 숫자",
       "statement": "이벤트 ID 4720이 기록되었습니다.",
       "why": "이벤트 ID는 거의 모든 EVTX 문장에 등장한다.",
-      "refs": ["EVTX-SEC#40912"],
-      "claims": [{ "ref": "EVTX-SEC#40912", "field": "event_id", "value": 4720 }]
+      "refs": [
+        "EVTX-SEC#40912"
+      ],
+      "claims": [
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "event_id",
+          "value": 4720
+        }
+      ]
     },
     {
-      "id": "V25", "risk": "event_id 문자열",
+      "id": "V25",
+      "risk": "event_id 문자열",
       "why": "표기 차이일 뿐이다.",
       "statement": "이벤트 ID 4732가 기록되었습니다.",
-      "refs": ["EVTX-SEC#40915"],
-      "claims": [{ "ref": "EVTX-SEC#40915", "field": "event_id", "value": "4732" }]
+      "refs": [
+        "EVTX-SEC#40915"
+      ],
+      "claims": [
+        {
+          "ref": "EVTX-SEC#40915",
+          "field": "event_id",
+          "value": "4732"
+        }
+      ]
     },
     {
-      "id": "V26", "risk": "채널·호스트 인용",
+      "id": "V26",
+      "risk": "채널·호스트 인용",
       "why": "보고서 개요에 들어가는 값이다.",
       "statement": "WEB01의 Security 로그에서 확인되었습니다.",
-      "refs": ["EVTX-SEC#40912"],
+      "refs": [
+        "EVTX-SEC#40912"
+      ],
       "claims": [
-        { "ref": "EVTX-SEC#40912", "field": "channel", "value": "Security" },
-        { "ref": "EVTX-SEC#40912", "field": "computer", "value": "WEB01" }
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "channel",
+          "value": "Security"
+        },
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "computer",
+          "value": "WEB01"
+        }
       ]
     },
     {
-      "id": "V27", "risk": "아티팩트 이름 인용",
+      "id": "V27",
+      "risk": "아티팩트 이름 인용",
       "why": "어느 아티팩트에서 나왔는지 밝히는 문장은 정상이다.",
       "statement": "이 근거는 $MFT에서 확인되었습니다.",
-      "refs": ["MFT#12345"],
-      "claims": [{ "ref": "MFT#12345", "field": "artifact", "value": "$MFT" }]
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "artifact",
+          "value": "$MFT"
+        }
+      ]
     },
     {
-      "id": "V28", "risk": "한 문장에 여러 claims",
+      "id": "V28",
+      "risk": "한 문장에 여러 claims",
       "why": "실제 분석 문장은 대개 여러 사실을 함께 말한다. 부분 통과가 없으므로 전부 맞아야 한다.",
       "statement": "웹루트 upload 디렉터리의 shell.aspx(4821바이트)가 2026-07-20 03:14:22에 생성되었고 타임스탬프 불일치가 확인됩니다.",
-      "refs": ["MFT#12345"],
+      "refs": [
+        "MFT#12345"
+      ],
       "claims": [
-        { "ref": "MFT#12345", "field": "path", "value": "C:\\inetpub\\wwwroot\\upload\\shell.aspx" },
-        { "ref": "MFT#12345", "field": "size", "value": 4821 },
-        { "ref": "MFT#12345", "field": "si_btime", "value": "2026-07-20T03:14:22Z" },
-        { "ref": "MFT#12345", "field": "flags", "value": "timestamp_mismatch" }
+        {
+          "ref": "MFT#12345",
+          "field": "path",
+          "value": "C:\\inetpub\\wwwroot\\upload\\shell.aspx"
+        },
+        {
+          "ref": "MFT#12345",
+          "field": "size",
+          "value": 4821
+        },
+        {
+          "ref": "MFT#12345",
+          "field": "si_btime",
+          "value": "2026-07-20T03:14:22Z"
+        },
+        {
+          "ref": "MFT#12345",
+          "field": "flags",
+          "value": "timestamp_mismatch"
+        }
       ]
     },
     {
-      "id": "V29", "risk": "한 문장에 여러 refs",
+      "id": "V29",
+      "risk": "한 문장에 여러 refs",
       "why": "시간 순서를 말하는 문장은 필연적으로 레코드를 여럿 인용한다.",
       "statement": "계정 생성(03:22:15) 4초 후 Administrators 그룹에 추가되었습니다.",
-      "refs": ["EVTX-SEC#40912", "EVTX-SEC#40915"],
+      "refs": [
+        "EVTX-SEC#40912",
+        "EVTX-SEC#40915"
+      ],
       "claims": [
-        { "ref": "EVTX-SEC#40912", "field": "timestamp", "value": "2026-07-20T03:22:15Z" },
-        { "ref": "EVTX-SEC#40915", "field": "timestamp", "value": "2026-07-20T03:22:19Z" }
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "timestamp",
+          "value": "2026-07-20T03:22:15Z"
+        },
+        {
+          "ref": "EVTX-SEC#40915",
+          "field": "timestamp",
+          "value": "2026-07-20T03:22:19Z"
+        }
       ]
     },
     {
-      "id": "V30", "risk": "접근 시각만 사건 범위 안인 레코드",
+      "id": "V30",
+      "risk": "접근 시각만 사건 범위 안인 레코드",
       "why": "생성은 3월인데 접근이 사건 시각인 파일. 실제 분석에서 중요한 단서다.",
       "statement": "index.aspx는 2026-03-11에 만들어졌으나 사건 시각인 2026-07-20 03:15:01에 접근되었습니다.",
-      "refs": ["MFT#12346"],
+      "refs": [
+        "MFT#12346"
+      ],
       "claims": [
-        { "ref": "MFT#12346", "field": "si_btime", "value": "2026-03-11T08:00:00Z" },
-        { "ref": "MFT#12346", "field": "si_atime", "value": "2026-07-20T03:15:01Z" }
+        {
+          "ref": "MFT#12346",
+          "field": "si_btime",
+          "value": "2026-03-11T08:00:00Z"
+        },
+        {
+          "ref": "MFT#12346",
+          "field": "si_atime",
+          "value": "2026-07-20T03:15:01Z"
+        }
       ]
     },
     {
-      "id": "V31", "risk": "빈 flags 인용 없이 정상 파일 서술",
+      "id": "V31",
+      "risk": "빈 flags 인용 없이 정상 파일 서술",
       "why": "플래그가 없는 레코드도 근거가 된다. health.aspx는 정상 파일이라는 서술.",
       "statement": "웹루트의 health.aspx(312바이트)는 2026-07-19에 생성되어 사건 시각 이전입니다.",
-      "refs": ["MFT#12400"],
+      "refs": [
+        "MFT#12400"
+      ],
       "claims": [
-        { "ref": "MFT#12400", "field": "path", "value": "C:\\inetpub\\wwwroot\\health.aspx" },
-        { "ref": "MFT#12400", "field": "size", "value": 312 },
-        { "ref": "MFT#12400", "field": "si_btime", "value": "2026-07-19T11:40:05Z" }
+        {
+          "ref": "MFT#12400",
+          "field": "path",
+          "value": "C:\\inetpub\\wwwroot\\health.aspx"
+        },
+        {
+          "ref": "MFT#12400",
+          "field": "size",
+          "value": 312
+        },
+        {
+          "ref": "MFT#12400",
+          "field": "si_btime",
+          "value": "2026-07-19T11:40:05Z"
+        }
       ]
     },
     {
-      "id": "V32", "risk": "종합 판단 (claims 없음)",
+      "id": "V32",
+      "risk": "종합 판단 (claims 없음)",
       "why": "이건 통과가 아니라 검증불가로 분류되어야 한다. 기각되면 보고서에서 요약이 사라진다.",
       "expect": "unverifiable",
       "statement": "전반적으로 웹셸을 통한 초기 침투 후 계정 생성으로 지속성을 확보한 흐름으로 보입니다.",
@@ -250,12 +561,48 @@
       "claims": []
     },
     {
-      "id": "V33", "risk": "근거는 있으나 claims를 뽑을 수 없는 문장",
+      "id": "V33",
+      "risk": "근거는 있으나 claims를 뽑을 수 없는 문장",
       "why": "레코드를 인용하되 특정 필드를 주장하지 않는 서술. refs가 유효하면 검증불가여야 한다.",
       "expect": "unverifiable",
       "statement": "MFT#12345와 EVTX-SEC#40912를 함께 보면 침해 흐름이 이어집니다.",
-      "refs": ["MFT#12345", "EVTX-SEC#40912"],
+      "refs": [
+        "MFT#12345",
+        "EVTX-SEC#40912"
+      ],
       "claims": []
+    },
+    {
+      "id": "V34",
+      "risk": "fields. 접두어를 빠뜨린 표기",
+      "why": "값이 최상위에 있는 아티팩트($MFT)와 fields 아래 있는 아티팩트(evtx·레지스트리·프리패치)가 섞여 있어 모델이 자주 틀린다. ref도 필드명도 값도 맞는 문장이 표기 하나로 기각되면 환각률이 표기 오류를 세게 된다 — 2026-08-24 실측에서 실제로 100%가 나왔다.",
+      "statement": "svc_backup 계정으로 로그온이 성공했습니다.",
+      "refs": [
+        "EVTX-SEC#40912"
+      ],
+      "claims": [
+        {
+          "ref": "EVTX-SEC#40912",
+          "field": "TargetUserName",
+          "value": "svc_backup"
+        }
+      ]
+    },
+    {
+      "id": "V35",
+      "risk": "fields. 접두어를 반대로 붙인 표기",
+      "why": "V34의 반대 방향. $MFT는 path를 최상위에 두는데 모델이 다른 아티팩트의 습관대로 fields.path 라고 쓴다. 같은 부류이므로 한쪽만 흡수하면 절반은 여전히 기각된다.",
+      "statement": "shell.aspx가 웹루트 업로드 폴더에 있습니다.",
+      "refs": [
+        "MFT#12345"
+      ],
+      "claims": [
+        {
+          "ref": "MFT#12345",
+          "field": "fields.path",
+          "value": "C:\\inetpub\\wwwroot\\upload\\shell.aspx"
+        }
+      ]
     }
   ]
 }

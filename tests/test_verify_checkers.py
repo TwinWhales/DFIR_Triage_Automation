@@ -163,6 +163,64 @@ def test_missing_field_reports_where_it_broke(records):
         comparators.get_field(records["MFT#12345"], "path.deeper")
 
 
+# ------------------------------------------- fields. 접두어 (네 번째 관대함)
+#
+# 값이 최상위에 있는 아티팩트($MFT)와 fields 아래 있는 아티팩트(evtx·
+# 레지스트리·프리패치)가 섞여 있어 모델이 양쪽으로 다 틀린다. 실측에서
+# ref·필드명·값이 전부 맞는 문장이 표기 하나로 기각돼 환각률 100%가
+# 나왔다(2026-08-24). 흡수하되 **검증이 물러지지 않아야** 한다.
+
+
+def test_a_bare_name_finds_the_value_under_fields(records):
+    record = records["EVTX-SEC#40912"]
+    assert comparators.get_field(record, "TargetUserName") == "svc_backup"
+
+
+def test_a_stray_fields_prefix_still_finds_a_top_level_value(records):
+    """반대 방향. $MFT 는 path 를 최상위에 둔다."""
+    record = records["MFT#12345"]
+    assert comparators.get_field(record, "fields.path") == comparators.get_field(record, "path")
+
+
+def test_the_top_level_wins_when_both_places_have_the_name():
+    """원래 표기가 먼저 시도되므로 모호해질 수 없다."""
+    record = {"ref": "X#1", "state": "top", "fields": {"state": "nested"}}
+    assert comparators.get_field(record, "state") == "top"
+    assert comparators.get_field(record, "fields.state") == "nested"
+
+
+def test_an_invented_field_is_still_missing_in_both_notations(records):
+    """흡수가 "못 찾으면 통과"로 새면 검증 자체가 무의미해진다."""
+    for notation in ("Nope", "fields.Nope"):
+        with pytest.raises(comparators.FieldMissing):
+            comparators.get_field(records["EVTX-SEC#40912"], notation)
+
+
+def test_the_break_point_is_reported_in_the_notation_the_model_used(records):
+    """기각 사유가 모델이 쓰지도 않은 경로를 가리키면 되짚을 수 없다."""
+    with pytest.raises(comparators.FieldMissing) as caught:
+        comparators.get_field(records["EVTX-SEC#40912"], "Nope")
+    assert str(caught.value) == "Nope"
+
+
+def test_a_wrong_value_is_still_rejected_after_the_notation_is_absorbed(records):
+    """표기를 흡수해도 값 대조는 그대로다 — value_mismatch 로 기각돼야 한다."""
+    finding = _finding(
+        claims=[{"ref": "EVTX-SEC#40912", "field": "TargetUserName", "value": "administrator"}]
+    )
+    rejected = verify(_doc(finding), records)["rejected"][0]
+    assert rejected["reason"] == "value_mismatch"
+
+
+def test_the_bare_notation_passes_end_to_end(records):
+    finding = _finding(
+        claims=[{"ref": "EVTX-SEC#40912", "field": "TargetUserName", "value": "svc_backup"}]
+    )
+    result = verify(_doc(finding), records)
+    assert result["rejected"] == []
+    assert result["stats"]["hallucination_rate"] == 0.0
+
+
 # =============================================================== 판정 규칙
 
 
