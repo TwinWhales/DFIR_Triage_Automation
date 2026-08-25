@@ -459,7 +459,10 @@ def main(argv: "list[str] | None" = None) -> int:
     try:
         version: "osinfo.WindowsVersion | None" = osinfo.detect(source)
         windows_note = version.as_manifest()
-        print(f"[{STAGE}] Windows 판정 — {version.describe()}")
+        # flush 하는 이유는 바로 뒤에 stderr 로 나가는 "버전 미해당"이
+        # 있기 때문이다. 버퍼에 남으면 사유가 판정보다 먼저 찍혀, 무엇을
+        # 근거로 뺐는지가 콘솔에서 거꾸로 보인다.
+        print(f"[{STAGE}] Windows 판정 — {version.describe()}", flush=True)
         if not version.known:
             print(
                 f"[{STAGE}] 아는 빌드 구간에 없습니다 (빌드 {version.build}). "

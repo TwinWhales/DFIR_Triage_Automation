@@ -38,13 +38,16 @@ dfir-triage/
 │   │   │   ├── mft.py             # $MFT 바이트 레벨 파싱
 │   │   │   ├── usnjrnl.py         # $UsnJrnl:$J 파싱
 │   │   │   ├── evtx.py            # EVTX 파싱
-│   │   │   ├── registry.py        # SYSTEM/SOFTWARE 하이브 파싱
+│   │   │   ├── registry.py        # SYSTEM/SOFTWARE/Amcache 하이브 파싱
+│   │   │   ├── recentfilecache.py # RecentFileCache.bcf 파싱 (Windows 7 전용)
 │   │   │   └── prefetch.py        # Windows/Prefetch/*.pf 파싱
 │   │   ├── structs/
 │   │   │   ├── mft_record.py      # MFT 레코드 헤더, $SI, $FN, $DATA 구조체
 │   │   │   ├── usn_record.py      # USN_RECORD_V2 구조체
 │   │   │   ├── prefetch_record.py # .pf 헤더·파일 정보·메트릭·볼륨 구조체
+│   │   │   ├── recentfilecache_record.py  # .bcf 헤더·항목 구조체
 │   │   │   └── xpress_huffman.py  # MAM(LZXPRESS Huffman) 압축 해제
+│   │   ├── osinfo.py              # 증거의 Windows 버전 판정, 버전별 아티팩트 가용성
 │   │   └── flagging.py            # flags 어휘 룰 적용
 │   │
 │   ├── stage05_interpret/

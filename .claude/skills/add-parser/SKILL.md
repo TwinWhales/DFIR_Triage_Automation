@@ -1,11 +1,12 @@
 ---
 name: add-parser
-description: 04단계에 새 아티팩트 파서를 추가하거나 기존 파서가 맡는 아티팩트를 늘릴 때 쓴다. 등록 지점이 네 군데로 흩어져 있고 빠뜨리면 조용히 실패하는 곳이 넷 있다. $MFT·$UsnJrnl·evtx·registry·prefetch를 추가하며 실제로 밟은 순서.
+description: 04단계에 새 아티팩트 파서를 추가하거나 기존 파서가 맡는 아티팩트를 늘릴 때 쓴다. 등록 지점이 여러 군데로 흩어져 있고 빠뜨리면 조용히 실패하는 곳이 여럿 있다. $MFT·$UsnJrnl·evtx·registry·prefetch·recentfilecache를 추가하며 실제로 밟은 순서.
 ---
 
 # 새 아티팩트 파서 추가
 
-파서 다섯(`mft` `usnjrnl` `evtx` `registry` `prefetch`)을 추가하며 굳어진 순서다.
+파서 여섯(`mft` `usnjrnl` `evtx` `registry` `prefetch` `recentfilecache`)을
+추가하며 굳어진 순서다.
 **설계 근거는 여기 옮겨 적지 않는다** — 각 파일의 docstring이 권위다.
 
 | 알고 싶은 것 | 볼 곳 |
@@ -35,10 +36,15 @@ description: 04단계에 새 아티팩트 파서를 추가하거나 기존 파�
 
 **2. `ref` 접두어를 등록한다** — `src/common/refs.py`와 스키마
 
-**세 군데다.** `refs.py`의 딕셔너리 하나, 정규식 하나, 그리고
-`schemas/parsed_record.schema.json`의 `ref` 패턴. 스키마가 같은 정규식을
-따로 들고 있어서, 앞의 둘만 고치면 파서는 도는데 산출물이 스키마 검증에서
-전부 기각된다.
+**네 군데다.** `refs.py`의 딕셔너리 하나, 정규식 하나, 그리고 **스키마
+둘** — `schemas/parsed_record.schema.json`과 `schemas/findings.schema.json`.
+스키마가 같은 정규식을 따로 들고 있어서, 앞의 둘만 고치면 파서는 도는데
+산출물이 스키마 검증에서 전부 기각된다.
+
+`findings.schema.json`을 빠뜨리면 04단계는 멀쩡히 도는데 **05단계 문장이
+기각된다.** 04만 보고 있으면 한참 뒤에 드러난다. `tests/test_schemas.py`가
+`refs.py`의 접두어 전부를 두 스키마에 걸어 보므로 커밋 전에 잡힌다
+(2026-08-25, `recentfilecache` 추가에서 실제로 잡혔다).
 
 ```python
 ARTIFACT_PREFIX = { ..., "registry:SYSTEM": "REG-SYS" }
@@ -169,7 +175,7 @@ OUTPUT_FILENAMES = { ..., "registry:SYSTEM": "registry_system.jsonl" }
 
 ## 빠뜨리면 조용히 실패하는 곳
 
-셋 다 실제로 겪은 것이다.
+전부 실제로 겪은 것이다.
 
 **`OUTPUT_FILENAMES`** — 등록소(4번)와 별개 테이블이라는 걸 잊는다.
 
@@ -180,8 +186,16 @@ OUTPUT_FILENAMES = { ..., "registry:SYSTEM": "registry_system.jsonl" }
 등록 지점이 넷이 아니라 다섯이라는 사실 자체가 함정이다
 (2026-08-24, Firewall/BITS/NetworkProfile 추가에서 밟았다).
 
-**`REF_PATTERN`** — `ARTIFACT_PREFIX`만 고치고 정규식을 잊는다. 테스트가
-못 잡는다. **스키마에도 같은 정규식이 있다.**
+**`REF_PATTERN`** — `ARTIFACT_PREFIX`만 고치고 정규식을 잊는다.
+`tests/test_common.py`는 못 잡는다(딕셔너리 길이만 본다). **스키마 둘에도
+같은 정규식이 있고**, 그쪽은 `tests/test_schemas.py`가 잡는다.
+
+**버전에 따라 존재하지 않는 아티팩트라면 `osinfo.AVAILABILITY`에도 적는다.**
+`RecentFileCache.bcf`(Win7 전용)와 `Amcache.hve`(Win8 이상)가 그 짝이다.
+적지 않으면 그 버전에 원래 없는 파일이 `artifact_not_found` — "수집 누락"
+으로 보고서에 실리고, 분석가가 있지도 않은 파일을 다시 뽑으러 간다.
+**구조적으로 존재할 수 없는 것만 적는다** — "이 버전에서 흔히 비어 있다"는
+`artifact_not_found`가 이미 담당하는 일이고, 잘못 적으면 있는 증거를 안 읽는다.
 
 **미지원 아티팩트를 예시로 쓰던 테스트·문서.** 카탈로그에서 `supported`를
 뒤집으면 "미지원이란 이런 것"의 예시로 그 아티팩트를 쓰던 곳이 전부
