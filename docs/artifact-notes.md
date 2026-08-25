@@ -830,26 +830,102 @@ Win10과 Win8.1을 가르지 못합니다. 빌드 번호만 믿는 근거가 이
 굳이 대조한다면 같은 이미지를 마운트해 `winver`를 띄우는 것인데, 그것도
 같은 레지스트리 값을 읽습니다.
 
-### RecentFileCache.bcf — 대조하지 못했다
+### RecentFileCache.bcf — 실물 대조 (같은 날 저녁, Win7 이미지 도착)
 
-**Windows 7 이미지가 없어 대조 기록을 남기지 못합니다.** 이 표의 다른
-줄과 달리 여기는 비어 있고, 그 사실 자체가 기록입니다.
+`evidence/windows7_testimage.001`(100GB, FTK Imager, VMware 가상 디스크)
+볼륨 1 = `Windows 7 Ultimate`, 빌드 7601.
+
+```
+ProductName        Windows 7 Ultimate
+CurrentVersion     6.1
+CurrentBuildNumber 7601
+EditionID          Ultimate
+InstallationType   Client
+```
+
+`UBR`·`ReleaseId`·`DisplayVersion`이 **없습니다**(Win10 이후 값). 빌드
+번호만 필수로 두고 나머지를 선택으로 둔 판단이 여기서 확인됐습니다.
+
+#### 헤더는 가정한 대로였다
+
+`Windows/AppCompat/Programs/RecentFileCache.bcf`, 6,742바이트.
+
+```
+0000  fe ff ee ff 11 22 00 00 03 00 00 00 01 00 00 00
+0010  d1 a0 78 01 27 00 00 00 63 00 3a 00 5c 00 77 00   ....'...c.:.\.w.
+0020  69 00 6e 00 64 00 6f 00 77 00 73 00 5c 00 73 00   i.n.d.o.w.s.\.s.
+```
+
+- `0x00` 시그니처 `FE FF EE FF` — **가정대로**
+- `0x14` 첫 항목의 길이 필드 `0x27` = 39, 이어서 UTF-16LE
+  `c:\windows\system32\...` 39자. **길이는 바이트가 아니라 문자 수다**
+- 미상 4필드 실측: `0x2211`, `3`, `1`, `0x0178A0D1`. **항목 수(67)와 맞는
+  값이 없으므로 개수 필드는 없습니다** — 파일 끝까지 걸어야 합니다
+
+#### 두 경로가 서로를 지지한다
+
+`tools/scan_recentfilecache.py`를 새로 만들었습니다. 프리패치·하이브 때와
+같은 방법입니다 — **같은 파일을 다른 길로 읽습니다.** 파서는 길이 필드를
+걷고, 스캐너는 길이 필드를 아예 보지 않고 헤더를 뗀 나머지를 통째로
+UTF-16LE로 디코딩해 널로 쪼갭니다.
+
+```
+파일 크기: 6,742바이트
+시그니처: feffeeff (기대 feffeeff)
+길이 필드를 걸어서: 67건, 끝나고 남은 바이트 0
+널로 쪼개서:       67건
+→ 두 해석이 일치합니다.
+파서 출력 대조: 일치
+```
+
+**남은 바이트 0이 핵심입니다.** 파일 크기는 Windows가 쓴 값이라 우리 해석과
+독립인데, 길이 필드를 바이트로 잘못 읽었다면 첫 항목에서 어긋나 67번
+연쇄할 수 없습니다. 프리패치에서 헤더 해시·파일 크기를 정답지로 삼은 것과
+같은 자리입니다.
+
+레코드 67건 전부 `offset`이 실제 길이 필드를 가리키고, 마지막 항목의 끝이
+6,742 = 파일 크기와 같습니다.
 
 | 아티팩트 | 대조 상대 | 상태 |
 |---|---|---|
+| `recentfilecache` | `tools/scan_recentfilecache.py` (길이 필드를 보지 않는 경로) | **일치 67/67** |
+| `recentfilecache` | Windows가 쓴 파일 크기 | **일치** (남은 바이트 0) |
 | `recentfilecache` | `RecentFileCacheParser` (Eric Zimmerman) | **미실시** |
 
-Win7 실물이 들어오면 밟을 순서:
+셋째 줄이 남았습니다. 앞의 둘은 우리가 만든 두 경로라 **공통 오해가 있으면
+같은 방향으로 틀립니다.**
 
-1. 같은 파일을 `RecentFileCacheParser`로 뽑아 경로 목록을 비교한다
-2. 건수와 **순서**가 같은지 본다 — 항목 순서가 곧 등장 순서다
-3. 우리 `offset`이 실제 항목 시작인지 `tools/hexdump_record.py`로 확인한다
-4. 시그니처 4바이트가 `FE FF EE FF`가 맞는지 확인한다 — 틀렸다면 지금
-   코드는 **모든 파일을 거부**하고 있었을 것이다
+#### 이 이미지의 다른 아티팩트
 
-4번이 특히 중요합니다. 거부는 조용하지 않으므로(파일 전체가
-`parser_missing`이 아니라 예외로 죽습니다) 실물을 처음 넣는 순간
-드러납니다.
+Win7 볼륨에서 나머지 파서도 전부 돕니다. `parse_errors` **전 아티팩트 0**.
+
+| 아티팩트 | 레코드 |
+|---|---|
+| `$MFT` | 4건 (`C:\Windows\AppCompat` 로 범위를 좁힌 결과) |
+| `$UsnJrnl` | 149,044건 — 전부 V2. 지원 범위 밖 버전 0건 |
+| `evtx` 5채널 | Security 227 / System 746 / Firewall 70 / NetworkProfile 45 / BITS 2 |
+| `registry:SYSTEM` | 1,753건 |
+| `registry:Amcache` | **없음** — 버전 미해당으로 걸러짐 (의도대로) |
+| `prefetch` | **없음** — 아래 참조 |
+
+#### 프리패치가 없다 — 그리고 왜 없는지
+
+`Windows/Prefetch`에 `.pf`가 **한 개도 없습니다.** ReadyBoot와 `Ag*.db`
+(Superfetch) 뿐입니다. 레지스트리가 이유를 말해 줍니다.
+
+```
+SYSTEM\ControlSet001\Control\Session Manager\Memory Management\PrefetchParameters
+  EnablePrefetcher  = 2   (부팅 전용 — 애플리케이션 프리패치 꺼짐)
+  EnableSuperfetch  = 2
+```
+
+`EnablePrefetcher = 2`는 부팅 프리패치만 한다는 뜻이라 애플리케이션 `.pf`가
+애초에 만들어지지 않습니다. 04단계는 `artifact_not_found`("증거 없음")로
+기록하는데 **그것이 맞습니다** — 버전 때문이 아니라 이 시스템의 설정
+때문입니다. 둘을 `osinfo.AVAILABILITY`로 뭉뚱그리지 않은 이유가 이것입니다.
+
+**그래서 프리패치 버전 23(Win7) 실측 재확인은 여전히 못 했습니다.**
+예전 `evidence/[root]` 73건 기록만 남아 있고 그 볼륨은 디스크에 없습니다.
 
 ### 프리패치 (30, 220)의 이름표가 명세와 어긋난다
 

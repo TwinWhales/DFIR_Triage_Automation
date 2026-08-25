@@ -159,6 +159,7 @@ OUTPUT_FILENAMES = { ..., "registry:SYSTEM": "registry_system.jsonl" }
 | `registry` | `tools/scan_hive_cells.py` — 셀을 직접 걸어 `nk`를 센다 |
 | `$MFT` | `tools/compare_mft.py` + 합성 레코드 테스트 |
 | `prefetch` | `tools/scan_prefetch.py` — 메트릭 배열을 보지 않고 문자열 블록을 쪼갠다 |
+| `recentfilecache` | `tools/scan_recentfilecache.py` — 길이 필드를 보지 않고 널로 쪼갠다 |
 
 외부 도구가 없는 아티팩트(프리패치가 그랬다)는 **같은 파일을 다른 경로로
 읽는 스캐너**를 만든다. 덤으로, 파일 안에 **Windows가 쓴 값**이 있으면

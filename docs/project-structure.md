@@ -134,6 +134,7 @@ dfir-triage/
     ├── scan_hive_cells.py         # 하이브 nk 셀 직접 계수 (커버리지 정답지)
     ├── decode_hive_values.py      # 하이브 값을 명세대로 직접 디코딩
     ├── scan_prefetch.py           # .pf를 파서와 다른 길로 읽어 대조
+    ├── scan_recentfilecache.py    # .bcf를 길이 필드 없이 읽어 대조
     ├── inspect_jsonl.py           # 파싱 결과 빠른 조회 (미구현)
     └── hexdump_record.py          # 특정 ref의 원본 바이트 덤프 (미구현)
 ```

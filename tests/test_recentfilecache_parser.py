@@ -4,19 +4,17 @@
 프리패치 테스트처럼 **구조 읽기까지 여기서 고정합니다.** 바이너리 픽스처는
 두지 않고 아래 ``build_bcf``가 합성합니다.
 
-**이 파일이 특히 중요한 이유가 있습니다.** 이 아티팩트는 Windows 7 실물로
-대조한 적이 없습니다(저장소에 Win7 이미지가 없습니다). 즉 "명세가 맞다"는
-증명이 없는 상태이고, 그래서 여기서 고정하는 것의 절반은 **어긋났을 때
-그럴듯한 값을 내지 않고 거부하는가**입니다.
+구조 자체는 실물 1건으로 확인했습니다(`evidence/windows7_testimage.001`,
+Windows 7 Ultimate 빌드 7601, 67항목). 그래도 여기서 고정하는 것의 절반은
+**어긋났을 때 그럴듯한 값을 내지 않고 거부하는가**입니다 — 다른 빌드·
+언어·SP 조합에서 헤더가 다를 수 있고, 그때 조용히 틀리면 안 됩니다.
 
 - 시그니처가 다르면 파일 전체를 거부하고 실제로 본 바이트를 말한다
 - 길이 필드의 단위를 잘못 잡으면(문자 수 ↔ 바이트) 종결자에서 걸린다
 - 중간에서 어긋나면 **거기까지 낸 것은 유지하고** 남은 바이트를 센다
 
-Win7 실물이 들어오면 ``RecentFileCacheParser``(Eric Zimmerman)와 대조하고
-``docs/artifact-notes.md``에 기록해야 합니다. 그 전까지 이 테스트가
-고정하는 것은 "우리가 정한 구조대로 읽는다"이지 "그 구조가 맞다"가
-아닙니다.
+맨 아래 통합 테스트가 실물 대조를 맡습니다. ``evidence/``는 저장소에
+없으므로(gitignore) 없으면 건너뜁니다.
 """
 
 from __future__ import annotations
@@ -32,6 +30,13 @@ from src.stage04_parse import flagging
 from src.stage04_parse.parsers import recentfilecache as rfc_parser
 from src.stage04_parse.parsers.base import Scope
 from src.stage04_parse.structs import recentfilecache_record as rfc
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+#: 실물 Windows 7 이미지. 없으면 통합 테스트를 건너뛴다(gitignore 대상).
+REAL_IMAGE = REPO_ROOT / "evidence" / "windows7_testimage.001"
+#: 그 이미지의 시스템 볼륨. 0은 100MB System Reserved 파티션이다.
+REAL_VOLUME = 1
 
 EMPTY = Scope()
 
@@ -232,6 +237,60 @@ def test_a_null_inside_a_path_skips_only_that_entry(parser):
 
     assert [r["path"] for r in records] == [EVIL]
     assert parser.stats["parse_errors"] == 0
+
+
+# ========================================================= 실물 증거 대조
+
+
+@pytest.mark.skipif(not REAL_IMAGE.is_file(), reason="evidence/ 없음 (gitignore)")
+def test_the_real_windows_7_file_parses_end_to_end():
+    """실물 Win7 이미지의 RecentFileCache.bcf 를 통째로 읽는다.
+
+    **남은 바이트가 0이라는 것이 이 테스트의 핵심입니다.** 항목을 연쇄해
+    걸었을 때 마지막 항목의 끝이 파일 크기와 정확히 같아야 합니다 — 파일
+    크기는 Windows가 쓴 값이라 우리 해석과 독립이고, 길이 필드의 단위를
+    잘못 잡았다면 첫 항목에서 어긋납니다.
+    """
+    from src.stage04_parse import evidence
+
+    source = evidence.open_source(REAL_IMAGE, volume=REAL_VOLUME)
+    with source.open("recentfilecache") as stream:
+        data = stream.read()
+
+    parser = rfc_parser.RecentFileCacheParser()
+    records = run(parser, data)
+
+    assert records
+    assert parser.stats["parse_errors"] == 0
+    # 못 읽고 남은 구간이 없다. 구조 가정이 맞다는 가장 강한 신호다.
+    assert parser.stats["unreadable_bytes"] == 0
+    assert len({r["ref"] for r in records}) == len(records)
+
+    for record in records:
+        schema.validate(flagging.apply(record, EMPTY), "parsed_record")
+        assert record["path"].endswith(record["name"])
+    # 마지막 항목의 끝이 곧 파일 끝이다.
+    last = records[-1]
+    assert last["record_num"] + 4 + len(last["path"]) * 2 + 2 == len(data)
+
+
+@pytest.mark.skipif(not REAL_IMAGE.is_file(), reason="evidence/ 없음 (gitignore)")
+def test_the_independent_scanner_agrees_with_the_parser():
+    """길이 필드를 **보지 않는 길**로 읽은 목록과 같아야 한다.
+
+    `tools/scan_recentfilecache.py`가 헤더를 뗀 나머지를 통째로 UTF-16LE로
+    디코딩해 널로 쪼갭니다. 두 해석이 서로를 지지하는지 보는 것이지, 둘 다
+    우리가 만든 길이라 공통 오해는 잡지 못합니다.
+    """
+    from tools.scan_recentfilecache import split_strings
+    from src.stage04_parse import evidence
+
+    source = evidence.open_source(REAL_IMAGE, volume=REAL_VOLUME)
+    with source.open("recentfilecache") as stream:
+        data = stream.read()
+
+    parser = rfc_parser.RecentFileCacheParser()
+    assert [r["path"] for r in run(parser, data)] == split_strings(data)
 
 
 # ================================================================== 등록

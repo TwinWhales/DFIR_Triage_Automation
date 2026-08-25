@@ -33,11 +33,15 @@
 적 있는 파일"이라 그 사실 자체는 변별력이 없고, **어느 경로인가**가
 신호입니다 — 03단계의 ``path_prefix``가 그 판단을 이미 끝냅니다.
 
-## 대조하지 않았다
+## 대조
 
-`structs/recentfilecache_record.py` 모듈 docstring을 보십시오. Windows 7
-실물이 없어 **명세만 보고 짰습니다.** 어긋나면 그럴듯한 값을 내는 대신
-거부하도록 짰지만, 그것이 "맞다"의 증명은 아닙니다.
+`evidence/windows7_testimage.001`(Windows 7 Ultimate, 빌드 7601)의 실제
+파일 67항목으로 대조했습니다. `tools/scan_recentfilecache.py`가 **길이
+필드를 보지 않는 길**로 같은 목록을 냅니다. 자세한 것은
+`structs/recentfilecache_record.py` docstring과
+`docs/artifact-notes.md`에 있습니다.
+
+실측한 이미지는 하나뿐이고 외부 도구 대조는 아직 남았습니다.
 """
 
 from __future__ import annotations
