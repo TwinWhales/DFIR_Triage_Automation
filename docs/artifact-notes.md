@@ -940,3 +940,62 @@ SYSTEM\ControlSet001\Control\Session Manager\Memory Management\PrefetchParameter
 
 이름표를 고치지는 않았습니다 — 1809 경계가 틀렸는지 빌드마다 더 잘게
 갈리는지 확인할 이미지가 하나뿐이라, 아는 것보다 많이 적지 않습니다.
+
+
+---
+
+## 2026-08-25 · $SI 서브초 0 정렬의 오탐률 (실측)
+
+`timestamp_truncated` 플래그를 넣기 전에 실물 두 이미지의 `$MFT` 전체를
+훑었습니다. 새 판정을 넣을 때마다 오탐률을 먼저 재는 것은
+`timestamp_mismatch` 에서 세 쌍을 다 보면 59%가 오탐이었던 일 이후의
+규칙입니다.
+
+측정 대상: `$SI` 타임스탬프(btime·ctime·mtime)의 100ns 소수부.
+
+| 이미지 | 레코드 | 하나라도 서브초 0 | 둘 이상 서브초 0 |
+|---|---|---|---|
+| `windows7_testimage.001` (Win7 7601) | 72,795 | **0건 (0.000%)** | **0건** |
+| `0824test.001` (Win10 15063) | 98,151 | **0건 (0.000%)** | **0건** |
+
+**두 이미지 170,946 레코드 어디에도 서브초가 0인 `$SI` 가 없습니다.**
+정상적으로 만들어진 파일의 100ns 자리가 사실상 난수라는 전제가 실물로
+확인됐습니다.
+
+느슨한 조건("하나라도")도 0%이므로 그것을 써도 됐지만 **엄격한 쪽("둘
+이상")을 골랐습니다.** 이유는 이 두 이미지가 특정한 환경일 뿐이기
+때문입니다 — FAT 에서 복사됐거나 네트워크를 거친 파일은 초 단위로 정렬될
+수 있고, 그런 이미지에서 느슨한 조건은 무더기로 걸립니다. 조작 도구는
+값을 한꺼번에 써 넣으므로 있는 것이 다 정렬되고, 엄격한 조건으로도
+잡힙니다.
+
+### 이 측정이 목업 픽스처의 오류를 드러냈다
+
+`benchmark/datasets/C-001-webshell/mock/04_parsed/mft.jsonl` 의 레코드
+12346·12400 은 "정상 파일"을 표현하려고 손으로 쓴 것인데 `$SI` 가
+`.0000000Z` 였습니다. 새 룰이 그것을 조작된 파일로 판정했습니다.
+
+**룰이 아니라 픽스처를 고쳤습니다.** 실물에 그런 파일이 없다는 것이 위
+측정의 결론이므로, 픽스처 쪽이 비현실적이었습니다. `tests/test_mft_structs.py`
+의 `build_record` 기본 시각도 같은 이유로 마이크로초를 갖게 했습니다.
+
+### 재현
+
+```bash
+.venv/Scripts/python.exe -X utf8 - <<'EOF'
+import sys; sys.path.insert(0, '.')
+from src.stage04_parse import evidence
+from src.stage04_parse.parsers.mft import MftParser
+from src.stage04_parse.parsers.base import Scope
+src = evidence.open_source("evidence/windows7_testimage.001", volume=1)
+n = aligned = 0
+for rec in MftParser(volume_letter="C:").parse(src.open("$MFT"), Scope()):
+    n += 1
+    fr = [rec[f].partition(".")[2].rstrip("Z")
+          for f in ("si_btime", "si_ctime", "si_mtime") if isinstance(rec.get(f), str)]
+    fr = [x for x in fr if x]
+    if fr and all(set(x) == {"0"} for x in fr):
+        aligned += 1
+print(f"{aligned}/{n}")
+EOF
+```

@@ -80,7 +80,7 @@ PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01
 | C-001 목업 세트 | 작성 완료 |
 | 02 시나리오 정규화 | 구현 완료 — 알럿 어댑터·스텁·Ollama 전부 실동작 |
 | 03 아티팩트 선별 | 구현 완료 — 매핑 16개 + 카탈로그 11종 (`mapping_table_version` 0.9) |
-| **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx` 5채널(python-evtx 기반), `registry` 3하이브(python-registry 기반), `prefetch`·`recentfilecache`(자체 구현). 증거의 Windows 버전을 판정해 그 버전에 없는 아티팩트를 가려 냅니다 |
+| **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx` 11채널(python-evtx 기반), `registry` 3하이브(python-registry 기반), `prefetch`·`recentfilecache`(자체 구현). 증거의 Windows 버전을 판정해 그 버전에 없는 아티팩트를 가려 냅니다 |
 | 05 sLLM 해석 | 구현 완료 — 아티팩트별 자릿수 배분·스텁·Ollama 전부 실동작 |
 | 06 근거 검증 | 구현 완료 — 체커 3종 + `--checkers` 조합 |
 | 07 결과 보고 | 구현 완료 — Jinja2 템플릿 (LLM 미사용) |
