@@ -1,0 +1,42 @@
+technique: T1219
+name: "Remote Access Software"
+os: windows
+
+# K-001 Stage 4b 대안 — RDP 대신 별도 원격 도구를 쓴 경우.
+#
+# **어떤 도구인지 모르는 상태에서 찾는 것이 이 기법의 성격이다.** 도구
+# 이름으로 좁히면 목록에 없는 도구를 놓친다. 그래서 경로를 좁히지 않고
+# "설치·실행된 것 전부"를 후보로 올린 뒤 판단은 모델에 맡긴다.
+artifacts:
+  - name: prefetch
+    tier: 1
+    priority: 1
+    scope_template: {}
+    rationale: 원격 도구의 실행 횟수와 최근 실행 시각
+
+  - name: registry:Amcache
+    tier: 1
+    priority: 1
+    scope_template:
+      path_prefix:
+        - 'Amcache\Root\InventoryApplicationFile'
+        - 'Amcache\Root\Programs'
+    rationale: 설치·실행된 프로그램의 경로와 SHA1
+
+  - name: recentfilecache
+    tier: 1
+    priority: 1
+    scope_template: {}
+    rationale: 최근 처음 실행된 실행 파일의 경로 (Windows 7)
+
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 2
+    scope_template:
+      event_ids: [1, 3]
+    rationale: 원격 도구의 실행과 외부 통신
+
+  - name: registry:SOFTWARE
+    tier: 2
+    trigger: Tier1에서 원격 도구로 보이는 실행 파일이 확인된 경우
+    rationale: 그 도구가 설치 프로그램으로 등록됐는지

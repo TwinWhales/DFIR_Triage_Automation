@@ -1,0 +1,39 @@
+technique: T1021.001
+name: "Remote Services: Remote Desktop Protocol"
+os: windows
+
+# K-001 Stage 4b — 획득한 관리자 계정으로 원격 세션 생성.
+#
+# 같은 사건이 세 곳에 다르게 남는다. Security 는 "누가 로그온했는가",
+# RemoteConnectionManager 는 "어디서 붙었는가", LocalSessionManager 는
+# "세션이 언제 열리고 닫혔는가"다. 셋을 맞추면 원격 접속의 출처와 지속
+# 시간이 갈린다.
+artifacts:
+  - name: evtx:Security
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [4624, 4625, 4634, 4647, 4778, 4779]
+    rationale: 로그온 타입 10(RemoteInteractive)과 세션 연결·해제
+
+  - name: evtx:RDPConnection
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1149]
+    rationale: 원격 연결 인증 성공과 접속 출처
+
+  - name: evtx:RDPSession
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [21, 22, 23, 24, 25, 39, 40]
+    rationale: 세션 로그온·셸 시작·재연결·연결 해제 시각
+
+  - name: evtx:Sysmon
+    tier: 2
+    trigger: Tier1에서 원격 세션이 확인되어 통신 상대를 가려야 하는 경우
+    rationale: 원격 세션의 목적지 IP·포트
+
+  # NTUSER.DAT 의 Terminal Server Client\Servers(접속 대상 이력)는 카탈로그에
+  # 없다 — docs/limitations.md "SAM·SECURITY·NTUSER를 읽지 않는다".

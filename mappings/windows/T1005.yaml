@@ -1,0 +1,31 @@
+technique: T1005
+name: "Data from Local System"
+os: windows
+
+# K-001 Stage 6 — 합성 거래 데이터 접근.
+#
+# **접근 자체는 흔적이 얇다.** NTFS 는 기본적으로 최근 접근 시각 갱신을
+# 꺼 두므로($MFT si_atime 이 0인 레코드가 실물에서 다수 나온다) "열었다"를
+# 파일시스템만으로 말하기 어렵다. 프로세스 쪽 흔적과 겹쳐야 한다.
+artifacts:
+  - name: $MFT
+    tier: 1
+    priority: 2
+    scope_template:
+      path_prefix: ['{data_root}']
+    rationale: 접근 대상 데이터 파일의 존재와 시각
+
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1, 11]
+    rationale: 데이터를 읽은 프로세스의 실행 시각과 명령행
+
+  - name: $UsnJrnl
+    tier: 2
+    trigger: Tier1에서 데이터 파일의 변경이 의심되는 경우
+    rationale: 데이터 파일의 변경 이력
+
+defaults:
+  data_root: 'C:\ProgramData\POS'

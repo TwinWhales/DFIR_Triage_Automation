@@ -54,6 +54,25 @@ def test_every_prefix_survives_a_round_trip(artifact):
     assert (parsed.record_num, parsed.artifact) == (7, artifact)
 
 
+def test_no_prefix_is_a_prefix_of_another():
+    """접두어끼리 앞부분이 겹치지 않아야 한다.
+
+    겹쳐도 ``REF_PATTERN`` 은 백트래킹으로 풀린다 — 그래서 왕복 테스트는
+    통과한다. 그런데도 막아 두는 이유는, 정규식 말고 다른 방법으로
+    접두어를 가르는 코드(``split("#")`` 후 사전 조회, 문자열 ``startswith``)
+    가 나중에 붙으면 그쪽은 조용히 틀리기 때문이다.
+
+    실제로 걸렸다: ``evtx:Sysmon`` 에 ``EVTX-SYSMON`` 을 주려다
+    ``EVTX-SYS``(evtx:System)의 확장이 되는 것을 보고 ``SYSMON`` 으로
+    바꿨다(2026-08-25).
+    """
+    prefixes = sorted(refs.ARTIFACT_PREFIX.values())
+    overlaps = [
+        (a, b) for a in prefixes for b in prefixes if a != b and b.startswith(a)
+    ]
+    assert overlaps == [], f"접두어가 서로의 앞부분이다: {overlaps}"
+
+
 def test_amcache_ref_round_trips_through_parse_ref():
     # ARTIFACT_PREFIX 만 고치고 REF_PATTERN 을 잊는 실수를
     # make_ref 만으로는 못 잡는다 — parse_ref 까지 왕복시켜야 잡힌다.

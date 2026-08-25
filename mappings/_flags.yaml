@@ -214,9 +214,151 @@ flags:
           match: event_id
           values: [10000, 10001]
 
+  # ── K-001 키오스크 시나리오 (2026-08-25) ───────────────────────────
+  #
+  # 아래 일곱은 새로 연 채널들의 게이트 4를 닫는다. 채널만 등록하고 여기를
+  # 빠뜨리면 03단계가 "봤다"고 적고 04단계가 파싱까지 한 뒤 **모델에만 한
+  # 건도 안 간다** — 보고서에는 그냥 소견이 없는 걸로 보인다.
+
+  shell_spawned:
+    artifacts: [evtx:Sysmon]
+    condition: Sysmon 1(프로세스 생성) 중 셸·시스템 유틸리티가 실행된 것
+    note: |
+      K-001 Stage 3의 결정적 신호다. 주문 UI만 떠 있어야 하는 키오스크에서
+      셸이 뜨는 것 자체가 제한 환경 이탈이고, 부모가 무엇이냐가 그 다음
+      질문이다(fields.ParentImage 는 레코드에 그대로 실려 모델이 본다).
+
+      **EID 1 전체에 붙이지 않는다.** 프로세스 생성은 이 장비에서 가장 흔한
+      이벤트라 전량에 붙이면 필터가 일을 안 한다. 목록은 "정상 키오스크
+      운영에서 뜰 이유가 없는 것"만 담는다.
+
+      앞의 역슬래시는 경로 구분자다. 빼면 evilcmd.exe 가 함께 걸린다.
+
+      목록은 공개 DFIR 자료와 Stage 3 서술(cmd/explorer/taskmgr)에서 골랐고
+      **실제 키오스크 이미지로 대조한 적이 없다** — docs/limitations.md.
+    rule:
+      when:
+        - artifact: evtx:Sysmon
+          match: field_endswith
+          field: fields.Image
+          values:
+            - '\cmd.exe'
+            - '\powershell.exe'
+            - '\pwsh.exe'
+            - '\explorer.exe'
+            - '\taskmgr.exe'
+            - '\mmc.exe'
+            - '\regedit.exe'
+            - '\wscript.exe'
+            - '\cscript.exe'
+            - '\rundll32.exe'
+            - '\control.exe'
+
+  network_connection:
+    artifacts: [evtx:Sysmon]
+    condition: Sysmon 3(네트워크 연결)
+    note: |
+      Stage 4b·7의 근거. 단독으로는 약한 신호이고, 값은 "어느 프로세스가
+      어디로 붙었는가"를 다른 단계의 프로세스와 맞춰 보는 데 있다.
+
+      network_state_changed(NetworkProfile 10000/10001)와 이름을 나눈 것은
+      뜻이 다르기 때문이다. 저쪽은 "네트워크에 붙어 있었는가"이고 이쪽은
+      "이 프로세스가 통신했는가"다.
+    rule:
+      when:
+        - artifact: evtx:Sysmon
+          match: event_id
+          values: [3]
+
+  device_connected:
+    artifacts: [evtx:DriverFrameworks, evtx:KernelPnP]
+    condition: 외부 장치 연결·설치 이벤트
+    note: |
+      Stage 1. 채널 둘이 같은 사실을 다르게 남긴다 — DriverFrameworks 는
+      연결/해제 시각을, Kernel-PnP 는 장치 설치를 남긴다. 어느 쪽이 남을지가
+      장치와 드라이버 상태에 따라 달라서 둘 다 본다.
+
+      **이벤트 ID는 공개 자료 기준 추정치다.** 실제 증거로 대조하지 않았다 —
+      docs/limitations.md "매핑 — 검증되지 않은 채 채운 항목".
+    rule:
+      when:
+        - artifact: evtx:DriverFrameworks
+          match: event_id
+          values: [2003, 2004, 2005, 2006, 2010, 2100, 2101, 2102, 2105, 2106]
+        - artifact: evtx:KernelPnP
+          match: event_id
+          values: [400, 410, 411, 420, 430]
+
+  kiosk_restriction_event:
+    artifacts: [evtx:AssignedAccess, evtx:AssignedAccessAdmin, evtx:AssignedAccessBroker]
+    condition: Assigned Access 채널에 남은 모든 이벤트
+    note: |
+      Stage 3. **event_id 로 좁히지 않는다.** 세 채널 다 로그가 작고, 여기
+      남는 것 자체가 키오스크 구성·세션·이탈 시도와 관련된 사건이다. 좁히려면
+      어느 ID가 무엇인지 알아야 하는데 그것을 실물로 확인하지 못했다.
+
+      전 레코드에 붙는 플래그는 필터 역할을 못 한다는 원칙의 예외다. 근거는
+      "로그가 작다"이고, 그 전제가 깨지면(키오스크가 이 채널을 수만 건 남기면)
+      다시 좁혀야 한다.
+    rule:
+      when:
+        - artifact: evtx:AssignedAccess
+        - artifact: evtx:AssignedAccessAdmin
+        - artifact: evtx:AssignedAccessBroker
+
+  remote_session:
+    artifacts: [evtx:RDPConnection, evtx:RDPSession]
+    condition: 원격 연결 인증(1149)·세션 로그온/셸 시작/재연결(21·22·24·25)
+    note: |
+      Stage 4b. Security 4624 Type 10 과 같은 사건을 다른 각도에서 남긴다 —
+      저쪽은 "누가 로그온했는가"이고 이쪽은 "어느 세션이 언제 열렸는가"다.
+      둘을 맞춰 보면 원격 접속의 출처와 지속 시간이 갈린다.
+    rule:
+      when:
+        - artifact: evtx:RDPConnection
+          match: event_id
+          values: [1149]
+        - artifact: evtx:RDPSession
+          match: event_id
+          values: [21, 22, 23, 24, 25, 39, 40]
+
+  app_crash:
+    artifacts: [evtx:Application]
+    condition: 애플리케이션 오류(1000)·WER 보고(1001)·행(1002)
+    note: |
+      Stage 3 보조. 키오스크 앱이 비정상 종료하면 그 아래 셸이 드러나는
+      경우가 있어, 이탈 시점의 정황 증거가 된다.
+
+      **Application 로그는 크다**(실측 8,257건). event_id 로 좁히지 않으면
+      필터가 일을 안 한다.
+    rule:
+      when:
+        - artifact: evtx:Application
+          match: event_id
+          values: [1000, 1001, 1002]
+
+  timestamp_truncated:
+    artifacts: [$MFT]
+    condition: $SI 타임스탬프의 100ns 자리가 전부 0
+    note: |
+      K-001 Stage 5의 두 번째 탐지 포인트. timestamp_mismatch 가 못 잡는
+      경우를 겨냥한다 — $SI 와 $FN 을 함께 조작하면 방향 비교가 통과하는데,
+      그때도 서브초는 대개 0으로 남는다.
+
+      "존재하는 $SI 시각이 둘 이상이고 그것이 전부 서브초 0"이 조건이다.
+      하나만 보면 우연히 걸리는 것이 반드시 나온다. 근거와 실측 오탐률은
+      flagging.py 의 si_subsecond_zeroed docstring 에 있다.
+    rule:
+      when:
+        - artifact: $MFT
+      handler: si_subsecond_zeroed
+
   outside_time_range:
     artifacts: [$MFT, $UsnJrnl, evtx:Security, evtx:System, evtx:Firewall,
-                evtx:BITS, evtx:NetworkProfile, prefetch]
+                evtx:BITS, evtx:NetworkProfile, evtx:Sysmon, evtx:DriverFrameworks,
+                evtx:KernelPnP, evtx:AssignedAccess, evtx:AssignedAccessAdmin,
+                evtx:AssignedAccessBroker, evtx:RDPConnection, evtx:RDPSession,
+                evtx:Application, prefetch, recentfilecache]
     condition: 선별된 시간 범위 밖
     note: |
       범위 밖이라도 버리지 않고 표시만 한다. 시간 범위 추론이 틀렸을 때

@@ -1,0 +1,27 @@
+technique: T1048
+name: "Exfiltration Over Alternative Protocol"
+os: windows
+
+# K-001 Stage 7 보조 — C2 가 아닌 경로로 나가는 경우.
+#
+# T1041 과 보는 아티팩트가 같다. 나뉘는 것은 **목적지와 프로토콜의 해석**
+# 이고 그것은 모델의 몫이다. 매핑을 합치지 않는 이유는 02단계가 어느
+# 쪽을 내든 선별이 되어야 하기 때문이다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [3, 22]
+    rationale: 송신 프로세스와 목적지·프로토콜
+
+  - name: evtx:Firewall
+    tier: 1
+    priority: 2
+    scope_template: {}
+    rationale: 표준 포트 밖 아웃바운드의 허용·차단 기록
+
+  - name: evtx:BITS
+    tier: 2
+    trigger: Tier1에서 외부 통신이 확인되었으나 송신 프로세스를 특정하지 못한 경우
+    rationale: BITS 를 경유한 백그라운드 전송의 URL 과 완료 시각

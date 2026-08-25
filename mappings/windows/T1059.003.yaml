@@ -1,0 +1,53 @@
+technique: T1059.003
+name: "Command and Scripting Interpreter: Windows Command Shell"
+os: windows
+
+# K-001 Stage 3 — 키오스크 제한환경 이탈.
+#
+# **정직한 매핑 주의(설계서 §2 Stage 3):** "키오스크 이탈" 자체는 ATT&CK
+# 단일 기법에 정확히 대응되지 않는다. 제한 셸 우회 → 셸 획득이라는
+# 관측 가능한 행위로 근사 매핑한 것이며, 그 한계를 여기 적어 둔다.
+#
+# 결정적 근거는 **부모-자식 관계**다. 주문 UI가 cmd/explorer/taskmgr 를
+# 자식으로 만드는 것은 정상 운영에서 나오지 않는다. Sysmon EID 1 의
+# fields.ParentImage 가 그것을 들고 있고, shell_spawned 플래그가 그
+# 레코드를 05단계까지 올린다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: 셸 프로세스의 생성 시각과 부모 프로세스
+
+  - name: evtx:AssignedAccess
+    tier: 1
+    priority: 1
+    scope_template: {}
+    rationale: 키오스크 제한 환경의 동작과 이탈 시도
+
+  - name: evtx:AssignedAccessBroker
+    tier: 1
+    priority: 2
+    scope_template: {}
+    rationale: 키오스크 세션의 생성·종료 시각
+
+  - name: evtx:AssignedAccessAdmin
+    tier: 1
+    priority: 2
+    scope_template: {}
+    rationale: 키오스크 구성 적용 실패·오류
+
+  # 키오스크 앱이 죽으면 그 아래 셸이 드러나는 경우가 있다. 이탈 시점의
+  # 정황이지 그 자체가 이탈의 증거는 아니라 priority 3 이다.
+  - name: evtx:Application
+    tier: 1
+    priority: 3
+    scope_template:
+      event_ids: [1000, 1001, 1002]
+    rationale: 키오스크 앱의 비정상 종료 시각
+
+  - name: prefetch
+    tier: 2
+    trigger: Tier1에서 셸 프로세스 생성이 확인되어 실행 이력을 확인해야 하는 경우
+    rationale: 셸·시스템 유틸리티의 실행 횟수와 최근 실행 시각

@@ -20,6 +20,12 @@ artifacts:
       extensions: [".exe", ".dll", ".lnk", ".inf", ".bat", ".vbs", ".ps1"]
     rationale: 이동식 매체 연결 전후 실행 파일 생성·복사 이력
 
+  - name: evtx:DriverFrameworks
+    tier: 1
+    scope_template:
+      event_ids: [2003, 2004, 2005, 2006, 2010, 2100, 2101, 2102, 2105, 2106]
+    rationale: 이동식 매체의 연결·해제 시각
+
   - name: $MFT
     tier: 2
     trigger: Tier1 $UsnJrnl에서 실행 파일 생성 흔적이 확인된 경우

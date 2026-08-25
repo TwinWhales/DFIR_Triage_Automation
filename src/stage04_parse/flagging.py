@@ -198,11 +198,51 @@ def _match_field_equals(record: dict[str, Any], clause: Clause) -> bool:
     return record[clause.field] == clause.values[0]
 
 
+def _dotted(record: dict[str, Any], field: str) -> Any:
+    """``fields.Image`` 처럼 점 표기로 레코드 안을 찾아 들어간다.
+
+    evtx 레코드의 값은 전부 ``fields`` 안에 있어서, 최상위 키만 보는
+    ``field_equals`` 로는 가리킬 수 없습니다.
+
+    06단계에도 같은 일을 하는 함수가 있습니다(``comparators.get_field``).
+    가져다 쓰지 않는 이유는 **단계 간 import 를 만들지 않기 위해서**입니다 —
+    지금 이 프로젝트에 단계끼리 참조하는 곳이 한 군데도 없고, 저쪽은
+    표기 흡수·예외 처리까지 하는 훨씬 큰 함수라 여기서 필요한 것과
+    다릅니다. 없으면 ``None`` 입니다 — 04단계는 "값이 None 인 필드"와
+    "없는 필드"를 가릴 일이 없습니다.
+    """
+    current: Any = record
+    for part in field.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _match_field_endswith(record: dict[str, Any], clause: Clause) -> bool:
+    """``field`` 의 값이 ``values`` 중 하나로 **끝나는가**. 대소문자 무시.
+
+    실행 파일 경로를 이름으로 가릴 때 씁니다. Sysmon 의 ``fields.Image``는
+    ``C:\\Windows\\System32\\cmd.exe`` 처럼 전체 경로라 정확히 일치시킬 수
+    없고, 경로가 어디든 ``cmd.exe`` 면 같은 프로그램입니다.
+
+    **값에 구분자를 포함시키십시오** — ``\\cmd.exe`` 처럼. ``cmd.exe`` 만
+    쓰면 ``evilcmd.exe`` 가 함께 걸립니다. 그 판단을 매처가 대신하지
+    않는 것은, YAML 만 읽고도 무엇이 걸리는지 보여야 하기 때문입니다.
+    """
+    actual = _dotted(record, str(clause.field))
+    if not isinstance(actual, str):
+        return False
+    lowered = actual.lower()
+    return any(lowered.endswith(str(value).lower()) for value in clause.values)
+
+
 #: ``match:`` 에 쓸 수 있는 이름. YAML 이 목록 밖을 부르면 로드가 실패한다.
 MATCHERS: dict[str, Callable[[dict[str, Any], Clause], bool]] = {
     "event_id": _match_event_id,
     "list_contains": _match_list_contains,
     "field_equals": _match_field_equals,
+    "field_endswith": _match_field_endswith,
 }
 
 #: ``match`` 별 필수 항목. 빠뜨리면 조건이 조용히 헐거워진다.
@@ -210,6 +250,7 @@ _MATCH_REQUIRES: dict[str, tuple[str, ...]] = {
     "event_id": ("values",),
     "list_contains": ("field", "values"),
     "field_equals": ("field", "value"),
+    "field_endswith": ("field", "values"),
 }
 
 
@@ -239,6 +280,59 @@ def _si_earlier_than_fn(record: dict[str, Any], ctx: Context) -> bool:
         if si is not None and fn is not None and si < fn:
             return True
     return False
+
+
+def _si_subsecond_zeroed(record: dict[str, Any], ctx: Context) -> bool:
+    """``$SI`` 타임스탬프의 100ns 자리가 **전부** 0인가.
+
+    NTFS는 FILETIME을 100ns 단위로 기록하므로, 정상적으로 만들어진 파일의
+    서브초 자리는 사실상 난수입니다. 타임스탬프 조작 도구 대부분은 초
+    단위로 시각을 써 넣어 이 자리가 0으로 정렬됩니다.
+
+    ``si_earlier_than_fn``이 못 잡는 경우를 겨냥합니다 — ``$SI``와 ``$FN``을
+    **함께** 조작하면 방향 비교가 통과합니다. 그때도 서브초는 대개 0으로
+    남습니다. 시나리오 설계서(K-001) Stage 5의 탐지 포인트가 두 신호를
+    나란히 적은 이유가 이것입니다.
+
+    ## 왜 "하나라도"가 아니라 "전부"인가
+
+    타임스탬프 하나가 우연히 ``.0000000``일 확률은 1/10^7 이지만, 레코드가
+    수십만 건이면 우연히 걸리는 것이 반드시 나옵니다. 그리고 그 자체로는
+    조작의 증거가 아닙니다.
+
+    반대로 조작 도구는 값을 **한꺼번에** 써 넣으므로 있는 것이 다 정렬됩니다.
+    그래서 "존재하는 ``$SI`` 시각이 둘 이상이고, 그것이 전부 서브초 0"을
+    조건으로 합니다. 실측 오탐률은 ``docs/artifact-notes.md`` 참조.
+
+    값이 없는 필드는 세지 않습니다. FILETIME 0이면 파서가 키를 빼고 내는데
+    (``parsers/mft.py``), 그것을 "서브초가 0"으로 읽으면 접근 시각 갱신을
+    꺼 둔 시스템의 파일이 전부 걸립니다.
+
+    **소수부가 아예 없는 표기도 세지 않습니다.** ``2026-07-24T00:28:07Z``는
+    "서브초가 0"이 아니라 "서브초를 모른다"입니다. 우리 ``$MFT`` 파서는
+    항상 100ns 일곱 자리를 쓰므로(``parsers/mft.py``) 실제 산출물에는 늘
+    소수부가 있고, 없는 것은 다른 데서 온 레코드입니다. 없는 것을 0으로
+    읽으면 그런 레코드가 전부 걸립니다 — 실제로 테스트 픽스처가 그 표기를
+    쓰고 있어 처음 구현에서 오탐이 났습니다.
+    """
+    aligned = 0
+    for field in SI_FIELDS:
+        raw = record.get(field)
+        if not isinstance(raw, str):
+            continue
+        moment = parse_timestamp(raw)
+        if moment is None or moment <= _FILETIME_EPOCH:
+            continue
+        # 문자열의 소수부를 본다. parse_timestamp 가 마이크로초까지만
+        # 들고 있어서 100ns 자리가 파싱에서 사라진다 — 원본 표기를 봐야
+        # ".0000000" 과 ".0000001" 이 구별된다.
+        fraction = raw.partition(".")[2].rstrip("Zz")
+        if not fraction:
+            continue
+        if set(fraction) != {"0"}:
+            return False
+        aligned += 1
+    return aligned >= 2
 
 
 def _has_zero_timestamp(record: dict[str, Any], ctx: Context) -> bool:
@@ -300,6 +394,7 @@ def _outside_selected_time_range(record: dict[str, Any], ctx: Context) -> bool:
 #: ``_flags.yaml`` 만 읽어서는 무슨 조건인지 알 수 없게 됩니다.
 HANDLERS: dict[str, Callable[[dict[str, Any], Context], bool]] = {
     "si_earlier_than_fn": _si_earlier_than_fn,
+    "si_subsecond_zeroed": _si_subsecond_zeroed,
     "has_zero_timestamp": _has_zero_timestamp,
     "target_is_privileged_group": _target_is_privileged_group,
     "outside_selected_time_range": _outside_selected_time_range,

@@ -63,6 +63,15 @@ def test_catalog_loads_every_artifact(catalog):
         "evtx:Firewall",
         "evtx:BITS",
         "evtx:NetworkProfile",
+        "evtx:Sysmon",
+        "evtx:DriverFrameworks",
+        "evtx:KernelPnP",
+        "evtx:AssignedAccess",
+        "evtx:AssignedAccessAdmin",
+        "evtx:AssignedAccessBroker",
+        "evtx:RDPConnection",
+        "evtx:RDPSession",
+        "evtx:Application",
         "prefetch",
         "recentfilecache",
         "$LogFile",
@@ -70,7 +79,7 @@ def test_catalog_loads_every_artifact(catalog):
     # 목록이나 아티팩트의 성질(signal_source)이 바뀌면 이 값도 올린다.
     # 03_selection.json 에 실려 나가므로 산출물만 보고 어느 카탈로그로
     # 돌렸는지 되짚을 수 있어야 한다.
-    assert catalog.mapping_table_version == "1.0"
+    assert catalog.mapping_table_version == "1.1"
 
 
 def test_unsupported_artifacts_carry_a_reason(catalog):
@@ -146,6 +155,15 @@ def test_all_shipped_mappings_load(mappings):
         "T1547.001", "T1091", "T1200",
         "T1547.004", "T1546.008", "T1078.003", "T1112", "T1562.001",
         "T1562.004", "T1197",
+        # K-001 키오스크 시나리오 (2026-08-25). 설계서 §2 의 단계별 매핑.
+        # T1059 와 T1059.003, T1078 과 T1078.003 이 함께 있는 것은 설계서가
+        # 단계마다 다른 쪽을 쓰기 때문이다 — 이 도구는 상하위 관계를 모른다.
+        "T1204.002", "T1059", "T1059.003",
+        "T1078", "T1098", "T1548",
+        "T1021.001", "T1219",
+        "T1074.001", "T1565.001",
+        "T1005", "T1657",
+        "T1041", "T1048",
     }
 
 

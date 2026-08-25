@@ -226,6 +226,87 @@ FILE_LAYOUT: dict[str, ArtifactLocation] = {
             "Microsoft-Windows-NetworkProfile-Operational.evtx",
         ),
     ),
+    "evtx:Sysmon": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-Sysmon%4Operational.evtx",
+            "Microsoft-Windows-Sysmon-Operational.evtx",
+        ),
+    ),
+    "evtx:DriverFrameworks": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-DriverFrameworks-UserMode%4Operational.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-DriverFrameworks-UserMode%4Operational.evtx",
+            "Microsoft-Windows-DriverFrameworks-UserMode-Operational.evtx",
+        ),
+    ),
+    "evtx:KernelPnP": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-Kernel-PnP%4Configuration.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-Kernel-PnP%4Configuration.evtx",
+            "Microsoft-Windows-Kernel-PnP-Configuration.evtx",
+        ),
+    ),
+    "evtx:AssignedAccess": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-AssignedAccess%4Operational.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-AssignedAccess%4Operational.evtx",
+            "Microsoft-Windows-AssignedAccess-Operational.evtx",
+        ),
+    ),
+    "evtx:AssignedAccessAdmin": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-AssignedAccess%4Admin.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-AssignedAccess%4Admin.evtx",
+            "Microsoft-Windows-AssignedAccess-Admin.evtx",
+        ),
+    ),
+    "evtx:AssignedAccessBroker": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-AssignedAccessBroker%4Operational.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-AssignedAccessBroker%4Operational.evtx",
+            "Microsoft-Windows-AssignedAccessBroker-Operational.evtx",
+        ),
+    ),
+    "evtx:RDPConnection": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-TerminalServices-RemoteConnectionManager%4Operational.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-TerminalServices-RemoteConnectionManager%4Operational.evtx",
+            "Microsoft-Windows-TerminalServices-RemoteConnectionManager-Operational.evtx",
+        ),
+    ),
+    "evtx:RDPSession": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-TerminalServices-LocalSessionManager%4Operational.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-TerminalServices-LocalSessionManager%4Operational.evtx",
+            "Microsoft-Windows-TerminalServices-LocalSessionManager-Operational.evtx",
+        ),
+    ),
+    "evtx:Application": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Application.evtx",
+        ),
+        filenames=(
+            "Application.evtx",
+            "Application.evtx",
+        ),
+    ),
     "registry:SYSTEM": ArtifactLocation(
         relative_paths=("Windows/System32/config/SYSTEM",),
         filenames=("SYSTEM", "SYSTEM.hiv"),

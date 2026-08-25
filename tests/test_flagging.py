@@ -60,6 +60,33 @@ def _evtx(event_id, **fields):
     }
 
 
+def _sysmon(event_id, **fields):
+    return {
+        "ref": f"SYSMON#{event_id}",
+        "artifact": "evtx:Sysmon",
+        "record_num": event_id,
+        "offset": "0x3000",
+        "event_id": event_id,
+        "timestamp": "2026-08-25T09:12:00Z",
+        "channel": "Microsoft-Windows-Sysmon/Operational",
+        "computer": "KIOSK01",
+        "fields": fields,
+    }
+
+
+def _channel(artifact, ref_prefix, event_id, **fields):
+    return {
+        "ref": f"{ref_prefix}#{event_id}",
+        "artifact": artifact,
+        "record_num": event_id,
+        "offset": "0x4000",
+        "event_id": event_id,
+        "timestamp": "2026-08-25T09:12:00Z",
+        "channel": artifact,
+        "computer": "KIOSK01",
+        "fields": fields,
+    }
+
 # ==================================================== 목업 재현 (기준선)
 
 
@@ -215,6 +242,150 @@ def test_privileged_groups_come_from_the_mapping_file():
     loaded = flagging.privileged_groups()
     assert {name.lower() for name in declared} == set(loaded)
 
+
+
+# ============================================ K-001 키오스크 채널의 flags
+#
+# 채널만 등록하고 여기를 빠뜨리면 게이트 4에서 조용히 막힌다 — 03단계는
+# "봤다"고 적고 04단계는 파싱까지 하는데 모델에만 한 건도 안 간다.
+# 그래서 "붙는가"와 "안 붙어야 할 때 안 붙는가"를 같은 비중으로 본다.
+
+
+def test_a_shell_started_from_the_order_ui_is_flagged():
+    """K-001 Stage 3의 결정적 신호. 주문 UI가 셸을 자식으로 만든다."""
+    record = _sysmon(1, Image=r"C:\Windows\System32\cmd.exe",
+                     ParentImage=r"C:\kiosk\order.exe")
+    assert "shell_spawned" in flagging.apply(record)["flags"]
+
+
+def test_an_ordinary_process_creation_is_not_flagged():
+    """**EID 1 전체에 붙으면 필터가 일을 안 한다.**
+
+    프로세스 생성은 이 장비에서 가장 흔한 이벤트다. 주문 UI 자신이
+    실행되는 것까지 후보로 올리면 05단계 쿼터를 혼자 태운다.
+    """
+    record = _sysmon(1, Image=r"C:\kiosk\order.exe", ParentImage=r"C:\Windows\explorer.exe")
+    assert flagging.apply(record)["flags"] == []
+
+
+def test_the_shell_list_matches_on_the_path_separator():
+    """구분자 없이 이름만 비교하면 이름이 겹치는 프로그램이 함께 걸린다."""
+    assert "shell_spawned" not in flagging.apply(
+        _sysmon(1, Image=r"C:\tools\evilcmd.exe"))["flags"]
+    assert "shell_spawned" in flagging.apply(
+        _sysmon(1, Image=r"D:\portable\CMD.EXE"))["flags"]
+
+
+def test_a_sysmon_network_connection_is_flagged():
+    assert "network_connection" in flagging.apply(_sysmon(3))["flags"]
+
+
+@pytest.mark.parametrize(
+    ("artifact", "prefix", "event_id"),
+    [
+        ("evtx:DriverFrameworks", "EVTX-DRV", 2003),
+        ("evtx:KernelPnP", "EVTX-PNP", 410),
+    ],
+)
+def test_device_events_share_one_flag(artifact, prefix, event_id):
+    # 채널 둘이 같은 사실을 다르게 남긴다. 어휘를 나누면 05단계가
+    # 한쪽을 놓친다.
+    record = _channel(artifact, prefix, event_id)
+    assert "device_connected" in flagging.apply(record)["flags"]
+
+
+@pytest.mark.parametrize(
+    ("artifact", "prefix"),
+    [
+        ("evtx:AssignedAccess", "EVTX-AAOP"),
+        ("evtx:AssignedAccessAdmin", "EVTX-AAADM"),
+        ("evtx:AssignedAccessBroker", "EVTX-AABRK"),
+    ],
+)
+def test_every_assigned_access_record_is_flagged(artifact, prefix):
+    """세 채널은 event_id 로 좁히지 않는다.
+
+    로그가 작고, 여기 남는 것 자체가 키오스크 구성·이탈과 관련된
+    사건이다. 전 레코드에 붙는 플래그는 필터 역할을 못 한다는 원칙의
+    의도적 예외이며, 근거는 _flags.yaml 의 note 에 있다.
+    """
+    assert "kiosk_restriction_event" in flagging.apply(_channel(artifact, prefix, 4005))["flags"]
+
+
+@pytest.mark.parametrize(
+    ("artifact", "prefix", "event_id"),
+    [("evtx:RDPConnection", "EVTX-RDPCM", 1149), ("evtx:RDPSession", "EVTX-RDPLSM", 21)],
+)
+def test_remote_session_events_share_one_flag(artifact, prefix, event_id):
+    assert "remote_session" in flagging.apply(_channel(artifact, prefix, event_id))["flags"]
+
+
+def test_an_application_error_is_flagged_but_an_info_event_is_not():
+    """Application 로그는 크다(실측 8,257건). 좁히지 않으면 필터가 죽는다."""
+    assert "app_crash" in flagging.apply(_channel("evtx:Application", "EVTX-APP", 1000))["flags"]
+    assert flagging.apply(_channel("evtx:Application", "EVTX-APP", 4))["flags"] == []
+
+
+# ================================================== timestamp_truncated
+
+
+def test_second_aligned_si_timestamps_are_flagged():
+    """K-001 Stage 5의 두 번째 탐지 포인트.
+
+    조작 도구가 초 단위로 값을 써 넣으면 100ns 자리가 0으로 정렬된다.
+    """
+    record = _mft(
+        si_btime="2026-08-25T09:16:00.0000000Z",
+        si_ctime="2026-08-25T09:16:00.0000000Z",
+        si_mtime="2026-08-25T09:16:00.0000000Z",
+        fn_btime="2026-08-25T09:16:00.0000000Z",
+        fn_ctime="2026-08-25T09:16:00.0000000Z",
+        fn_mtime="2026-08-25T09:16:00.0000000Z",
+    )
+    assert "timestamp_truncated" in flagging.apply(record)["flags"]
+
+
+def test_a_normal_file_with_random_subseconds_is_not_flagged():
+    """실물 170,946 레코드(Win7·Win10)에서 오탐 0건이었던 조건이다."""
+    record = _mft(
+        si_btime="2026-08-25T09:16:00.1234567Z",
+        si_ctime="2026-08-25T09:16:00.7654321Z",
+        si_mtime="2026-08-25T09:16:00.9999999Z",
+    )
+    assert "timestamp_truncated" not in flagging.apply(record)["flags"]
+
+
+def test_one_aligned_timestamp_is_not_enough():
+    """하나만 보면 우연히 걸리는 것이 반드시 나온다.
+
+    타임스탬프 하나가 우연히 .0000000 일 확률은 1/10^7 이지만 레코드가
+    수십만 건이면 나온다. 조작 도구는 값을 한꺼번에 써 넣으므로 있는
+    것이 다 정렬된다.
+    """
+    record = _mft(
+        si_btime="2026-08-25T09:16:00.0000000Z",
+        si_ctime="2026-08-25T09:16:00.4242424Z",
+        si_mtime="2026-08-25T09:16:00.8888888Z",
+    )
+    assert "timestamp_truncated" not in flagging.apply(record)["flags"]
+
+
+def test_a_timestamp_without_a_fraction_is_unknown_not_zero():
+    """소수부가 없는 표기는 "서브초가 0"이 아니라 "모른다"다.
+
+    우리 $MFT 파서는 항상 100ns 일곱 자리를 쓴다. 없는 것을 0으로 읽으면
+    다른 데서 온 레코드가 전부 걸린다 — 이 파일의 _mft() 헬퍼가 그
+    표기를 쓰고 있어 처음 구현에서 실제로 오탐이 났다.
+    """
+    assert "timestamp_truncated" not in flagging.apply(_mft())["flags"]
+
+
+def test_a_missing_si_field_does_not_count_as_aligned():
+    # FILETIME 0 이면 파서가 키를 빼고 낸다. 그것을 "정렬됨"으로 읽으면
+    # 접근 시각 갱신을 꺼 둔 시스템의 파일이 전부 걸린다.
+    record = _mft(si_btime="2026-08-25T09:16:00.0000000Z")
+    del record["si_ctime"], record["si_mtime"]
+    assert "timestamp_truncated" not in flagging.apply(record)["flags"]
 
 # ================================================== outside_time_range
 

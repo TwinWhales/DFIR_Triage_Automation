@@ -108,6 +108,15 @@ CHANNEL_FALLBACK = {
     "evtx:Firewall": "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
     "evtx:BITS": "Microsoft-Windows-Bits-Client/Operational",
     "evtx:NetworkProfile": "Microsoft-Windows-NetworkProfile/Operational",
+    "evtx:Sysmon": "Microsoft-Windows-Sysmon/Operational",
+    "evtx:DriverFrameworks": "Microsoft-Windows-DriverFrameworks-UserMode/Operational",
+    "evtx:KernelPnP": "Microsoft-Windows-Kernel-PnP/Configuration",
+    "evtx:AssignedAccess": "Microsoft-Windows-AssignedAccess/Operational",
+    "evtx:AssignedAccessAdmin": "Microsoft-Windows-AssignedAccess/Admin",
+    "evtx:AssignedAccessBroker": "Microsoft-Windows-AssignedAccessBroker/Operational",
+    "evtx:RDPConnection": "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational",
+    "evtx:RDPSession": "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
+    "evtx:Application": "Application",
 }
 
 #: 청크 하나의 크기. python-evtx가 같은 값을 쓰고 있으며, 여기서는

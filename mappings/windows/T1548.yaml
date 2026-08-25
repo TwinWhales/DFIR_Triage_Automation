@@ -1,0 +1,22 @@
+technique: T1548
+name: "Abuse Elevation Control Mechanism"
+os: windows
+
+# K-001 Stage 4 — 권한 상승.
+#
+# **이 매핑은 얇다.** UAC 우회의 대표 흔적(레지스트리 하이재킹 키, fodhelper·
+# eventvwr 등)은 T1546.008·T1112 가 이미 각자 다루고 있고, 여기서 겹쳐 적으면
+# 같은 아티팩트를 두 기법이 다른 경로로 요청하게 된다. 여기서는 "권한이
+# 실제로 올라갔는가"의 관측 가능한 흔적만 본다.
+artifacts:
+  - name: evtx:Security
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [4672, 4673, 4674]
+    rationale: 특수권한 부여와 특권 서비스 호출
+
+  - name: evtx:Sysmon
+    tier: 2
+    trigger: Tier1에서 특수권한 부여가 확인되어 어느 프로세스가 받았는지 가려야 하는 경우
+    rationale: 권한 상승 시점 전후의 프로세스 생성과 무결성 수준
