@@ -21,7 +21,7 @@
 ## 자주 쓰는 명령
 
 ```bash
-# 테스트 — 기준선 529개 전부 통과
+# 테스트 — 기준선 766개 전부 통과
 .venv/Scripts/python.exe -m pytest -q
 
 # 관통 실행 (LLM 스텁, 세 번째 인자가 replay 디렉터리)
