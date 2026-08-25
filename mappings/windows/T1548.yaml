@@ -9,12 +9,16 @@ os: windows
 # 같은 아티팩트를 두 기법이 다른 경로로 요청하게 된다. 여기서는 "권한이
 # 실제로 올라갔는가"의 관측 가능한 흔적만 본다.
 artifacts:
+  # 4673·4674(특권 서비스 호출)는 뺐다. 감사를 켜면 정상 동작에서도
+  # 초당 수십 건이 나와 05단계 쿼터를 혼자 태우고, 그러면 필터가 일을
+  # 안 한다. 4672(새 로그온에 특수권한 부여)가 같은 사실의 요약이고
+  # logon_success 가 그것을 받는다.
   - name: evtx:Security
     tier: 1
     priority: 1
     scope_template:
-      event_ids: [4672, 4673, 4674]
-    rationale: 특수권한 부여와 특권 서비스 호출
+      event_ids: [4672]
+    rationale: 새 로그온에 부여된 특수권한
 
   - name: evtx:Sysmon
     tier: 2

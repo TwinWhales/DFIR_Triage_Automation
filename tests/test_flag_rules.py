@@ -235,3 +235,122 @@ def test_the_sync_tool_reports_no_drift():
         cwd=REPO_ROOT,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# ============================== 매핑이 요청한 event_id 를 flags 가 받는가
+#
+# **게이트 4가 조용히 실패하는 자리다**(`.claude/skills/add-scenario`).
+# 매핑에 event_id 를 적어도 그것을 받는 flag 가 없으면, 03단계는 "봤다"고
+# 적고 04단계는 파싱까지 하는데 모델에는 한 건도 가지 않는다. errors.jsonl
+# 에도 안 남는다 — 보고서에는 그냥 소견이 없는 걸로 보인다.
+#
+# 2026-08-25 에 실제로 밟았다. K-001 매핑을 쓰면서 Sysmon 11·22 와 Security
+# 4634·4722·4738 등을 적었는데 받을 flag 가 없었고, 같은 검사로 T1053.005
+# (예약 작업)과 T1200(PnP)이 **예전부터** 같은 상태였다는 것도 드러났다.
+
+#: flag 이름이면서 "볼 만하다"의 신호가 아닌 것.
+#:
+#: ``outside_time_range`` 는 ``artifact: "*"`` 로 모든 레코드에 걸리므로
+#: 커버리지 계산에 넣으면 전부 통과해 버린다. 표식이지 신호가 아니다.
+_NOT_A_SIGNAL = {"outside_time_range"}
+
+#: event_id 가 아니라 **필드 조건**으로 받는 (아티팩트, event_id).
+#:
+#: 이 조합은 룰에 event_id 가 안 적혀 있어 자동으로는 커버리지가 안 보인다.
+#: 자동 판정 대신 여기 손으로 적어, 새로 추가할 때마다 사람이 한 번
+#: 생각하게 한다. **"그냥 통과시키려고" 적지 말 것** — 그러면 이 검사가
+#: 없는 것과 같아진다.
+_COVERED_BY_FIELD_CONDITION = {
+    # shell_spawned: Sysmon 1 중 fields.Image 가 셸·시스템 유틸리티인 것만.
+    # EID 1 전체에 붙이면 필터가 일을 안 하므로 일부러 좁힌 것이다.
+    ("evtx:Sysmon", 1),
+}
+
+#: 받을 flag 가 없다고 **알고서** 남겨 둔 것. 사유가 없으면 적지 않는다.
+_KNOWN_GAPS = {
+    # 7036(서비스 상태 변경)은 정상 부팅에서만 수백 건이 나온다. flag 를
+    # 만들면 필터가 죽고, 안 만들면 이 요청이 모델에 닿지 않는다. 어느
+    # 쪽이 나은지는 실제 키오스크 로그의 분포를 봐야 정해진다.
+    # 7034(비정상 종료)는 드물지만 7036 과 같은 채널·같은 판단이라 함께 둔다.
+    ("evtx:System", 7034),
+    ("evtx:System", 7036),
+}
+
+
+def _flag_coverage():
+    """``(아티팩트 패턴, event_id)`` 로 본 flags 커버리지."""
+    vocab = yaml.safe_load((MAPPINGS / "_flags.yaml").read_text(encoding="utf-8"))["flags"]
+    by_event: dict[str, set[int]] = {}
+    whole: set[str] = set()
+    for name, spec in vocab.items():
+        if name in _NOT_A_SIGNAL:
+            continue
+        for clause in (spec.get("rule") or {}).get("when", []):
+            pattern = clause["artifact"]
+            if clause.get("match") == "event_id":
+                by_event.setdefault(pattern, set()).update(clause["values"])
+            elif clause.get("match") is None:
+                whole.add(pattern)
+    return by_event, whole
+
+
+def _pattern_matches(artifact: str, pattern: str) -> bool:
+    if pattern == "*":
+        return True
+    if pattern.endswith("*"):
+        return artifact.startswith(pattern[:-1])
+    return artifact == pattern
+
+
+def test_every_mapped_event_id_has_a_flag_that_receives_it():
+    from src.stage03_select.mapping_loader import load_catalog, load_mapping
+
+    catalog = load_catalog(MAPPINGS)
+    by_event, whole = _flag_coverage()
+
+    uncovered = []
+    for path in sorted((MAPPINGS / "windows").glob("*.yaml")):
+        mapping = load_mapping(path, catalog)
+        for request in mapping.requests:
+            artifact = request.artifact
+            spec = catalog.artifacts.get(artifact)
+            # signal_source: scope 인 아티팩트는 flag 가 없는 것이 정상이다.
+            if spec is None or spec.signal_source != "flags":
+                continue
+            for raw in (request.scope_template or {}).get("event_ids", []):
+                event_id = int(raw)
+                pair = (artifact, event_id)
+                if pair in _COVERED_BY_FIELD_CONDITION or pair in _KNOWN_GAPS:
+                    continue
+                if any(_pattern_matches(artifact, p) for p in whole):
+                    continue
+                if any(
+                    _pattern_matches(artifact, p) and event_id in ids
+                    for p, ids in by_event.items()
+                ):
+                    continue
+                uncovered.append(f"{mapping.technique} → {artifact} EID {event_id}")
+
+    assert uncovered == [], (
+        "매핑이 요청하는데 받을 flag 가 없다. 이 레코드들은 04단계까지 가고 "
+        "05단계에 한 건도 도달하지 않는다:\n  " + "\n  ".join(sorted(set(uncovered)))
+    )
+
+
+def test_the_known_gap_list_does_not_rot():
+    """``_KNOWN_GAPS`` 에 적힌 조합이 실제로 매핑에 남아 있는가.
+
+    매핑에서 그 event_id 를 빼면 예외도 함께 빼야 한다. 안 그러면 목록이
+    "예전에 문제였던 것"의 무덤이 되고, 다음 사람이 이 검사를 믿지 못한다.
+    """
+    from src.stage03_select.mapping_loader import load_catalog, load_mapping
+
+    catalog = load_catalog(MAPPINGS)
+    requested = set()
+    for path in sorted((MAPPINGS / "windows").glob("*.yaml")):
+        for request in load_mapping(path, catalog).requests:
+            for raw in (request.scope_template or {}).get("event_ids", []):
+                requested.add((request.artifact, int(raw)))
+
+    stale = sorted((_KNOWN_GAPS | _COVERED_BY_FIELD_CONDITION) - requested)
+    assert stale == [], f"매핑에 없는 조합이 예외 목록에 남아 있다: {stale}"

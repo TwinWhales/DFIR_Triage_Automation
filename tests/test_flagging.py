@@ -21,6 +21,7 @@ from src.stage04_parse.parsers.base import Scope
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
+MAPPINGS_DIR = REPO_ROOT / "mappings"
 PARSED = MOCK / "04_parsed"
 
 
@@ -201,10 +202,33 @@ def test_group_name_matching_ignores_case():
     assert "privileged_group_add" in flagging.apply(record)["flags"]
 
 
+def _an_event_id_no_rule_mentions() -> int:
+    """어느 룰에도 안 적힌 event_id 를 **골라서** 돌려준다.
+
+    예전에는 여기에 숫자를 박아 뒀는데 두 번 깨졌다. 4624 를 쓰다
+    ``logon_success`` 가 생기면서, 4634 를 쓰다 ``session_state_changed``
+    가 생기면서(2026-08-25). 어휘가 늘 때마다 "관계없는 이벤트"의 후보가
+    줄어드는 것은 정상이므로, 박아 두지 말고 그때그때 고른다.
+    """
+    vocab = yaml.safe_load((MAPPINGS_DIR / "_flags.yaml").read_text(encoding="utf-8"))["flags"]
+    used = {
+        value
+        for spec in vocab.values()
+        for clause in (spec.get("rule") or {}).get("when", [])
+        if clause.get("match") == "event_id"
+        for value in clause["values"]
+    }
+    return next(candidate for candidate in range(1, 100000) if candidate not in used)
+
+
 def test_unrelated_event_gets_no_flag():
-    # 4634(로그오프)는 어느 룰에도 걸리지 않는다. 4624 를 쓰면 안 된다 —
-    # logon_success 가 생기면서 "관계없는 이벤트"가 아니게 됐다.
-    assert flagging.apply(_evtx(4634, TargetUserName="Administrators"))["flags"] == []
+    """어느 룰도 언급하지 않는 이벤트에는 아무것도 안 붙는다.
+
+    플래그가 필터인 이상, "안 붙어야 할 때 안 붙는가"가 "붙어야 할 때
+    붙는가"만큼 중요하다.
+    """
+    event_id = _an_event_id_no_rule_mentions()
+    assert flagging.apply(_evtx(event_id, TargetUserName="Administrators"))["flags"] == []
 
 
 def test_service_install_event_is_flagged():

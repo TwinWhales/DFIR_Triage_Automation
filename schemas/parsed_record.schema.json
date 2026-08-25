@@ -52,6 +52,9 @@
           "remote_session",
           "app_crash",
           "timestamp_truncated",
+          "account_modified",
+          "session_state_changed",
+          "scheduled_task_changed",
           "outside_time_range"
         ]
       }

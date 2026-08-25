@@ -73,8 +73,8 @@ flags:
       handler: has_zero_timestamp
 
   file_created:
-    artifacts: [$UsnJrnl]
-    condition: USN 사유에 file_create
+    artifacts: [$UsnJrnl, evtx:Sysmon]
+    condition: USN 사유에 file_create, 또는 Sysmon 11(FileCreate)
     note: |
       웹셸 설치(T1505.003)처럼 "없던 파일이 생겼다"가 핵심인 기법에서
       $MFT보다 강한 증거다. $MFT는 생성 시각만 남고 조작될 수 있는데,
@@ -88,6 +88,12 @@ flags:
           match: list_contains
           field: reason
           values: [file_create]
+        # Sysmon 11(FileCreate)도 같은 사실이다. 새 이름을 만들지 않는
+        # 이유는 05단계가 어휘로 레코드를 고르기 때문이다 — 이름이
+        # 갈라지면 같은 사실을 두 번 찾아야 한다.
+        - artifact: evtx:Sysmon
+          match: event_id
+          values: [11]
 
   account_created:
     artifacts: [evtx:Security]
@@ -200,7 +206,7 @@ flags:
       when:
         - artifact: evtx:BITS
           match: event_id
-          values: [3, 59, 60, 61]
+          values: [3, 4, 59, 60, 61]
 
   network_state_changed:
     artifacts: [evtx:NetworkProfile]
@@ -256,7 +262,7 @@ flags:
 
   network_connection:
     artifacts: [evtx:Sysmon]
-    condition: Sysmon 3(네트워크 연결)
+    condition: Sysmon 3(네트워크 연결)·22(DNS 질의)
     note: |
       Stage 4b·7의 근거. 단독으로는 약한 신호이고, 값은 "어느 프로세스가
       어디로 붙었는가"를 다른 단계의 프로세스와 맞춰 보는 데 있다.
@@ -268,10 +274,10 @@ flags:
       when:
         - artifact: evtx:Sysmon
           match: event_id
-          values: [3]
+          values: [3, 22]
 
   device_connected:
-    artifacts: [evtx:DriverFrameworks, evtx:KernelPnP]
+    artifacts: [evtx:DriverFrameworks, evtx:KernelPnP, evtx:System]
     condition: 외부 장치 연결·설치 이벤트
     note: |
       Stage 1. 채널 둘이 같은 사실을 다르게 남긴다 — DriverFrameworks 는
@@ -288,6 +294,12 @@ flags:
         - artifact: evtx:KernelPnP
           match: event_id
           values: [400, 410, 411, 420, 430]
+        # T1200 이 예전부터 요청하던 자리인데 받을 플래그가 없었다.
+        # **artifact 를 evtx:* 로 쓰면 안 된다** — 10000 을 NetworkProfile 이
+        # "네트워크 연결"로 쓰기 때문이다(EventID 는 제공자 안에서만 유일).
+        - artifact: evtx:System
+          match: event_id
+          values: [20001, 10000]
 
   kiosk_restriction_event:
     artifacts: [evtx:AssignedAccess, evtx:AssignedAccessAdmin, evtx:AssignedAccessBroker]
@@ -352,6 +364,60 @@ flags:
       when:
         - artifact: $MFT
       handler: si_subsecond_zeroed
+
+  account_modified:
+    artifacts: [evtx:Security]
+    condition: 계정·그룹 객체의 속성 변경(4722·4723·4724·4725·4726·4738·4735·4737)
+    note: |
+      account_created(4720)의 짝이다. 계정을 새로 만들지 않고 **이미 있는
+      계정을 되살리거나 비밀번호를 초기화해** 쓰는 경로가 있고, 그때는
+      4720 이 남지 않는다.
+
+      그룹 객체 변경(4735·4737)도 여기 든다. 새 이름을 만들 만큼 다른
+      사실이 아니고, 권한 상승의 결정적 근거인 "그룹에 누구를 넣었나"는
+      privileged_group_add 가 따로 받는다.
+
+      **비밀번호 초기화(4724)와 변경(4723)은 다르다.** 4723 은 본인이
+      바꾼 것이고 4724 는 남이 초기화한 것이라 후자가 더 강한 신호인데,
+      둘을 가르는 것은 필드를 읽는 05단계의 몫이다.
+    rule:
+      when:
+        - artifact: evtx:Security
+          match: event_id
+          values: [4722, 4723, 4724, 4725, 4726, 4735, 4737, 4738]
+
+  session_state_changed:
+    artifacts: [evtx:Security]
+    condition: 로그오프(4634·4647)와 세션 연결 해제·재연결(4778·4779)
+    note: |
+      logon_success 의 짝이다. 단독으로는 약하고, 쓰임은 **세션이 언제
+      끝났는가**를 대는 데 있다 — 침해 행위가 어느 세션 안에서 일어났는지
+      가르려면 시작과 끝이 다 있어야 한다.
+
+      network_state_changed 와 이름을 맞췄다. 저쪽이 "네트워크가 붙어
+      있었는가"이고 이쪽은 "세션이 살아 있었는가"다.
+    rule:
+      when:
+        - artifact: evtx:Security
+          match: event_id
+          values: [4634, 4647, 4778, 4779]
+
+  scheduled_task_changed:
+    artifacts: [evtx:Security]
+    condition: 예약 작업 생성(4698)·삭제(4699)·수정(4702)
+    note: |
+      **T1053.005 매핑이 예전부터 요청하던 자리인데 받을 플래그가
+      없었다**(2026-08-25 발견). 선별은 정확히 골라 왔고 04단계가 파싱까지
+      했는데 모델에는 한 건도 가지 않았다 — 게이트 4가 조용히 실패하는
+      전형이다.
+
+      예약 작업 감사는 기본으로 켜져 있지 않다. 안 켜진 시스템에서는
+      이 채널이 비고, 그것은 "없었다"가 아니라 "안 남았다"이다.
+    rule:
+      when:
+        - artifact: evtx:Security
+          match: event_id
+          values: [4698, 4699, 4700, 4701, 4702]
 
   outside_time_range:
     artifacts: [$MFT, $UsnJrnl, evtx:Security, evtx:System, evtx:Firewall,

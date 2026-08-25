@@ -685,3 +685,18 @@ def test_every_catalogued_artifact_has_a_layout():
         else:
             assert location.relative_paths, name
             assert location.filenames, name
+
+
+def test_no_artifact_lists_the_same_filename_twice():
+    """``filenames`` 는 수집 도구마다 다른 이름의 **후보 목록**이다.
+
+    같은 값이 두 번 있으면 같은 자리를 두 번 뒤진다. 동작에는 영향이
+    없지만, 목록을 손으로 늘리다 실수했다는 신호다 — 실제로
+    ``evtx:Application`` 을 넣을 때 ``%4`` 치환이 아무것도 안 바꿔
+    같은 이름이 둘 들어갔다(2026-08-25).
+    """
+    from src.stage04_parse.evidence import FILE_LAYOUT
+
+    for artifact, location in FILE_LAYOUT.items():
+        assert len(location.filenames) == len(set(location.filenames)), artifact
+        assert len(location.relative_paths) == len(set(location.relative_paths)), artifact
