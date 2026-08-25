@@ -3,7 +3,9 @@
 ## 개요
 
 - 대상 호스트: {{ hosts | join(', ') if hosts else '미상' }}
-- 대상 OS: {{ target_os }}
+{# 블록 태그({% if %})를 쓰지 않는 것은 trim_blocks 가 뒤의 줄바꿈을 먹기
+   때문이다. 줄 끝에서 조건을 걸어야 하는 자리에서는 식으로 쓴다. #}
+- 대상 OS: {{ target_os }}{{ " (증거에서 판정: " ~ windows ~ ")" if windows else "" }}
 - 분석 기간: {{ period_start }} ~ {{ period_end }}
 - 식별 기법: {{ techniques | join(', ') if techniques else '없음' }}
 - 검증 결과: 통과 {{ stats.passed }} / 기각 {{ stats.rejected }} / 미검증 {{ stats.unverifiable }}

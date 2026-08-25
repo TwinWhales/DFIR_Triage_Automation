@@ -796,3 +796,147 @@ BITS     : 59=30  3=18  61=16  60=14  4=14  209=8
 `qmgr.jfm`)이 **그 창 안에서 수정**됐습니다. 큐는 만져졌는데 전송 작업
 이벤트는 남지 않았다는 뜻이고, BITS 서비스의 정기 정리일 수 있습니다 —
 **단정하지 않고 관측만 적습니다.**
+
+
+---
+
+## 2026-08-25 · Windows 버전 판정과 버전별 아티팩트
+
+### SOFTWARE 하이브에서 빌드를 읽었다 (실측)
+
+`evidence/0824test.001` 볼륨 1의 `Windows/System32/config/SOFTWARE`,
+`Microsoft\Windows NT\CurrentVersion`:
+
+```
+ProductName        Windows 10 Pro
+CurrentVersion     6.3
+CurrentBuildNumber 15063
+ReleaseId          1703
+UBR                0
+InstallationType   Client
+EditionID          Professional
+```
+
+**`CurrentVersion`이 6.3인 것이 요점입니다.** Win8.1 이후로 이 값이 굳어
+Win10과 Win8.1을 가르지 못합니다. 빌드 번호만 믿는 근거가 이 실측입니다.
+
+### 대조 상대가 없다
+
+버전 판정에는 외부 도구 대조가 필요 없습니다 — 읽는 값이 레지스트리
+문자열 그대로이고, 해석이 들어가는 자리는 "빌드 → 구조 세대" 표뿐입니다.
+그 표는 공개된 빌드 번호 대응이고 `tests/test_osinfo.py`가 경계값을
+고정합니다.
+
+굳이 대조한다면 같은 이미지를 마운트해 `winver`를 띄우는 것인데, 그것도
+같은 레지스트리 값을 읽습니다.
+
+### RecentFileCache.bcf — 실물 대조 (같은 날 저녁, Win7 이미지 도착)
+
+`evidence/windows7_testimage.001`(100GB, FTK Imager, VMware 가상 디스크)
+볼륨 1 = `Windows 7 Ultimate`, 빌드 7601.
+
+```
+ProductName        Windows 7 Ultimate
+CurrentVersion     6.1
+CurrentBuildNumber 7601
+EditionID          Ultimate
+InstallationType   Client
+```
+
+`UBR`·`ReleaseId`·`DisplayVersion`이 **없습니다**(Win10 이후 값). 빌드
+번호만 필수로 두고 나머지를 선택으로 둔 판단이 여기서 확인됐습니다.
+
+#### 헤더는 가정한 대로였다
+
+`Windows/AppCompat/Programs/RecentFileCache.bcf`, 6,742바이트.
+
+```
+0000  fe ff ee ff 11 22 00 00 03 00 00 00 01 00 00 00
+0010  d1 a0 78 01 27 00 00 00 63 00 3a 00 5c 00 77 00   ....'...c.:.\.w.
+0020  69 00 6e 00 64 00 6f 00 77 00 73 00 5c 00 73 00   i.n.d.o.w.s.\.s.
+```
+
+- `0x00` 시그니처 `FE FF EE FF` — **가정대로**
+- `0x14` 첫 항목의 길이 필드 `0x27` = 39, 이어서 UTF-16LE
+  `c:\windows\system32\...` 39자. **길이는 바이트가 아니라 문자 수다**
+- 미상 4필드 실측: `0x2211`, `3`, `1`, `0x0178A0D1`. **항목 수(67)와 맞는
+  값이 없으므로 개수 필드는 없습니다** — 파일 끝까지 걸어야 합니다
+
+#### 두 경로가 서로를 지지한다
+
+`tools/scan_recentfilecache.py`를 새로 만들었습니다. 프리패치·하이브 때와
+같은 방법입니다 — **같은 파일을 다른 길로 읽습니다.** 파서는 길이 필드를
+걷고, 스캐너는 길이 필드를 아예 보지 않고 헤더를 뗀 나머지를 통째로
+UTF-16LE로 디코딩해 널로 쪼갭니다.
+
+```
+파일 크기: 6,742바이트
+시그니처: feffeeff (기대 feffeeff)
+길이 필드를 걸어서: 67건, 끝나고 남은 바이트 0
+널로 쪼개서:       67건
+→ 두 해석이 일치합니다.
+파서 출력 대조: 일치
+```
+
+**남은 바이트 0이 핵심입니다.** 파일 크기는 Windows가 쓴 값이라 우리 해석과
+독립인데, 길이 필드를 바이트로 잘못 읽었다면 첫 항목에서 어긋나 67번
+연쇄할 수 없습니다. 프리패치에서 헤더 해시·파일 크기를 정답지로 삼은 것과
+같은 자리입니다.
+
+레코드 67건 전부 `offset`이 실제 길이 필드를 가리키고, 마지막 항목의 끝이
+6,742 = 파일 크기와 같습니다.
+
+| 아티팩트 | 대조 상대 | 상태 |
+|---|---|---|
+| `recentfilecache` | `tools/scan_recentfilecache.py` (길이 필드를 보지 않는 경로) | **일치 67/67** |
+| `recentfilecache` | Windows가 쓴 파일 크기 | **일치** (남은 바이트 0) |
+| `recentfilecache` | `RecentFileCacheParser` (Eric Zimmerman) | **미실시** |
+
+셋째 줄이 남았습니다. 앞의 둘은 우리가 만든 두 경로라 **공통 오해가 있으면
+같은 방향으로 틀립니다.**
+
+#### 이 이미지의 다른 아티팩트
+
+Win7 볼륨에서 나머지 파서도 전부 돕니다. `parse_errors` **전 아티팩트 0**.
+
+| 아티팩트 | 레코드 |
+|---|---|
+| `$MFT` | 4건 (`C:\Windows\AppCompat` 로 범위를 좁힌 결과) |
+| `$UsnJrnl` | 149,044건 — 전부 V2. 지원 범위 밖 버전 0건 |
+| `evtx` 5채널 | Security 227 / System 746 / Firewall 70 / NetworkProfile 45 / BITS 2 |
+| `registry:SYSTEM` | 1,753건 |
+| `registry:Amcache` | **없음** — 버전 미해당으로 걸러짐 (의도대로) |
+| `prefetch` | **없음** — 아래 참조 |
+
+#### 프리패치가 없다 — 그리고 왜 없는지
+
+`Windows/Prefetch`에 `.pf`가 **한 개도 없습니다.** ReadyBoot와 `Ag*.db`
+(Superfetch) 뿐입니다. 레지스트리가 이유를 말해 줍니다.
+
+```
+SYSTEM\ControlSet001\Control\Session Manager\Memory Management\PrefetchParameters
+  EnablePrefetcher  = 2   (부팅 전용 — 애플리케이션 프리패치 꺼짐)
+  EnableSuperfetch  = 2
+```
+
+`EnablePrefetcher = 2`는 부팅 프리패치만 한다는 뜻이라 애플리케이션 `.pf`가
+애초에 만들어지지 않습니다. 04단계는 `artifact_not_found`("증거 없음")로
+기록하는데 **그것이 맞습니다** — 버전 때문이 아니라 이 시스템의 설정
+때문입니다. 둘을 `osinfo.AVAILABILITY`로 뭉뚱그리지 않은 이유가 이것입니다.
+
+**그래서 프리패치 버전 23(Win7) 실측 재확인은 여전히 못 했습니다.**
+예전 `evidence/[root]` 73건 기록만 남아 있고 그 볼륨은 디스크에 없습니다.
+
+### 프리패치 (30, 220)의 이름표가 명세와 어긋난다
+
+위 이미지는 빌드 15063(1703)인데 파일 정보 블록이 **220바이트**입니다.
+`FILE_INFORMATION`의 `(30, 224)`에 붙은 [LIBSCCA] 이름표는 "Windows 10
+1809 이하"라 1703이면 224여야 합니다.
+
+**파서는 영향받지 않습니다.** 블록 크기를 표에서 가져오지 않고
+`메트릭 오프셋 - 헤더 크기`로 파일에서 읽기 때문입니다. 버전 번호만으로
+자리를 정하는 구현이었다면 이 이미지의 프리패치 137건이 통째로 어긋났을
+자리이고, 그 판단이 옳았음을 실측이 보여 준 사례입니다.
+
+이름표를 고치지는 않았습니다 — 1809 경계가 틀렸는지 빌드마다 더 잘게
+갈리는지 확인할 이미지가 하나뿐이라, 아는 것보다 많이 적지 않습니다.

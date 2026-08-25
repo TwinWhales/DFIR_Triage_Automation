@@ -12,7 +12,7 @@
   "properties": {
     "ref": {
       "type": "string",
-      "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET|REG-SYS|REG-SW|AMCACHE|PF)#(0|[1-9]\\d*)$",
+      "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF)#(0|[1-9]\\d*)$",
       "description": "앞자리 0을 허용하지 않는다. MFT#012345와 MFT#12345가 같은 레코드를 가리키면서 문자열로 다르면 06단계의 집합 대조가 통과해야 할 것을 기각한다."
     },
     "artifact": { "type": "string", "minLength": 1 },
@@ -128,6 +128,13 @@
       "then": {
         "$comment": "레코드 단위는 .pf 파일 하나이고 offset은 항상 0x0이다 — 되짚을 자리가 파일 시작뿐이며, Win10 이후에는 온디스크 바이트가 압축돼 있어 해제 후 오프셋이 파일 위치와 무관하다. 어느 파일에서 나왔는지는 fields.prefetch_file이 들고 있다. path는 required가 아니다 — 헤더에는 실행 파일 이름만 있고 전체 경로는 적재 파일 목록에서 찾는데, 후보가 하나로 좁혀지지 않으면 달지 않는다(parsers/prefetch.py). timestamp도 required가 아니다($UsnJrnl·registry와 같은 규약).",
         "required": ["name", "fields"]
+      }
+    },
+    {
+      "if": { "properties": { "artifact": { "const": "recentfilecache" } }, "required": ["artifact"] },
+      "then": {
+        "$comment": "RecentFileCache.bcf(Windows 7)의 항목 하나가 레코드 하나다. 항목이 들고 있는 것은 실행 파일 전체 경로뿐이라 timestamp가 없다 — 파일 하나의 수정 시각이 유일한 시간 정보인데 그것은 항목의 시각이 아니므로 레코드에 복사해 넣지 않는다(parsers/recentfilecache.py). record_num과 offset은 항목의 파일 내 위치이며, 레지스트리가 nk 오프셋을 쓰는 것과 같은 이유다 — 항목 안에 일련번호가 없어 원본을 되짚을 값이 위치뿐이다.",
+        "required": ["path", "name", "fields"]
       }
     },
     {

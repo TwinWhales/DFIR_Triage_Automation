@@ -57,6 +57,10 @@ ARTIFACT_PREFIX: dict[str, str] = {
     "prefetch": "PF",
     # Amcache.hve도 regf 포맷이라 nk 오프셋을 쓴다 — SYSTEM/SOFTWARE와 같다.
     "registry:Amcache": "AMCACHE",
+    # RecentFileCache.bcf. Windows 7에서 Amcache 자리를 대신하는 아티팩트라
+    # 접두어도 짝이 되게 지었다 — ref만 보고 "어느 세대의 실행 흔적인가"가
+    # 드러난다. 레코드 번호는 항목의 파일 내 오프셋이다(레지스트리와 같다).
+    "recentfilecache": "RFCACHE",
 }
 
 #: 역방향. ref만 보고 어느 파서가 만든 레코드인지 되짚을 때 쓴다.
@@ -66,7 +70,7 @@ PREFIX_ARTIFACT: dict[str, str] = {v: k for k, v in ARTIFACT_PREFIX.items()}
 #: 가리키면서 문자열로는 달라지면, 06단계의 집합 대조가 통과해야 할 것을 기각한다.
 REF_PATTERN = re.compile(
     r"^(?P<prefix>MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET"
-    r"|REG-SYS|REG-SW|AMCACHE|PF)#(?P<num>0|[1-9]\d*)$"
+    r"|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF)#(?P<num>0|[1-9]\d*)$"
 )
 
 

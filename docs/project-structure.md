@@ -38,13 +38,16 @@ dfir-triage/
 │   │   │   ├── mft.py             # $MFT 바이트 레벨 파싱
 │   │   │   ├── usnjrnl.py         # $UsnJrnl:$J 파싱
 │   │   │   ├── evtx.py            # EVTX 파싱
-│   │   │   ├── registry.py        # SYSTEM/SOFTWARE 하이브 파싱
+│   │   │   ├── registry.py        # SYSTEM/SOFTWARE/Amcache 하이브 파싱
+│   │   │   ├── recentfilecache.py # RecentFileCache.bcf 파싱 (Windows 7 전용)
 │   │   │   └── prefetch.py        # Windows/Prefetch/*.pf 파싱
 │   │   ├── structs/
 │   │   │   ├── mft_record.py      # MFT 레코드 헤더, $SI, $FN, $DATA 구조체
 │   │   │   ├── usn_record.py      # USN_RECORD_V2 구조체
 │   │   │   ├── prefetch_record.py # .pf 헤더·파일 정보·메트릭·볼륨 구조체
+│   │   │   ├── recentfilecache_record.py  # .bcf 헤더·항목 구조체
 │   │   │   └── xpress_huffman.py  # MAM(LZXPRESS Huffman) 압축 해제
+│   │   ├── osinfo.py              # 증거의 Windows 버전 판정, 버전별 아티팩트 가용성
 │   │   └── flagging.py            # flags 어휘 룰 적용
 │   │
 │   ├── stage05_interpret/
@@ -131,6 +134,7 @@ dfir-triage/
     ├── scan_hive_cells.py         # 하이브 nk 셀 직접 계수 (커버리지 정답지)
     ├── decode_hive_values.py      # 하이브 값을 명세대로 직접 디코딩
     ├── scan_prefetch.py           # .pf를 파서와 다른 길로 읽어 대조
+    ├── scan_recentfilecache.py    # .bcf를 길이 필드 없이 읽어 대조
     ├── inspect_jsonl.py           # 파싱 결과 빠른 조회 (미구현)
     └── hexdump_record.py          # 특정 ref의 원본 바이트 덤프 (미구현)
 ```

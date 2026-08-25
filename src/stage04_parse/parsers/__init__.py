@@ -137,6 +137,17 @@ PARSERS["prefetch"] = _prefetch_parser
 REFERENCE_PARSERS["prefetch"] = _prefetch_parser
 
 
+# RecentFileCache.bcf 는 Windows 7 전용이다. Win8 이상에는 아예 없고,
+# 그 자리를 registry:Amcache 가 대신한다 — 어느 쪽을 읽을지는 osinfo 가
+# 증거의 빌드 번호로 가른다. 여기 등록돼 있다고 해서 모든 이미지에서
+# 불리는 것이 아니다.
+from .recentfilecache import RecentFileCacheParser  # noqa: E402 — 등록 블록 순서
+
+_rfc_parser = RecentFileCacheParser()
+PARSERS["recentfilecache"] = _rfc_parser
+REFERENCE_PARSERS["recentfilecache"] = _rfc_parser
+
+
 IMPLEMENTATIONS = ("native", "reference")
 
 

@@ -161,6 +161,64 @@ def test_skip_reasons_are_distinguished(docs):
     assert "미지원" in limits["registry:SYSTEM"]
 
 
+def test_a_version_mismatch_is_not_reported_as_a_collection_gap(docs):
+    """"이 버전엔 원래 없다"와 "수집 누락"은 분석가가 할 일이 다르다.
+
+    앞의 것은 **다시 뽑아도 없다.** 가르지 않으면 존재하지 않는 파일을
+    다시 뽑으러 간다(`src/stage04_parse/osinfo.py`).
+    """
+    manifest = _manifest(
+        skipped=[
+            {
+                "artifact": "registry:Amcache",
+                "reason": "version_not_applicable",
+                "message": "빌드 7601 < 9200. Amcache.hve는 Windows 8부터 기본 탑재입니다.",
+            }
+        ]
+    )
+    reason = {e["artifact"]: e["reason"] for e in _context(docs, manifest=manifest)["limits"]}[
+        "registry:Amcache"
+    ]
+
+    assert "재수집 불필요" in reason
+    assert "수집 누락" not in reason
+    # 근거인 빌드 번호는 살아 있어야 한다. 라벨만 남으면 왜 그렇게
+    # 판정했는지 보고서만 보고 알 수 없다.
+    assert "7601" in reason
+
+
+def test_the_detected_windows_version_reaches_the_report(docs):
+    manifest = _manifest()
+    manifest["windows"] = {
+        "determined": True,
+        "build": 15063,
+        "family": "win10",
+        "product_name": "Windows 10 Pro",
+        "release_id": "1703",
+        "installation_type": "Client",
+        "revision": 0,
+    }
+    line = _context(docs, manifest=manifest)["windows"]
+
+    assert line == "Windows 10 Pro (빌드 15063.0, 1703, Client)"
+
+
+def test_an_undetermined_version_says_so_instead_of_guessing(docs):
+    manifest = _manifest()
+    manifest["windows"] = {"determined": False, "reason": "SOFTWARE 하이브를 찾지 못했습니다"}
+
+    line = _context(docs, manifest=manifest)["windows"]
+
+    assert line.startswith("판정 불가")
+    assert "SOFTWARE" in line
+
+
+def test_an_old_manifest_without_the_windows_block_prints_nothing(docs):
+    # 04단계가 이 필드를 쓰기 전의 산출물이다. 빈 문자열이면 템플릿이
+    # 아무것도 그리지 않는다 — 모르는 것을 "미상"이라고 단정하지 않는다.
+    assert _context(docs, manifest=_manifest())["windows"] == ""
+
+
 def test_parser_missing_does_not_leak_source_paths_into_the_report(docs):
     """분석가가 읽는 문서에 소스 파일 경로를 싣지 않는다."""
     manifest = _manifest(

@@ -33,3 +33,15 @@ artifacts:
     tier: 2
     trigger: Tier1에서 자동실행 등록 대상의 실행 파일 경로가 확인된 경우
     rationale: 등록된 자동실행 대상이 실제로 실행된 적 있는지 확인
+
+  # 위와 **같은 질문에 대한 Windows 7 쪽 답이다.** Amcache.hve는 Win8
+  # 부터라 Win7 이미지에는 없고, 그 자리에 이것이 있다.
+  #
+  # 둘을 다 요청하는 이유는 03단계가 증거를 열지 않아 버전을 모르기
+  # 때문이다. 해당 없는 쪽은 04단계가 빌드 번호를 보고
+  # version_not_applicable 로 뺀다(src/stage04_parse/osinfo.py). 여기서
+  # 한쪽만 고르면 그 버전의 이미지에서 증거를 통째로 놓친다.
+  - name: recentfilecache
+    tier: 2
+    trigger: Tier1에서 자동실행 등록 대상의 실행 파일 경로가 확인된 경우
+    rationale: 등록된 자동실행 대상이 실제로 실행된 적 있는지 확인 (Windows 7)
