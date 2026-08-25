@@ -109,6 +109,15 @@ for _artifact in (
     "evtx:Firewall",
     "evtx:BITS",
     "evtx:NetworkProfile",
+    "evtx:Sysmon",
+    "evtx:DriverFrameworks",
+    "evtx:KernelPnP",
+    "evtx:AssignedAccess",
+    "evtx:AssignedAccessAdmin",
+    "evtx:AssignedAccessBroker",
+    "evtx:RDPConnection",
+    "evtx:RDPSession",
+    "evtx:Application",
 ):
     _evtx_parser = EvtxParser(_artifact)
     PARSERS[_artifact] = _evtx_parser

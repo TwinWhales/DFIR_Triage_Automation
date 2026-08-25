@@ -1,0 +1,27 @@
+technique: T1078
+name: "Valid Accounts"
+os: windows
+
+# K-001 Stage 4 — 영업시간 외 또는 정규 절차와 다른 관리자 인증.
+#
+# **상위 기법이다.** T1078.003(Local Accounts)이 따로 있고 둘은 이 도구에서
+# 남남이다. 설계서 Stage 4 가 상위를 쓰므로 둘 다 둔다.
+#
+# "비정상"의 판정은 baseline 과의 비교이고 이 도구가 하지 않는다. 여기서
+# 하는 일은 로그온 사건을 시간과 함께 꺼내 오는 것까지다.
+artifacts:
+  - name: evtx:Security
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [4624, 4625, 4634, 4647, 4672, 4738]
+    rationale: 로그온·로그오프 시각과 계정·로그온 타입, 특수권한 부여
+
+  - name: evtx:RDPConnection
+    tier: 2
+    trigger: Tier1에서 로그온 타입 10(RemoteInteractive)이 확인된 경우
+    rationale: 원격 연결의 출처와 인증 시각
+
+  # SAM 하이브는 카탈로그에 없다. 신규 RID·마지막 로그온·그룹 멤버십이
+  # 거기 있는데 지금 읽지 못한다 — docs/limitations.md "SAM·SECURITY·
+  # NTUSER를 읽지 않는다".

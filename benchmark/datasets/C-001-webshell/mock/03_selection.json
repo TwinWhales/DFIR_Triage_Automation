@@ -2,9 +2,9 @@
   "case_id": "C-001",
   "stage": "03_select",
   "schema_version": "1.0",
-  "generated_at": "2026-08-25T00:59:16Z",
+  "generated_at": "2026-08-25T02:45:13Z",
   "generator": "select.py",
-  "mapping_table_version": "1.0",
+  "mapping_table_version": "1.1",
   "selected": [
     {
       "artifact": "$MFT",
@@ -85,6 +85,42 @@
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
     {
+      "artifact": "evtx:Sysmon",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:DriverFrameworks",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:KernelPnP",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:AssignedAccess",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:AssignedAccessAdmin",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:AssignedAccessBroker",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:RDPConnection",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:RDPSession",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:Application",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
       "artifact": "registry:SYSTEM",
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
@@ -112,6 +148,6 @@
   "stats": {
     "selected_count": 2,
     "deferred_count": 2,
-    "excluded_count": 9
+    "excluded_count": 18
   }
 }

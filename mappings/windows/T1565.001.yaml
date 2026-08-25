@@ -1,0 +1,32 @@
+technique: T1565.001
+name: "Data Manipulation: Stored Data Manipulation"
+os: windows
+
+# K-001 Stage 5·6 — 거래 DB 조작.
+#
+# **DB 내용은 이 도구가 못 본다.** SQLite 파일을 열어 레코드를 비교하는
+# 것은 담당 6의 영역이고, 여기서 하는 일은 "그 파일이 언제 손을 탔는가"
+# 까지다. 그 한계는 보고서의 분석 범위에 그대로 남는다.
+artifacts:
+  - name: $MFT
+    tier: 1
+    priority: 1
+    scope_template:
+      path_prefix: ['{pos_db_root}']
+      extensions: ['.db', '.sqlite', '.sqlite3', '.db-wal', '.db-journal', '.db-shm']
+    rationale: 거래 DB와 WAL/journal 파일의 수정 시각
+
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 2
+    scope_template:
+      event_ids: [1, 11]
+    rationale: DB 파일을 만진 프로세스
+
+  - name: $UsnJrnl
+    tier: 2
+    trigger: Tier1 $MFT에서 거래 DB 파일의 timestamp_mismatch 또는 deleted 플래그 발견 시
+    rationale: DB 파일의 변경·삭제 이력
+
+defaults:
+  pos_db_root: 'C:\ProgramData\POS'

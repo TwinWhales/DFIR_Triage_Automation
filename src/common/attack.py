@@ -62,6 +62,24 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1562.001": "Impair Defenses: Disable or Modify Tools",
     "T1562.004": "Impair Defenses: Disable or Modify System Firewall",
     "T1197": "BITS Jobs",
+    # K-001 키오스크 시나리오(2026-08-25). 설계서 §2 의 단계별 ATT&CK 매핑을
+    # 그대로 옮겼다. 상위/하위 기법을 함께 등재한 곳이 있는데(T1059 와
+    # T1059.003, T1078 과 T1078.003), 설계서가 단계마다 다른 쪽을 쓰기
+    # 때문이다. **둘은 이 도구에서 남남이다** — is_known 도 매핑 파일명도
+    # 문자열 정확 일치이고 상하위 관계를 아는 코드가 없다. 02단계가 어느
+    # 쪽을 내느냐에 따라 선별 결과가 갈린다(docs/limitations.md).
+    "T1204.002": "User Execution: Malicious File",
+    "T1059": "Command and Scripting Interpreter",
+    "T1078": "Valid Accounts",
+    "T1098": "Account Manipulation",
+    "T1548": "Abuse Elevation Control Mechanism",
+    "T1219": "Remote Access Software",
+    "T1074.001": "Data Staged: Local Data Staging",
+    "T1565.001": "Data Manipulation: Stored Data Manipulation",
+    "T1005": "Data from Local System",
+    "T1657": "Financial Theft",
+    "T1041": "Exfiltration Over C2 Channel",
+    "T1048": "Exfiltration Over Alternative Protocol",
     # 매핑은 아직 없으나 시나리오에 자주 등장하는 기법
     "T1003.001": "OS Credential Dumping: LSASS Memory",
     "T1021.001": "Remote Services: Remote Desktop Protocol",

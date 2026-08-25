@@ -1,0 +1,35 @@
+technique: T1074.001
+name: "Data Staged: Local Data Staging"
+os: windows
+
+# K-001 Stage 5 — 반출용 데이터를 한 곳에 모은다.
+#
+# 스테이징 경로는 공격자가 정한다. 관례적으로 쓰이는 자리 몇 곳을
+# defaults 에 두되, 시나리오가 경로를 말하면 {staging_root} 가 그것으로
+# 대체된다. **경로를 못 맞히면 이 기법은 아무것도 못 본다** — 그래서
+# 경로를 좁히지 않는 $UsnJrnl 을 Tier 2 로 함께 건다.
+artifacts:
+  - name: $MFT
+    tier: 1
+    priority: 1
+    scope_template:
+      path_prefix:
+        - '{staging_root}'
+        - 'C:\Windows\Temp'
+        - 'C:\Users\Public'
+    rationale: 반출용 데이터가 모인 디렉터리의 파일 생성 시각
+
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 2
+    scope_template:
+      event_ids: [1, 11]
+    rationale: 스테이징을 수행한 프로세스와 파일 생성
+
+  - name: $UsnJrnl
+    tier: 2
+    trigger: Tier1 $MFT에서 스테이징 경로를 특정하지 못했거나 deleted 플래그가 발견된 경우
+    rationale: 경로를 모르는 상태에서의 파일 생성·삭제 이력
+
+defaults:
+  staging_root: 'C:\ProgramData'

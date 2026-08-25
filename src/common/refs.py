@@ -57,6 +57,24 @@ ARTIFACT_PREFIX: dict[str, str] = {
     "prefetch": "PF",
     # Amcache.hve도 regf 포맷이라 nk 오프셋을 쓴다 — SYSTEM/SOFTWARE와 같다.
     "registry:Amcache": "AMCACHE",
+    # K-001 키오스크 시나리오가 요구하는 채널들. evtx 파서를 그대로 재사용하며
+    # 채널만 다르다. 접두어를 하나로 묶지 않는 이유는 기존 채널과 같다 —
+    # ref 만 보고 어느 로그에서 나온 레코드인지 되짚을 수 있어야 한다.
+    #
+    # Sysmon 만 EVTX- 접두어를 안 쓴다. Windows 기본 채널이 아니라 별도로
+    # 설치하는 도구의 로그이고, EVTX-SYS 가 EVTX-SYSMON 의 접두어가 되는
+    # 것을 피하려는 뜻도 있다 (REF_PATTERN 의 교대는 백트래킹으로 풀리지만,
+    # 접두어가 겹치지 않는 편이 나중에 물리지 않는다).
+    "evtx:Sysmon": "SYSMON",
+    "evtx:DriverFrameworks": "EVTX-DRV",
+    "evtx:KernelPnP": "EVTX-PNP",
+    "evtx:AssignedAccess": "EVTX-AAOP",
+    "evtx:AssignedAccessAdmin": "EVTX-AAADM",
+    "evtx:AssignedAccessBroker": "EVTX-AABRK",
+    "evtx:RDPConnection": "EVTX-RDPCM",
+    "evtx:RDPSession": "EVTX-RDPLSM",
+    "evtx:Application": "EVTX-APP",
+
     # RecentFileCache.bcf. Windows 7에서 Amcache 자리를 대신하는 아티팩트라
     # 접두어도 짝이 되게 지었다 — ref만 보고 "어느 세대의 실행 흔적인가"가
     # 드러난다. 레코드 번호는 항목의 파일 내 오프셋이다(레지스트리와 같다).
@@ -70,7 +88,8 @@ PREFIX_ARTIFACT: dict[str, str] = {v: k for k, v in ARTIFACT_PREFIX.items()}
 #: 가리키면서 문자열로는 달라지면, 06단계의 집합 대조가 통과해야 할 것을 기각한다.
 REF_PATTERN = re.compile(
     r"^(?P<prefix>MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET"
-    r"|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF)#(?P<num>0|[1-9]\d*)$"
+    r"|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF"
+    r"|SYSMON|EVTX-DRV|EVTX-PNP|EVTX-AAOP|EVTX-AAADM|EVTX-AABRK|EVTX-RDPCM|EVTX-RDPLSM|EVTX-APP)#(?P<num>0|[1-9]\d*)$"
 )
 
 

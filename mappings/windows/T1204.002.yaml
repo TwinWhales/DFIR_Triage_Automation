@@ -1,0 +1,52 @@
+technique: T1204.002
+name: "User Execution: Malicious File"
+os: windows
+
+# K-001 Stage 2 — USB 안의 비승인 실행파일이 실행된다.
+#
+# 실행 흔적은 한 아티팩트가 다 말해 주지 않는다. 프리패치는 "몇 번 언제",
+# Amcache 는 "어느 파일이 어떤 해시로", $MFT 는 "언제 디스크에 놓였는가"를
+# 따로 남긴다. 셋을 겹쳐야 "USB 연결 직후 새 실행파일이 실행됐다"가 선다.
+artifacts:
+  - name: prefetch
+    tier: 1
+    priority: 1
+    scope_template: {}
+    rationale: 실행 파일의 실행 횟수·최근 실행 시각·적재된 파일 목록
+
+  # Windows 8 이상. Win7 이미지에서는 04단계가 버전 미해당으로 뺀다.
+  - name: registry:Amcache
+    tier: 1
+    priority: 1
+    scope_template:
+      path_prefix:
+        - 'Amcache\Root\InventoryApplicationFile'
+        - 'Amcache\Root\File'
+    rationale: 실행 파일의 전체 경로·SHA1·최초 등장 시각
+
+  # Windows 7. Amcache 와 배타적이며 둘 다 요청하는 이유는 03단계가
+  # 증거의 Windows 버전을 모르기 때문이다(src/stage04_parse/osinfo.py).
+  - name: recentfilecache
+    tier: 1
+    priority: 1
+    scope_template: {}
+    rationale: 최근 처음 실행된 실행 파일의 전체 경로 (Windows 7)
+
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: 프로세스 생성 시각·명령행·부모 프로세스·해시
+
+  - name: $MFT
+    tier: 1
+    priority: 2
+    scope_template:
+      extensions: ['.exe', '.dll', '.scr', '.com', '.bat', '.cmd', '.ps1', '.vbs', '.js']
+    rationale: 드롭된 실행 파일의 생성 시각
+
+  - name: $UsnJrnl
+    tier: 2
+    trigger: Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시
+    rationale: 실행 파일의 생성·삭제 이력

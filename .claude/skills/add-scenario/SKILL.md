@@ -217,11 +217,13 @@ print('scope 로 보면 :', len(allocation.allocate_records(
 
 도구를 고쳐도 안 되는 것이 있다. 판단이 필요하면 `docs/limitations.md`.
 
-- **디스크 이미지를 직접 못 연다.** `VolumeSource`가 전부
-  `NotImplementedError`다. E01/dd는 파일을 먼저 뽑아야 한다.
+- **디스크 이미지는 이제 직접 연다.** `--evidence <이미지> --volume N`.
+  볼륨이 여럿이면 도구가 목록을 보여 주고 사람이 고른다.
 - **한 실행은 한 볼륨이다.** 볼륨이 여럿이면 케이스를 나눈다.
-- **evtx는 Security·System 둘뿐이다.** Operational 로그(예: USB 드라이버
-  설치 기록)는 카탈로그에 없다.
+- **evtx 채널은 11개다**(2026-08-25). Security·System에 Firewall·BITS·
+  NetworkProfile·Sysmon·DriverFrameworks·Kernel-PnP·AssignedAccess 셋·
+  TerminalServices 둘·Application이 더해졌다. 그 밖의 Operational 로그
+  (PowerShell 등)는 여전히 카탈로그에 없다.
 - **쓰기 필터(UWF)가 켜진 장비**는 재부팅 시 디스크 변경이 사라진다.
   증거가 없는 것이지 도구가 못 보는 것이 아니다. 이 경우 파이프라인은
   "깨끗함"을 출력하는데 그것이 사실과 다르다 — 보고서에 반드시 적는다.

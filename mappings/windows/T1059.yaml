@@ -1,0 +1,27 @@
+technique: T1059
+name: "Command and Scripting Interpreter"
+os: windows
+
+# K-001 Stage 2 보조 — 스크립트/셸로 실행된 경우.
+#
+# **상위 기법이다.** T1059.003(Windows Command Shell)과 별개로 두는 이유는
+# 설계서가 Stage 2에서 상위를, Stage 3에서 하위를 쓰기 때문이다. 이 도구는
+# 상하위 관계를 모르므로 둘 다 있어야 어느 쪽이 와도 선별된다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: 인터프리터 실행 시각과 명령행
+
+  - name: prefetch
+    tier: 1
+    priority: 2
+    scope_template: {}
+    rationale: 스크립트 호스트(wscript·cscript·powershell)의 실행 이력
+
+  - name: evtx:Security
+    tier: 2
+    trigger: Tier1에서 인터프리터 실행이 확인되어 실행 계정을 가려야 하는 경우
+    rationale: 프로세스 생성 감사(4688)의 명령행과 실행 계정

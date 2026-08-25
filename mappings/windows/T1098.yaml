@@ -1,0 +1,20 @@
+technique: T1098
+name: "Account Manipulation"
+os: windows
+
+# K-001 Stage 4 — 계정 속성·그룹 멤버십 변경.
+#
+# 4732(로컬 그룹 추가)가 권한 상승의 결정적 근거다. privileged_group_add
+# 플래그가 대상 그룹이 특권 그룹인지까지 판정한다(mappings/_flags.yaml).
+artifacts:
+  - name: evtx:Security
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [4728, 4732, 4735, 4737, 4738, 4722, 4724]
+    rationale: 그룹 멤버십 추가와 계정 속성·비밀번호 변경
+
+  - name: registry:SYSTEM
+    tier: 2
+    trigger: Tier1에서 계정 변경이 확인되어 그 계정의 서비스 등록 여부를 확인해야 하는 경우
+    rationale: 변경된 계정으로 등록된 서비스

@@ -62,7 +62,11 @@ def build_record(
 
     파서는 이걸 받아 ``apply_fixups`` → 헤더 → 속성 순회 순으로 읽습니다.
     """
-    default = datetime(2026, 7, 20, 3, 14, 22, tzinfo=timezone.utc)
+    # **마이크로초를 준다.** 초 단위로 딱 떨어지는 시각은 실물에 없다 —
+    # Win7·Win10 실측 170,946 레코드에서 $SI 서브초가 0인 것이 0건이었다
+    # (docs/artifact-notes.md). 0으로 두면 timestamp_truncated 가 붙어,
+    # "정상 파일"을 표현하려는 픽스처가 조작된 파일이 된다.
+    default = datetime(2026, 7, 20, 3, 14, 22, 123456, tzinfo=timezone.utc)
     si = {k: default for k in ("btime", "mtime", "ctime", "atime")} | (si_times or {})
     fn = {k: default for k in ("btime", "mtime", "ctime", "atime")} | (fn_times or {})
 

@@ -212,9 +212,14 @@ service_installed:
 | `event_id` | `record["event_id"]`가 `values` 안에 있는가 |
 | `list_contains` | 리스트 필드 `field`가 `values`와 겹치는가 |
 | `field_equals` | `record[field]`가 `value`와 같은가 |
+| `field_endswith` | 점 표기 `field`(예: `fields.Image`)의 값이 `values` 중 하나로 끝나는가. 대소문자 무시 |
 
 `artifact`는 `$MFT`처럼 정확히 쓰거나 `evtx:*`로 접두어를, `*`로 전부를
 가리킵니다. 카탈로그에 있는 이름이어야 합니다.
+
+`field_endswith`의 값에는 **경로 구분자를 포함시키십시오** — `\cmd.exe`
+처럼. `cmd.exe`만 쓰면 `evilcmd.exe`가 함께 걸립니다. 매처가 그 판단을
+대신하지 않는 것은, YAML만 읽고도 무엇이 걸리는지 보여야 하기 때문입니다.
 
 ### `handler`는 선언으로 안 되는 것만
 
