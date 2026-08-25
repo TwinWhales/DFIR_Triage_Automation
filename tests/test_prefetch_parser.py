@@ -29,6 +29,7 @@ import io as _io
 import json
 import struct
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -51,13 +52,55 @@ SHADOW = "\\DEVICE\\HARDDISKVOLUMESHADOWCOPY1"
 
 #: 버전 23의 파일 정보 블록 크기. 메트릭 배열이 바로 뒤에 붙는다.
 _V23_INFO_SIZE = 156
-_METRICS_ENTRY = 32
-_VOLUME_ENTRY = 104
+
+
+class Spec(NamedTuple):
+    """레이아웃 하나. ``pf.FileInfoLayout``과 **일부러 별개**다."""
+
+    run_time_offset: int
+    run_time_count: int
+    run_count_offset: int
+    metrics_entry_size: int
+    volume_entry_size: int
+
+
+#: ``(버전, 파일 정보 블록 크기)`` → 자리. **손으로 적은 명세 값이다.**
+#:
+#: `structs/prefetch_record.py`의 ``FILE_INFORMATION``을 가져다 쓰지 않는
+#: 것이 요점입니다. 표를 가져다 픽스처를 만들면 픽스처와 파서가 같은 값을
+#: 공유하게 되어, **표를 잘못 고쳐도 테스트가 통과합니다.** 그러면 회귀
+#: 테스트가 아니라 항등식입니다.
+#:
+#: 줄 끝 주석이 어느 Windows인지, 실물로 확인한 것인지 말합니다. 버전
+#: 23과 30/220만 실측이고 나머지는 [LIBSCCA] 명세입니다
+#: (`docs/limitations.md` "프리패치에서 확인되지 않은 것"). 명세만 있는
+#: 줄은 **"이 값이 맞다"가 아니라 "이 값을 쓰기로 했다"**를 고정합니다.
+SPEC: dict[tuple[int, int], Spec] = {
+    (17, 68): Spec(0x24, 1, 0x3C, 20, 40),      # XP/2003
+    (23, 156): Spec(0x2C, 1, 0x44, 32, 104),    # Win7 — 실측
+    (26, 224): Spec(0x2C, 8, 0x7C, 32, 104),    # Win8/8.1
+    (30, 224): Spec(0x2C, 8, 0x7C, 32, 96),     # Win10
+    (30, 220): Spec(0x2C, 8, 0x7C, 32, 96),     # Win10 — 실측(빌드 15063)
+    (30, 216): Spec(0x2C, 8, 0x74, 32, 96),     # Win10 1903+
+    (31, 224): Spec(0x2C, 8, 0x7C, 32, 96),     # Win11
+}
 
 
 def to_filetime(moment: dt.datetime) -> int:
     delta = moment - _FILETIME_EPOCH
     return (delta.days * 86_400 + delta.seconds) * 10_000_000 + delta.microseconds * 10
+
+
+def _metrics_entry(entry_size: int, name_offset: int, char_count: int) -> bytes:
+    """파일 메트릭 원소 하나.
+
+    **문자열 오프셋의 자리가 버전 17과 23 이상에서 다릅니다.** 17에는
+    평균 지속 필드가 없어 뒤가 4바이트씩 당겨집니다. 파서가 원소 크기로
+    그 차이를 가르므로(``read_filenames``), 픽스처도 크기로 가릅니다.
+    """
+    if entry_size == 20:
+        return struct.pack("<IIIII", 0, 0, name_offset, char_count, 0x200)
+    return struct.pack("<IIIIIIQ", 0, 0, 0, name_offset, char_count, 0x200, 0)
 
 
 def build_pf(
@@ -70,11 +113,13 @@ def build_pf(
     version: int = 23,
     info_size: int = _V23_INFO_SIZE,
 ) -> bytes:
-    """버전 23 .pf 하나를 합성한다.
+    """.pf 하나를 합성한다. 기본은 버전 23이다.
 
-    ``info_size``를 바꾸면 ``(버전, 크기)`` 조합이 표에서 빠져
-    ``UnknownLayout``이 나옵니다. 그 경로를 시험하는 데 씁니다.
+    ``(version, info_size)``가 ``SPEC``에 있으면 **그 버전의 자리대로**
+    씁니다. 없으면 버전 23의 자리를 쓰되 헤더의 버전 번호만 바꿉니다 —
+    ``UnknownLayout`` 경로를 시험하는 데 그 조합을 씁니다.
     """
+    spec = SPEC.get((version, info_size), SPEC[(23, _V23_INFO_SIZE)])
     loaded = [f"{DEVICE}\\WINDOWS\\SYSTEM32\\{executable}"] if loaded is None else loaded
     volumes = [(DEVICE, 0x2EC87543, to_filetime(dt.datetime(2019, 1, 10, tzinfo=UTC)))] \
         if volumes is None else volumes
@@ -82,21 +127,19 @@ def build_pf(
         run_time = to_filetime(dt.datetime(2019, 1, 10, 8, 45, 16, tzinfo=UTC))
 
     metrics_offset = pf.HEADER_SIZE + info_size
-    strings_offset = metrics_offset + _METRICS_ENTRY * len(loaded)
+    strings_offset = metrics_offset + spec.metrics_entry_size * len(loaded)
 
     strings = b""
     entries = b""
     for name in loaded:
         encoded = name.encode("utf-16-le") + b"\x00\x00"
-        entries += struct.pack(
-            "<IIIIIIQ", 0, 0, 0, len(strings), len(name), 0x200, 0
-        )
+        entries += _metrics_entry(spec.metrics_entry_size, len(strings), len(name))
         strings += encoded
 
     volumes_offset = strings_offset + len(strings)
     volume_entries = b""
     volume_strings = b""
-    header_bytes = _VOLUME_ENTRY * len(volumes)
+    header_bytes = spec.volume_entry_size * len(volumes)
     # 앞 36바이트만 우리가 읽는 필드고 나머지는 미상 영역이다. 원소 크기를
     # 맞춰 두지 않으면 두 번째 볼륨부터 자리가 밀린다.
     _VOLUME_FIELDS = "<IIQIIIII"
@@ -111,7 +154,7 @@ def build_pf(
             0,
             0,
             7,
-        ) + b"\x00" * (_VOLUME_ENTRY - struct.calcsize(_VOLUME_FIELDS))
+        ) + b"\x00" * (spec.volume_entry_size - struct.calcsize(_VOLUME_FIELDS))
         volume_strings += device.encode("utf-16-le") + b"\x00\x00"
     volumes_block = volume_entries + volume_strings
 
@@ -130,8 +173,10 @@ def build_pf(
         len(volumes),
         len(volumes_block),
     )
-    struct.pack_into("<Q", info, 0x2C, run_time)
-    struct.pack_into("<I", info, 0x44, run_count)
+    # 최신 실행이 0번 칸이다. 나머지 칸은 0으로 두는데, FILETIME 0 은
+    # 파서가 None 으로 읽는다 — 실행 이력이 덜 쌓인 실물과 같은 모양이다.
+    struct.pack_into("<Q", info, spec.run_time_offset, run_time)
+    struct.pack_into("<I", info, spec.run_count_offset, run_count)
 
     name_field = executable.encode("utf-16-le")[:58].ljust(60, b"\x00")
     total = pf.HEADER_SIZE + info_size + len(entries) + len(strings) + len(volumes_block)
@@ -384,6 +429,90 @@ def test_the_header_hash_wins_over_the_filename(parser):
 
     assert record["record_num"] == 0x11112222
     assert parser.stats["hash_mismatch"] == 1
+
+
+# ================================================ Windows 버전별 레이아웃
+#
+# 여기서 지키려는 것은 **"명세가 맞다"가 아니라 "표를 말없이 바꾸지 못한다"**
+# 입니다. 명세가 맞는지는 실물로만 알 수 있고, 지금 실물이 있는 것은 버전
+# 23(Win7)과 30/220(Win10)뿐입니다. 나머지는 여기서 자리를 고정해 두고,
+# 실물이 들어오면 맨 아래 통합 테스트가 진짜 대조를 합니다.
+
+
+def test_the_layout_table_matches_the_written_spec():
+    """모듈의 표와 이 파일의 ``SPEC``이 한 글자도 다르지 않아야 한다.
+
+    둘 중 하나만 고치면 여기서 깨집니다. **그것이 이 테스트의 전부입니다** —
+    오프셋을 "정리"하다 한쪽만 손대는 것이 프리패치에서 가장 조용히
+    틀리는 방법이라, 두 번 적게 하고 대조합니다.
+    """
+    assert set(pf.FILE_INFORMATION) == set(SPEC), "아는 (버전, 크기) 조합이 다르다"
+
+    for key, spec in SPEC.items():
+        layout = pf.FILE_INFORMATION[key]
+        version, size = key
+        assert layout.size == size, f"{key}: 블록 크기"
+        assert layout.run_time_offset == spec.run_time_offset, f"{key}: 실행 시각 자리"
+        assert layout.run_time_count == spec.run_time_count, f"{key}: 실행 시각 개수"
+        assert layout.run_count_offset == spec.run_count_offset, f"{key}: 실행 횟수 자리"
+        assert layout.metrics_entry_size == spec.metrics_entry_size, f"{key}: 메트릭 원소"
+        assert layout.volume_entry_size == spec.volume_entry_size, f"{key}: 볼륨 원소"
+        assert layout.source, f"{key}: 출처가 비었다 — 실측인지 명세인지 적는다"
+
+
+@pytest.mark.parametrize(("version", "info_size"), sorted(SPEC))
+def test_every_known_version_round_trips(parser, version, info_size):
+    """버전마다 합성 → 파싱이 같은 값을 되돌려주는가.
+
+    버전이 갈리는 자리를 **전부** 한 번에 지나갑니다 — 실행 시각(17·23은
+    한 칸, 26 이상은 여덟 칸), 실행 횟수, 메트릭 원소 크기(17만 20바이트),
+    볼륨 원소 크기(96/104/40).
+    """
+    when = dt.datetime(2019, 1, 10, 8, 45, 16, tzinfo=UTC)
+    data = build_pf(
+        run_count=7, run_time=to_filetime(when), version=version, info_size=info_size
+    )
+
+    record = run(parser, data, EMPTY)[0]
+
+    assert parser.stats["parse_errors"] == 0
+    assert record["name"] == "CMD.EXE"
+    assert record["fields"]["format_version"] == version
+    assert record["fields"]["run_count"] == 7
+    assert record["timestamp"] == "2019-01-10T08:45:16.0000000Z"
+    # 적재 목록이 메트릭 원소를 거쳐 나온다. 원소 크기를 잘못 잡으면
+    # 여기가 빈 목록이 되거나 쓰레기 문자열이 된다.
+    assert record["fields"]["loaded_files"] == [f"{DEVICE}\\WINDOWS\\SYSTEM32\\CMD.EXE"]
+    # 볼륨 원소 크기가 어긋나면 장치 경로가 깨져 드라이브 문자를 못 만든다.
+    assert record["fields"]["volumes"][0]["device_path"] == DEVICE
+    assert record["path"] == "C:\\WINDOWS\\SYSTEM32\\CMD.EXE"
+
+
+def test_the_run_time_slots_beyond_the_first_are_read_on_new_versions(parser):
+    """26 이상은 실행 시각이 여덟 칸이다.
+
+    한 칸만 읽으면 "마지막 실행"은 맞아도 **그 앞의 일곱 번**이 사라집니다.
+    사고 시간창을 잡는 데 쓰는 값이라 조용히 비면 안 됩니다.
+    """
+    older = [
+        to_filetime(dt.datetime(2019, 1, 10, 8, 45, 16, tzinfo=UTC)),
+        to_filetime(dt.datetime(2019, 1, 9, 7, 30, 0, tzinfo=UTC)),
+        to_filetime(dt.datetime(2019, 1, 8, 6, 15, 0, tzinfo=UTC)),
+    ]
+    spec = SPEC[(30, 220)]
+    data = bytearray(build_pf(version=30, info_size=220))
+    for index, moment in enumerate(older):
+        struct.pack_into(
+            "<Q", data, pf.HEADER_SIZE + spec.run_time_offset + index * 8, moment
+        )
+
+    record = run(parser, bytes(data), EMPTY)[0]
+
+    assert record["fields"]["run_times"][:3] == [
+        "2019-01-10T08:45:16.0000000Z",
+        "2019-01-09T07:30:00.0000000Z",
+        "2019-01-08T06:15:00.0000000Z",
+    ]
 
 
 # ============================================== 못 읽는 파일은 그것만 건너뛴다
