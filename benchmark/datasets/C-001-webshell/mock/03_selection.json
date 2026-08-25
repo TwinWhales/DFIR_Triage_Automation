@@ -2,9 +2,9 @@
   "case_id": "C-001",
   "stage": "03_select",
   "schema_version": "1.0",
-  "generated_at": "2026-08-24T09:54:04Z",
+  "generated_at": "2026-08-25T00:59:16Z",
   "generator": "select.py",
-  "mapping_table_version": "0.9",
+  "mapping_table_version": "1.0",
   "selected": [
     {
       "artifact": "$MFT",
@@ -97,6 +97,10 @@
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
     {
+      "artifact": "recentfilecache",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
       "artifact": "prefetch",
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
@@ -108,6 +112,6 @@
   "stats": {
     "selected_count": 2,
     "deferred_count": 2,
-    "excluded_count": 8
+    "excluded_count": 9
   }
 }

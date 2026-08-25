@@ -64,12 +64,13 @@ def test_catalog_loads_every_artifact(catalog):
         "evtx:BITS",
         "evtx:NetworkProfile",
         "prefetch",
+        "recentfilecache",
         "$LogFile",
     }
     # 목록이나 아티팩트의 성질(signal_source)이 바뀌면 이 값도 올린다.
     # 03_selection.json 에 실려 나가므로 산출물만 보고 어느 카탈로그로
     # 돌렸는지 되짚을 수 있어야 한다.
-    assert catalog.mapping_table_version == "0.9"
+    assert catalog.mapping_table_version == "1.0"
 
 
 def test_unsupported_artifacts_carry_a_reason(catalog):

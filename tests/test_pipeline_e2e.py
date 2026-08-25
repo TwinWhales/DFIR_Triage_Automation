@@ -114,6 +114,112 @@ def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
     assert "--skip-existing" in logged[-1]["detail"]["message"]
 
 
+def _selection_for(tmp_path: Path, artifacts: "list[str]") -> Path:
+    """아티팩트 몇 개만 요청하는 최소 선별 문서를 쓴다."""
+    document = io.new_document(
+        "C-999",
+        "03_select",
+        "select.py",
+        mapping_table_version="1.0",
+        selected=[
+            {
+                "artifact": artifact,
+                "tier": 1,
+                "priority": 1,
+                "scope": {},
+                "reason": {"technique": "T1547.001", "rationale": "테스트"},
+            }
+            for artifact in artifacts
+        ],
+        deferred=[],
+        excluded=[],
+        stats={"selected_count": len(artifacts), "deferred_count": 0, "excluded_count": 0},
+    )
+    schema.validate(document, "selection")
+    path = tmp_path / "03_selection.json"
+    io.write_json(path, document)
+    return path
+
+
+def test_parse_separates_not_applicable_from_not_collected(tmp_path, monkeypatch):
+    """Win7 이미지의 Amcache 는 "수집 누락"이 아니라 "이 버전에 없음"이다.
+
+    가르지 않으면 보고서가 "증거에 없음 (수집 누락)"이라고 말하고, 그것을
+    읽은 분석가는 **존재하지 않는 파일을 다시 뽑으러 간다.**
+
+    버전 판정 자체는 tests/test_osinfo.py 가 본다. 여기서 고정하는 것은
+    판정 결과가 04단계의 스킵 사유까지 실제로 이어지는가다.
+    """
+    evidence_dir = tmp_path / "evidence"
+    (evidence_dir / "Windows/AppCompat/Programs").mkdir(parents=True)
+    # Win7 에는 RecentFileCache.bcf 만 있고 Amcache.hve 는 없다.
+    (evidence_dir / "Windows/AppCompat/Programs/RecentFileCache.bcf").write_bytes(
+        b"\xfe\xff\xee\xff" + b"\x00" * 16
+    )
+
+    monkeypatch.setattr(
+        parse_mod.osinfo,
+        "detect",
+        lambda source: parse_mod.osinfo.WindowsVersion(
+            build=7601, family="win7", product_name="Windows 7 Professional"
+        ),
+    )
+
+    code = parse_mod.main(
+        [
+            "--in", str(_selection_for(tmp_path, ["registry:Amcache", "recentfilecache"])),
+            "--out", str(tmp_path / "04_parsed"),
+            "--evidence", str(evidence_dir),
+        ]
+    )
+    # RecentFileCache 는 열렸다(항목 0건). 04단계는 정상 종료한다.
+    assert code == 0
+
+    manifest = io.read_json(tmp_path / "04_parsed/_manifest.json")
+    assert manifest["windows"]["build"] == 7601
+    assert manifest["windows"]["family"] == "win7"
+    assert [entry["reason"] for entry in manifest["skipped"]] == ["version_not_applicable"]
+
+    logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    reasons = {
+        entry["detail"]["value"]: entry["detail"]["message"]
+        for entry in logged
+        if entry["action"] == "skip"
+    }
+    assert "registry:Amcache" in reasons
+    assert "7601" in reasons["registry:Amcache"]
+    assert "RecentFileCache" in reasons["registry:Amcache"]
+    # RecentFileCache 쪽은 버전 미해당이 아니다. 실제로 열렸고 항목이
+    # 0건이었을 뿐이므로 이 사유로 빠지면 안 된다.
+    assert "recentfilecache" not in reasons
+
+
+def test_parse_filters_nothing_when_the_version_is_undetermined(tmp_path, monkeypatch):
+    """판정 실패는 거르지 않을 이유다. 잘못 거르면 있는 증거를 안 읽는다."""
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+
+    def refuse(source):
+        raise parse_mod.osinfo.VersionUndetermined("SOFTWARE 하이브를 찾지 못했습니다")
+
+    monkeypatch.setattr(parse_mod.osinfo, "detect", refuse)
+
+    with pytest.raises(SystemExit):
+        parse_mod.main(
+            [
+                "--in", str(_selection_for(tmp_path, ["registry:Amcache"])),
+                "--out", str(tmp_path / "04_parsed"),
+                "--evidence", str(evidence_dir),
+            ]
+        )
+
+    logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    skips = [e for e in logged if e["action"] == "skip"]
+    # 버전 미해당이 아니라 "증거에 없음"으로 빠져야 한다 — 실제로 없으니까.
+    assert [e["detail"]["value"] for e in skips] == ["registry:Amcache"]
+    assert "버전" not in skips[0]["detail"]["message"]
+
+
 def test_parse_skips_artifacts_without_a_registered_parser(tmp_path):
     # 파서 등록이 유일한 확장 지점이라는 것을 고정한다. 구현된 아티팩트는
     # 인스턴스가 나오고, 아직 파서가 없는 것은 None 이라 parse 가 건너뛴다.

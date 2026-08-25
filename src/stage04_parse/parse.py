@@ -85,6 +85,7 @@ OUTPUT_FILENAMES: dict[str, str] = {
     "registry:SYSTEM": "registry_system.jsonl",
     "registry:SOFTWARE": "registry_software.jsonl",
     "registry:Amcache": "registry_amcache.jsonl",
+    "recentfilecache": "recentfilecache.jsonl",
     "prefetch": "prefetch.jsonl",
 }
 

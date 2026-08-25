@@ -238,6 +238,13 @@ FILE_LAYOUT: dict[str, ArtifactLocation] = {
         relative_paths=("Windows/AppCompat/Programs/Amcache.hve",),
         filenames=("Amcache.hve",),
     ),
+    # Amcache 와 같은 폴더에 있다. Windows 7 에만 있고 Win8 부터는 없다 —
+    # **어느 쪽을 찾아 나설지는 여기가 아니라 osinfo 가 정한다.** 이 표는
+    # "있다면 어디에"만 안다.
+    "recentfilecache": ArtifactLocation(
+        relative_paths=("Windows/AppCompat/Programs/RecentFileCache.bcf",),
+        filenames=("RecentFileCache.bcf",),
+    ),
     # 유일한 디렉터리 아티팩트다. 폴더 안의 .pf 전부가 아티팩트 하나이며,
     # 파일마다 레코드가 하나씩 나온다.
     "prefetch": ArtifactLocation(

@@ -58,6 +58,7 @@
 | registry:SYSTEM | 식별된 기법에 매핑된 아티팩트가 아님 |
 | registry:SOFTWARE | 식별된 기법에 매핑된 아티팩트가 아님 |
 | registry:Amcache | 식별된 기법에 매핑된 아티팩트가 아님 |
+| recentfilecache | 식별된 기법에 매핑된 아티팩트가 아님 |
 | prefetch | 식별된 기법에 매핑된 아티팩트가 아님 |
 | $LogFile | 본 버전 미지원 (파싱 모듈 범위 외) |
 | $UsnJrnl | Tier 2 루프백 미구현으로 미평가 (조건: Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시) |
@@ -68,4 +69,4 @@
 본 보고서는 자동 생성되었으며 수사상 참고 자료입니다. 포렌식 감정 결과나
 전문가 의견이 아니며, 해석의 타당성은 분석가 검토가 필요합니다.
 
-생성: 2026-08-24T09:54:45Z / report.py
+생성: 2026-08-25T00:59:43Z / report.py
