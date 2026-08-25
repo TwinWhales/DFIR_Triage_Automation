@@ -92,6 +92,7 @@ from .base import Scope
 
 __all__ = [
     "RegistryParser",
+    "HiveBuffer",
     "HIVE_OF",
     "DEFAULT_VALUE_NAME",
     "STRING_TYPES",
@@ -360,7 +361,7 @@ class RegistryParser:
 
         self._warn_if_dirty(buf)
 
-        hive = Registry.Registry(_Buffer(buf))
+        hive = Registry.Registry(HiveBuffer(buf))
         prefixes = self._resolve_prefixes(hive, scope)
 
         yield from self._walk(hive.root(), prefixes)
@@ -596,7 +597,7 @@ class RegistryParser:
         return out
 
 
-class _Buffer:
+class HiveBuffer:
     """이미 읽어 둔 바이트를 ``Registry``에 넘기기 위한 얇은 껍데기.
 
     ``Registry.Registry``는 ``.read()``가 있는 객체나 파일명을 받습니다.

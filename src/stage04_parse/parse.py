@@ -18,6 +18,11 @@
 보고서의 "분석 범위 한계"에 사유와 함께 싣는다(``docs/limitations.md``
 4-1). ``note_skip`` 참조.
 
+**증거가 어느 Windows인지 먼저 판정한다**(``osinfo``). 그 버전에 존재할
+수 없는 아티팩트는 찾아 보지도 않고 ``version_not_applicable``로 적는다 —
+Win7 이미지의 ``Amcache.hve``가 그렇다. 판정에 실패하면 아무것도 거르지
+않는다. 근거는 ``osinfo`` 모듈 docstring에 있다.
+
 증거 없이 배선만 확인하려면 목업 ``04_parsed/``를 미리 넣어 두고
 ``--skip-existing``으로 건너뛴다.
 
@@ -42,7 +47,7 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, schema
-from . import evidence, flagging, parsers
+from . import evidence, flagging, osinfo, parsers
 from .parsers.base import Scope
 
 __all__ = [
@@ -133,6 +138,7 @@ def write_manifest(
     files: list[dict[str, Any]],
     implementation: str = "native",
     skipped: "list[dict[str, Any]] | None" = None,
+    windows: "dict[str, Any] | None" = None,
 ) -> Path:
     """``_manifest.json``을 쓴다.
 
@@ -146,6 +152,10 @@ def write_manifest(
     한 일을 적는 곳이므로 "안 한 일"도 여기 적는다. 예전에는 이것이
     ``errors.jsonl``에만 남아 07단계가 볼 수 없었고, 그 결과 보고서가
     **읽지 못한 아티팩트를 언급조차 하지 않았다**(docs/limitations.md 4-1).
+
+    ``windows``는 증거가 어느 Windows인가다(``osinfo``). 판정에 실패해도
+    키는 남는다 — ``{"determined": false, "reason": ...}``. "키가 없다"와
+    "못 정했다"는 다르고, 07단계가 그 차이를 보고서에 적는다.
     """
     manifest = io.new_document(
         case_id,
@@ -153,6 +163,9 @@ def write_manifest(
         io.make_generator("parse.py", implementation),
         files=files,
         skipped=list(skipped or []),
+        windows=dict(
+            windows or {"determined": False, "reason": "판정을 시도하지 않았습니다"}
+        ),
         total_records=sum(entry["record_count"] for entry in files),
         flagged_records=sum(entry["flagged_count"] for entry in files),
     )
@@ -438,6 +451,33 @@ def main(argv: "list[str] | None" = None) -> int:
     except evidence.EvidenceError as e:
         log.abort(STAGE, "parse_error", {"message": str(e)})
 
+    # 증거가 어느 Windows인가. **실패해도 계속 간다** — 판정은 파싱의
+    # 전제가 아니라 "이 버전엔 원래 없다"를 가리기 위한 보조 정보다.
+    # 사유는 매니페스트에 남고, 못 정하면 가용성 판정을 아예 하지 않는다
+    # (osinfo 모듈 docstring "모르면 거르지 않는다").
+    try:
+        version: "osinfo.WindowsVersion | None" = osinfo.detect(source)
+        windows_note = version.as_manifest()
+        print(f"[{STAGE}] Windows 판정 — {version.describe()}")
+        if not version.known:
+            print(
+                f"[{STAGE}] 아는 빌드 구간에 없습니다 (빌드 {version.build}). "
+                "버전별 가용성 판정을 건너뜁니다.",
+                file=sys.stderr,
+            )
+    except osinfo.VersionUndetermined as e:
+        # ``errors.jsonl``에는 남기지 않는다. 저 로그는 **아티팩트 단위**
+        # 실패의 집계이고 발표 통계의 출처인데(``common/errors.py``),
+        # 버전 판정은 아티팩트가 아니다. 섞으면 "못 읽은 아티팩트 수"가
+        # 부풀고 어느 쪽이 진짜인지 모르게 된다. ``NotAVolumeRoot``가 같은
+        # 이유로 이미 그 로그를 건드리지 않는다.
+        #
+        # 조용히 넘어가는 것도 아니다 — 사유가 stderr와 매니페스트
+        # ``windows.reason`` 양쪽에 남고, 07단계가 그것을 보고서에 싣는다.
+        version = None
+        windows_note = {"determined": False, "reason": str(e)}
+        print(f"[{STAGE}] Windows 버전 판정 불가 — {e}", file=sys.stderr)
+
     files: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
 
@@ -459,6 +499,14 @@ def main(argv: "list[str] | None" = None) -> int:
 
     large_artifact_bytes = int(args.large_artifact_mb * 1024 * 1024)
     for artifact, scope_dict in sorted(targets.items()):
+        # **증거를 열기 전에** 판정한다. 이 버전에 존재할 수 없는
+        # 아티팩트를 찾아 헤매다 artifact_not_found 로 적으면, 보고서가
+        # "수집 누락"이라고 말하게 된다 — 분석가는 있지도 않은 파일을
+        # 다시 뽑으러 간다.
+        not_applicable = osinfo.applicability(artifact, version)
+        if not_applicable:
+            note_skip(artifact, "version_not_applicable", not_applicable, "버전 미해당")
+            continue
         try:
             entry = parse_artifact(
                 artifact,
@@ -513,7 +561,12 @@ def main(argv: "list[str] | None" = None) -> int:
         )
 
     write_manifest(
-        out_dir, selection["case_id"], files, implementation=args.parser, skipped=skipped
+        out_dir,
+        selection["case_id"],
+        files,
+        implementation=args.parser,
+        skipped=skipped,
+        windows=windows_note,
     )
     # native/reference 는 $MFT 에 한해 같은 인스턴스를 가리킨다. 산출물만
     # 보고 어느 쪽으로 돌렸는지 구분할 수 있게 매니페스트에는 남기되,

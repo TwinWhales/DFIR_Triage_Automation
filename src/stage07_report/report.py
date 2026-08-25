@@ -95,6 +95,7 @@ def build_context(
         "case_id": verified["case_id"],
         "hosts": (scenario or {}).get("entities", {}).get("hosts", []),
         "target_os": (scenario or {}).get("target_os", "미상"),
+        "windows": _windows(manifest),
         "period_start": scope[0],
         "period_end": scope[1],
         "techniques": _techniques(selection, scenario),
@@ -167,7 +168,39 @@ SKIP_REASONS = {
     "artifact_not_found": "증거에 없음 (수집 누락)",
     "empty_artifact": "파일이 0바이트 (추출 확인 필요)",
     "parser_missing": "본 버전 미지원 (파서 없음)",
+    # 위 셋과 조치가 다르다. 앞의 것들은 "다시 뽑아 오라"이지만 이것은
+    # **다시 뽑아도 없다.** 가르지 않으면 분석가가 존재하지 않는 파일을
+    # 찾으러 간다(src/stage04_parse/osinfo.py).
+    "version_not_applicable": "이 Windows 버전에 없는 아티팩트 (재수집 불필요)",
 }
+
+
+def _windows(manifest: dict[str, Any] | None) -> str:
+    """증거에서 판정한 Windows 버전. 한 줄로.
+
+    시나리오의 ``target_os``와 나란히 실립니다. **둘은 출처가 다릅니다** —
+    시나리오는 사람이 적어 넣은 값이고 이쪽은 SOFTWARE 하이브에서 읽은
+    값입니다. 어긋나면 그 자체가 조사할 거리이므로 한쪽을 다른 쪽으로
+    덮어쓰지 않고 둘 다 보여 줍니다.
+
+    판정하지 못했으면 사유를 그대로 냅니다. 빈 문자열은 04단계가 이
+    필드를 쓰기 전의 산출물이라는 뜻이므로 아무것도 적지 않습니다.
+    """
+    info = (manifest or {}).get("windows")
+    if not info:
+        return ""
+    if not info.get("determined"):
+        return f"판정 불가 — {info.get('reason', '사유 없음')}"
+
+    parts = [str(info.get("product_name") or info.get("family", "이름 없음"))]
+    build = f"빌드 {info['build']}"
+    if info.get("revision") is not None:
+        build += f".{info['revision']}"
+    parts.append(build)
+    for key in ("display_version", "release_id", "installation_type"):
+        if info.get(key):
+            parts.append(str(info[key]))
+    return f"{parts[0]} ({', '.join(parts[1:])})"
 
 
 def _examined(manifest: dict[str, Any] | None) -> list[dict[str, str]]:
