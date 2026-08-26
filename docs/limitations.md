@@ -633,7 +633,85 @@ USN 레코드는 파일 **이름**만 담습니다. 전체 경로를 얻으려�
   `T1565.001`·`T1005`·`T1657` 의 Tier 1 `$MFT` 요청이 0건을 내는데, 경로를
   잘못 짚은 것인지 흔적이 없는 것인지 산출물만 보고는 구별되지 않습니다.
 
-`timestamp_truncated` 만 실측이 있습니다 — 아래.
+`timestamp_truncated` 만 실측이 있습니다 — 아래. Sysmon 쪽은
+2026-08-26 에 절반이 확인됐습니다 — 바로 아래.
+
+#### 실측 — Sysmon 을 켠 실물 이미지 (2026-08-26, `win10_sysmon_testimage.001`)
+
+Sysmon 을 설치해 구동한 Win10 을 FTK Imager 로 뜬 60GB 물리 디스크입니다
+(MD5·SHA1 verified). **이 카탈로그에서 유일하게 기본 탑재가 아닌 로그라
+그전까지 실물이 없었습니다.**
+
+`0824test.001` 과 같은 레이아웃입니다 — NTFS 둘(0.4GiB 복구 + 59.4GiB
+시스템)이라 `--volume 1` 이 필요합니다. 카탈로그 21종 중 15종을 찾았습니다.
+
+**확인된 것 넷.**
+
+| | |
+|---|---|
+| 파일 경로 | `Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx` — `FILE_LAYOUT` 의 첫 후보가 맞았습니다 |
+| 로그 크기 | 1.1 MiB, 244건 / 5.5분. **05단계 쿼터를 태울 규모가 아닙니다** |
+| 청크 복구 | 헤더가 `chunk_count=1` 인데 청크 4개를 복구했습니다. 구동 중 캡처라 헤더가 안 플러시된 것이고, **복구 로직이 실물에서 일한 첫 사례**입니다. 없었으면 244건 중 대부분을 놓쳤습니다 |
+| EventID 분포 | 1(ProcessCreate) 125 · 5(ProcessTerminate) 114 · 16 2 · 4·10·11 각 1. 기본 설정(`ConfigurationFileHash "-"`) |
+
+**정상 구동 중 플래그가 붙은 건수** (조치 전):
+
+```
+shell_spawned                 10건   ← EID 1: 5,  EID 5: 5
+execution_from_unusual_path    6건   ← EID 1: 3,  EID 5: 3
+unexpected_parent_process      0건
+file_created                   1건
+```
+
+오탐의 정체는 전부 **Windows 서비싱**입니다 — `sedsvc.exe`(Remediation)·
+`CompatTelRunner.exe`(텔레메트리)가 `cmd.exe`·`rundll32.exe` 를 띄우고,
+`C:\Windows\Temp\{GUID}\DismHost.exe` 가 `execution_from_unusual_path` 6건
+전부입니다. **다만 설치 직후 5.5분 구간이라 서비싱 활동이 평시보다
+많습니다** — 시간당으로 환산하면 과대평가됩니다.
+
+`unexpected_parent_process` 0건은 룰이 정확해서가 아닙니다. EID 5 에
+`ParentImage` 가 없어 우연히 안 붙었고, **explorer.exe 전제는 이 이미지로
+검증되지 않았습니다** — Assigned Access 를 안 켠 일반 Win10 이라 explorer 가
+정상 셸입니다.
+
+##### 세 룰이 EID 1 만 본다고 써 놓고 안 그랬다 (**해결됨**)
+
+위 건수의 절반이 `ProcessTerminate` 였습니다. 세 룰 다 `condition:` 에
+"Sysmon 1(프로세스 생성)" 이라고 적어 놓고 `when:` 절에 event_id 제약이
+없었습니다. 바로 아래 `network_connection` 은 `match: event_id` 를 쓰고
+있으니 관례는 이미 있었고, 이 셋만 안 지켰습니다.
+
+같은 프로세스를 두 번 세는 것보다 나쁜 것이 있습니다. **EID 5 레코드에는
+`ParentImage` 도 `CommandLine` 도 없습니다.**
+
+```
+SYSMON#212  EID=5  fields=[Image, ProcessGuid, ProcessId, RuleName, User, UtcTime]
+```
+
+`shell_spawned` 의 note 가 "부모가 무엇이냐가 그 다음 질문이다
+(fields.ParentImage 는 레코드에 그대로 실려 모델이 본다)" 라고 적은 바로 그
+필드가 없는 쪽입니다. **05단계 자리는 먹고 정보는 더 적습니다.**
+
+2026-08-25 에 채널 단위로 좁혔던 "flag 사정거리" 와 같은 부류인데, 이번엔
+채널 **안에서** EventID 사이입니다.
+
+**조치** — `Clause` 에 `event_ids` 를 더했습니다. `artifact` 와 같은
+자리이고, 둘 다 대상을 좁힌 뒤 `match` 가 판정합니다. `match: event_id`
+(EventID 자체가 신호)와 뜻이 달라 함께 쓰면 거부됩니다.
+작성 규칙은 `docs/mapping-guide.md`.
+
+```
+조치 전  17건 (EID 5 가 8건)
+조치 후   9건 (EID 5 가 0건)
+```
+
+##### 이 이미지로 확인하지 못한 것
+
+`evtx:AssignedAccess`·`AssignedAccessAdmin`·`AssignedAccessBroker`·
+`DriverFrameworks`·`RDPConnection` — **파일 자체가 없습니다.** Assigned
+Access 를 켜지 않았고, USB 를 꽂지 않았고, RDP 를 쓰지 않았습니다. 이
+다섯의 경로 문자열과 event_id 추정값은 여전히 미검증이고, 위의
+`kiosk_restriction_event` 볼륨 전제도 재지 못했습니다.
 
 #### 실측한 것 — `timestamp_truncated` 오탐률 0%
 

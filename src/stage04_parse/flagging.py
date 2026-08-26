@@ -110,9 +110,23 @@ class Clause:
     match: str | None = None
     field: str | None = None
     values: tuple[Any, ...] = ()
+    #: 이 절이 볼 EventID. 비면 제한 없음. ``artifact`` 와 같은 자리에
+    #: 있습니다 — 둘 다 **대상을 좁히고**(AND), 그다음 ``match`` 가 판정합니다.
+    #:
+    #: 채널 하나가 여러 뜻의 이벤트를 담을 때 필요합니다. Sysmon 이 그렇습니다:
+    #: 같은 ``fields.Image`` 가 EID 1(생성)에도 5(종료)에도 실려 있어, 이름만
+    #: 보는 룰은 한 프로세스를 두 번 셉니다. 종료 레코드에는 ``ParentImage``
+    #: 도 ``CommandLine`` 도 없으므로 **자리는 먹고 정보는 더 적습니다.**
+    #:
+    #: ``match: event_id`` 와 다릅니다. 그쪽은 "이 EventID 라는 사실 자체가
+    #: 신호"이고(예: Sysmon 3·22 = network_connection), 이쪽은 다른 판정을
+    #: 걸기 전에 대상을 좁히는 것입니다. 그래서 함께 쓰지 못하게 막습니다.
+    event_ids: tuple[int, ...] = ()
 
     def matches(self, record: dict[str, Any]) -> bool:
         if not _artifact_matches(str(record.get("artifact", "")), self.artifact):
+            return False
+        if self.event_ids and record.get("event_id") not in self.event_ids:
             return False
         if self.match is None:
             return True
@@ -453,9 +467,11 @@ def _build_clause(raw: Any, *, flag: str, where: str) -> Clause:
     if "artifact" not in raw:
         raise VocabularyError(f"{where}: {flag}.rule.when 의 절에 artifact 없음")
 
+    event_ids = _clause_event_ids(raw, flag=flag, where=where)
+
     match = raw.get("match")
     if match is None:
-        return Clause(artifact=str(raw["artifact"]))
+        return Clause(artifact=str(raw["artifact"]), event_ids=event_ids)
     if match not in MATCHERS:
         known = ", ".join(sorted(MATCHERS))
         raise VocabularyError(
@@ -470,12 +486,35 @@ def _build_clause(raw: Any, *, flag: str, where: str) -> Clause:
     if not values:
         raise VocabularyError(f"{where}: {flag} 의 values 가 비어 있음")
 
+    if match == "event_id" and event_ids:
+        raise VocabularyError(
+            f"{where}: {flag} 의 절이 match: event_id 와 event_ids 를 함께 씀. "
+            "둘은 뜻이 다르다 — match 는 EventID 자체가 신호일 때, event_ids 는 "
+            "다른 판정의 대상을 좁힐 때 쓴다. 하나만 남긴다."
+        )
+
     return Clause(
         artifact=str(raw["artifact"]),
         match=str(match),
         field=str(raw["field"]) if "field" in raw else None,
         values=values,
+        event_ids=event_ids,
     )
+
+
+def _clause_event_ids(raw: dict[str, Any], *, flag: str, where: str) -> tuple[int, ...]:
+    """절의 ``event_ids`` 를 읽는다. 없으면 빈 튜플(제한 없음)."""
+    if "event_ids" not in raw:
+        return ()
+    listed = raw["event_ids"]
+    if not isinstance(listed, list) or not listed:
+        raise VocabularyError(
+            f"{where}: {flag} 의 event_ids 는 비지 않은 목록이어야 함 — {listed!r}"
+        )
+    try:
+        return tuple(int(e) for e in listed)
+    except (TypeError, ValueError) as e:
+        raise VocabularyError(f"{where}: {flag} 의 event_ids 에 정수가 아닌 값 — {listed!r}") from e
 
 
 def _build_rule(flag: str, spec: Any, *, where: str) -> FlagRule:
