@@ -235,9 +235,37 @@ def test_every_hand_authored_statement_survives_verification():
     # 아니라 표기 차이를 세고 있다는 뜻이다.
     report = validator_check.run(io.read_json(validator_check.DEFAULT_CASES), validator_check.DEFAULT_PARSED)
     assert report["false_rejections"] == 0, [
-        (r["id"], r["rejection"]) for r in report["results"] if r["got"] == "rejected"
+        (r["id"], r["rejection"])
+        for r in report["results"]
+        if r["got"] == "rejected" and r["expected"] != "rejected"
     ]
     assert report["pass_rate"] == 1.0
+
+
+def test_known_gaps_carry_a_reason_and_are_still_broken():
+    """expect 가 rejected 인 사례는 '아직 못 고친 것'이다.
+
+    둘을 함께 본다 — 사유(``gap``)가 적혀 있는가, 그리고 **아직도 실제로
+    기각되는가.** 고쳐졌는데 목록에 남아 있으면 그 자리에서 진짜 회귀가
+    일어나도 기대대로라고 보고된다. `_KNOWN_GAPS` 가 낡지 않게 하는
+    test_flag_rules 의 검사와 같은 취지다.
+    """
+    cases = io.read_json(validator_check.DEFAULT_CASES)["cases"]
+    gaps = [c for c in cases if c.get("expect") == "rejected"]
+    for case in gaps:
+        assert case.get("gap"), f"{case['id']}: 어디서 고쳐야 하는지 적혀 있지 않다"
+
+    if not gaps:
+        return
+    report = validator_check.run(
+        io.read_json(validator_check.DEFAULT_CASES), validator_check.DEFAULT_PARSED
+    )
+    got = {r["id"]: r["got"] for r in report["results"]}
+    for case in gaps:
+        assert got[case["id"]] == "rejected", (
+            f"{case['id']} 이 이제 통과합니다 — 고쳐졌으니 expect 를 passed 로 "
+            "되돌리고 gap 을 지우십시오."
+        )
 
 
 def test_the_check_actually_catches_an_over_strict_verifier():

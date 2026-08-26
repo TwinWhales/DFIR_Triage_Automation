@@ -124,6 +124,41 @@ def test_a_different_path_is_still_a_mismatch():
     )
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["Image", "ParentImage", "TargetFilename", "OriginalFileName",
+     "ProcessName", "NewProcessName", "ImageLoaded", "fields.ParentImage"],
+)
+def test_sysmon_and_security_path_fields_are_compared_as_paths(field):
+    """K-001 Stage 2·3 이 기대는 필드들. 여기서 이름이 빠지면 대소문자 하나로
+    정상 문장이 기각되고 환각률이 표기 차이를 세게 된다."""
+    assert comparators.is_path_field(field)
+    assert comparators.compare(field, "c:\\windows\\system32\\cmd.exe",
+                               "C:\\Windows\\System32\\cmd.exe")
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["Image", "ParentImage", "TargetFilename", "ProcessName"],
+)
+def test_widened_path_fields_did_not_go_soft(field):
+    """이름을 늘린 것이 검증을 무르게 하지 않았는가. 경로가 실제로 다르면
+    여전히 기각돼야 한다 — 이 확인이 없으면 위 테스트는 '전부 통과'만
+    보장하는 셈이 된다."""
+    assert not comparators.compare(field, "C:\\Windows\\System32\\cmd.exe",
+                                   "C:\\Windows\\System32\\powershell.exe")
+    assert not comparators.compare(field, "E:\\banker.exe", "C:\\banker.exe")
+
+
+def test_command_line_is_not_a_path_field():
+    """앞머리는 경로지만 뒤는 인자다. 경로 규칙으로 대소문자를 지우면
+    인자의 실제 차이까지 같이 지워진다."""
+    assert not comparators.is_path_field("CommandLine")
+    assert not comparators.compare(
+        "CommandLine", "cmd.exe /c WHOAMI", "cmd.exe /c whoami"
+    )
+
+
 def test_substring_does_not_count_as_a_match():
     # 허용하면 경로를 대충 쓴 문장이 전부 통과해 검증이 무의미해진다.
     assert not comparators.compare("path", "shell.aspx", "C:\\inetpub\\wwwroot\\shell.aspx")

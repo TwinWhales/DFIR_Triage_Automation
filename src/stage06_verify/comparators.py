@@ -18,8 +18,10 @@
 않는다. ``"shell"``이 ``"shell.aspx"``에 들어 있다고 통과시키면, 경로를 대충
 쓴 문장이 전부 통과해 검증이 무의미해진다.
 
-`benchmark/validator_check.py`가 사람이 옳다고 판단한 문장 30건을 넣어
-이 규칙이 과엄격하지 않은지 정기적으로 확인한다.
+`benchmark/validator_check.py`가 사람이 옳다고 판단한 문장을 넣어 이 규칙이
+과엄격하지 않은지 정기적으로 확인한다. **경로 규칙은 필드 이름으로 켜지므로,
+아티팩트를 늘릴 때 이름을 같이 늘리지 않으면 조용히 정확 문자열 비교로
+떨어진다** — 사례를 먼저 추가하고 고치는 것이 순서다.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ __all__ = [
     "get_field",
     "FieldMissing",
     "PATH_FIELDS",
+    "PATH_FIELD_SUFFIXES",
 ]
 
 
@@ -43,9 +46,43 @@ class FieldMissing(LookupError):
     """레코드에 해당 필드가 없다."""
 
 
-#: 경로로 취급할 필드. 이름으로 판단한다. 값의 생김새로 추측하면
+#: 경로로 취급할 필드. **이름으로 판단한다.** 값의 생김새로 추측하면
 #: ``C:\Users``처럼 보이는 계정명 같은 것에서 오작동한다.
-PATH_FIELDS = frozenset({"path", "target_path", "source_path", "image_path"})
+#:
+#: 이름 목록이라 **아티팩트를 늘릴 때마다 같이 늘려야 한다.** 안 늘리면
+#: 조용히 정확 문자열 비교로 떨어져 대소문자 하나로 정상 문장이 기각된다.
+#: 2026-08-26 실측에서 실제로 그랬다 — `docs/limitations.md` "검증기가
+#: 경로 표기 차이를 환각으로 센다".
+PATH_FIELDS = frozenset(
+    {
+        # $MFT·USN·프리패치 등 최상위 경로
+        "path",
+        "target_path",
+        "source_path",
+        "image_path",
+        # Sysmon — K-001 Stage 2·3 이 여기 기댄다
+        "image",
+        "imagepath",
+        "imageloaded",
+        "parentimage",
+        "sourceimage",
+        "targetimage",
+        "targetfilename",
+        "originalfilename",
+        "currentdirectory",
+        # Security 4688·4624 계열
+        "processname",
+        "parentprocessname",
+        "newprocessname",
+    }
+)
+
+#: 이름 끝으로도 받는다. 새 채널이 같은 관례를 따르면 목록을 안 고쳐도 된다.
+PATH_FIELD_SUFFIXES = ("_path", "filename")
+
+#: **`CommandLine` 은 일부러 뺐다.** 앞머리는 경로지만 뒤는 인자다.
+#: 경로 규칙으로 대소문자를 지우면 인자의 실제 차이(`-EncodedCommand` 의
+#: base64 등)까지 같이 지워져 검증이 물러진다.
 
 # normalize_path와 parse_timestamp는 common에서 가져다 쓴다. 04단계의 범위
 # 매칭이 같은 함수를 쓰기 때문이다. NTFS 대소문자 무시는 검증 정책이 아니라
@@ -60,7 +97,7 @@ PATH_FIELDS = frozenset({"path", "target_path", "source_path", "image_path"})
 def is_path_field(field: str) -> bool:
     """경로 비교 규칙을 적용할 필드인가."""
     leaf = field.rsplit(".", 1)[-1].lower()
-    return leaf in PATH_FIELDS or leaf.endswith("_path")
+    return leaf in PATH_FIELDS or leaf.endswith(PATH_FIELD_SUFFIXES)
 
 
 def _walk(record: dict[str, Any], field: str) -> Any:

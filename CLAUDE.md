@@ -48,6 +48,7 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 
 | 알고 싶은 것 | 권위 있는 문서 |
 |---|---|
+| **다음에 무엇을 할 차례인가** | `work.md` |
 | 왜 이렇게 설계했나, 팀 분담, 비목표 | `work-guide.md` |
 | 데이터 형식 — 필드·타입·제약 | `schemas/*.json` + `schemas/README.md` |
 | 단계별 입출력 계약 | `docs/pipeline-io-spec.md` |

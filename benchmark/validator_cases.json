@@ -1,12 +1,15 @@
 {
   "note": "사람이 '이건 맞는 문장'이라고 판단한 사례. 06단계 검증기가 이걸 기각하면 검증기가 과엄격한 것이다. C-001 목업 파싱 결과(benchmark/datasets/C-001-webshell/mock/04_parsed)를 대상으로 한다.",
-  "policy": "여기 있는 문장은 전부 통과하거나(claims 있음) 검증불가로 분류되어야(claims 없음) 한다. 하나라도 rejected면 검증기 결함이다. 새 비교 규칙을 넣을 때마다 여기에 사례를 추가한다.",
+  "policy": "여기 있는 문장은 전부 통과하거나(claims 있음) 검증불가로 분류되어야(claims 없음) 한다. 기대와 다르면 검증기 결함이다. 새 비교 규칙을 넣을 때마다 여기에 사례를 추가한다. expect 가 rejected 인 사례는 **아직 못 고친 것**이고 gap 에 사유와 고칠 자리를 적는다 — 고쳐지면 expect 를 passed 로 되돌린다. 이 목록이 낡지 않게 tests/test_benchmark.py 가 함께 검사한다.",
   "input_refs": [
+    "AMCACHE#15044",
+    "EVTX-SEC#40912",
+    "EVTX-SEC#40915",
+    "SYSMON#77",
+    "SYSMON#91",
     "MFT#12345",
     "MFT#12346",
-    "MFT#12400",
-    "EVTX-SEC#40912",
-    "EVTX-SEC#40915"
+    "MFT#12400"
   ],
   "cases": [
     {
@@ -601,6 +604,72 @@
           "ref": "MFT#12345",
           "field": "fields.path",
           "value": "C:\\inetpub\\wwwroot\\upload\\shell.aspx"
+        }
+      ]
+    },
+    {
+      "id": "V36",
+      "risk": "경로 필드인데 이름이 화이트리스트에 없다 (Amcache 숫자 값 이름)",
+      "why": "is_path_field() 가 PATH_FIELDS 네 이름과 *_path 만 경로로 봐서, 그 밖의 이름은 정확 문자열 비교로 간다. Amcache 는 값 이름이 숫자 문자열이라 여기 걸린다. NTFS 대소문자 무시는 파일시스템의 사실이지 필드 이름의 문제가 아니다 — 2026-08-26 K-ALERT 실측에서 이것 하나로 정상 문장이 기각됐다. 2026-08-26 시점 결론: Sysmon·Security 계열은 이름으로 받게 고쳤고, Amcache 숫자 이름은 04단계 몫으로 남겼다.",
+      "statement": "sppsvc.exe 가 Amcache 에 등재돼 있습니다.",
+      "refs": [
+        "AMCACHE#15044"
+      ],
+      "claims": [
+        {
+          "ref": "AMCACHE#15044",
+          "field": "15",
+          "value": "C:\\WINDOWS\\SYSTEM32\\sppsvc.exe"
+        }
+      ],
+      "expect": "rejected",
+      "gap": "비교기가 풀 문제가 아니다. Amcache 는 값 이름이 숫자 문자열이라 ('15' = 전체 경로) 이름으로는 경로인지 알 수 없고, PATH_FIELDS 에 '15' 를 넣으면 다른 서브키의 15 까지 경로로 본다. **04단계에서 Amcache 값 이름을 해석해 내보내야 풀린다** — 그때 이 사례의 expect 를 passed 로 되돌린다."
+    },
+    {
+      "id": "V37",
+      "risk": "Sysmon Image 의 대소문자",
+      "why": "K-001 Stage 2 가 '어디에 있는 것이 실행됐나'를 이 필드로 판단한다. 랩에 Sysmon 이 실리는 순간 모델 인용이 전부 이 비교를 탄다.",
+      "statement": "cmd.exe 가 실행됐습니다.",
+      "refs": [
+        "SYSMON#77"
+      ],
+      "claims": [
+        {
+          "ref": "SYSMON#77",
+          "field": "Image",
+          "value": "c:\\windows\\system32\\cmd.exe"
+        }
+      ]
+    },
+    {
+      "id": "V38",
+      "risk": "Sysmon ParentImage 의 대소문자",
+      "why": "K-001 Stage 3 의 결정적 근거 — '주문 UI 가 셸을 자식으로 생성' 은 이 필드 없이는 관측할 방법이 없다. 여기서 기각되면 그 단계가 통째로 보고서에 안 실린다.",
+      "statement": "키오스크 주문 앱이 cmd.exe 를 자식 프로세스로 생성했습니다.",
+      "refs": [
+        "SYSMON#77"
+      ],
+      "claims": [
+        {
+          "ref": "SYSMON#77",
+          "field": "ParentImage",
+          "value": "C:\\KioskApp\\App.exe"
+        }
+      ]
+    },
+    {
+      "id": "V39",
+      "risk": "Sysmon TargetFilename 의 대소문자 (EID 11)",
+      "why": "파일 생성 흔적도 같은 부류다. 한 필드만 고치면 나머지가 같은 자리에 남는다.",
+      "statement": "banker.exe 가 공용 폴더에 생성됐습니다.",
+      "refs": [
+        "SYSMON#91"
+      ],
+      "claims": [
+        {
+          "ref": "SYSMON#91",
+          "field": "TargetFilename",
+          "value": "c:\\users\\public\\BANKER.EXE"
         }
       ]
     }

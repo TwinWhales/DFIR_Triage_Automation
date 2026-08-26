@@ -22,7 +22,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -33,7 +33,39 @@ from src.stage06_verify.verify import verify  # noqa: E402
 __all__ = ["build_findings", "run", "main"]
 
 DEFAULT_CASES = REPO_ROOT / "benchmark/validator_cases.json"
-DEFAULT_PARSED = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock/04_parsed"
+#: 사례가 대조할 레코드. **두 곳입니다.**
+#:
+#: C-001 목업은 웹셸 벤치마크의 입력이라 표기 시험용 레코드를 넣으면
+#: 파싱 건수와 05단계 배분이 함께 흔들립니다. 그래서 표기 경계 사례는
+#: ``benchmark/validator_records/`` 에 따로 둡니다.
+DEFAULT_PARSED = (
+    REPO_ROOT / "benchmark/datasets/C-001-webshell/mock/04_parsed",
+    REPO_ROOT / "benchmark/validator_records",
+)
+
+
+def read_records(parsed_dirs: "str | Path | Sequence[str | Path]") -> dict[str, dict[str, Any]]:
+    """여러 디렉터리의 파싱 결과를 ref 하나의 색인으로 합친다.
+
+    ``read_parsed_records``와 같은 이유로 ref 중복은 즉시 실패입니다 —
+    어느 레코드를 검증했는지 모르게 되면 이 스크립트가 재는 것이
+    무의미해집니다.
+    """
+    if isinstance(parsed_dirs, (str, Path)):
+        parsed_dirs = [parsed_dirs]
+
+    merged: dict[str, dict[str, Any]] = {}
+    origin: dict[str, str] = {}
+    for directory in parsed_dirs:
+        for ref, record in io.read_parsed_records(directory).items():
+            if ref in merged:
+                raise io.DuplicateRefError(
+                    f"ref 중복: {ref} ({origin[ref]}, {directory}). "
+                    "사례용 레코드가 목업의 ref 를 다시 쓰고 있다."
+                )
+            merged[ref] = record
+            origin[ref] = str(directory)
+    return merged
 
 
 def build_findings(cases: dict[str, Any], case_id: str = "VALIDATOR") -> dict[str, Any]:
@@ -66,7 +98,7 @@ def build_findings(cases: dict[str, Any], case_id: str = "VALIDATOR") -> dict[st
 
 def run(
     cases: dict[str, Any],
-    parsed_dir: str | Path,
+    parsed_dir: "str | Path | Sequence[str | Path]",
     *,
     tolerance_seconds: float = 1.0,
     checker_names: "list[str] | None" = None,
@@ -75,7 +107,7 @@ def run(
     document = build_findings(cases)
     schema.validate(document, "findings")
 
-    records = io.read_parsed_records(parsed_dir)
+    records = read_records(parsed_dir)
     verified = verify(
         document,
         records,
@@ -107,18 +139,25 @@ def run(
                 "expected": expected,
                 "got": got,
                 "ok": got == expected,
+                "gap": case.get("gap", ""),
                 "rejection": detail.get(finding_id),
                 "statement": case["statement"],
             }
         )
 
     passed = sum(1 for r in results if r["ok"])
-    false_rejections = [r for r in results if r["got"] == "rejected"]
+
+    # **기대하지 않은 기각만** 오탐으로 센다. expect 가 rejected 인 사례는
+    # 아직 못 고친 것이고 gap 에 사유가 적혀 있다 — 그것을 오탐으로 세면
+    # 이 스크립트가 상시 실패해서 진짜 회귀가 묻힌다.
+    false_rejections = [r for r in results if r["got"] == "rejected" and r["expected"] != "rejected"]
+    known_gaps = [r for r in results if r["expected"] == "rejected"]
     return {
         "total": len(results),
         "ok": passed,
         "pass_rate": round(passed / len(results), 4) if results else None,
         "false_rejections": len(false_rejections),
+        "known_gaps": len(known_gaps),
         "results": results,
     }
 
@@ -128,6 +167,18 @@ def _format(report: dict[str, Any]) -> str:
         f"검증기 오탐 확인 — 사례 {report['total']}건 중 {report['ok']}건 기대대로 "
         f"({report['pass_rate']:.1%})"
     ]
+
+    # 아는 구멍은 통과하든 말든 항상 보여 준다. 조용하면 잊히고, 잊히면
+    # 고쳐진 뒤에도 expect: rejected 가 남아 진짜 회귀를 덮는다.
+    gaps = [r for r in report["results"] if r["expected"] == "rejected"]
+    if gaps:
+        lines.append(f"\n아는 구멍 {len(gaps)}건 (기각될 것을 알고 넣어 둔 사례):")
+        for row in gaps:
+            mark = "여전히 기각" if row["got"] == "rejected" else f"**이제 {row['got']}**"
+            lines.append(f"\n  [{row['id']}] {row['risk']} — {mark}")
+            lines.append(f"    고칠 자리: {row['gap']}")
+            if row["got"] != "rejected":
+                lines.append("    → 고쳐졌습니다. 이 사례의 expect 를 passed 로 되돌리십시오.")
 
     failures = [r for r in report["results"] if not r["ok"]]
     if not failures:
@@ -158,7 +209,13 @@ def main(argv: "list[str] | None" = None) -> int:
         description="사람이 옳다고 판단한 문장을 검증기에 넣어 오탐을 확인한다.",
     )
     parser.add_argument("--cases", default=str(DEFAULT_CASES))
-    parser.add_argument("--parsed", default=str(DEFAULT_PARSED), help="대조할 04_parsed 디렉터리")
+    parser.add_argument(
+        "--parsed",
+        action="append",
+        default=None,
+        help="대조할 04_parsed 디렉터리. 여러 번 주면 합쳐서 읽는다 "
+        "(기본: C-001 목업 + benchmark/validator_records)",
+    )
     parser.add_argument("--tolerance-seconds", type=float, default=1.0)
     parser.add_argument(
         "--checkers", default=None, help="검증 강도별 실험용. 쉼표로 구분"
@@ -175,7 +232,7 @@ def main(argv: "list[str] | None" = None) -> int:
     )
     report = run(
         io.read_json(args.cases),
-        args.parsed,
+        args.parsed or DEFAULT_PARSED,
         tolerance_seconds=args.tolerance_seconds,
         checker_names=checker_names,
     )

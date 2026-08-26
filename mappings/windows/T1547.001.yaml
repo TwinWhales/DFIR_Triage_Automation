@@ -5,8 +5,8 @@ os: windows
 artifacts:
   # HKLM\...\Run·RunOnce만 커버한다. HKCU 쪽(사용자별 자동실행)은
   # NTUSER.DAT 하이브가 필요한데 지금 카탈로그는 SYSTEM·SOFTWARE 두
-  # 볼륨 하이브만 지원한다(사용자별 하이브 다중 매칭은 work.md 트랙 A
-  # 참고). 키오스크처럼 단일 로컬 계정으로 상시 로그인된 환경에서는
+  # 볼륨 하이브만 지원한다(사용자별 하이브 다중 매칭은 미지원).
+  # 키오스크처럼 단일 로컬 계정으로 상시 로그인된 환경에서는
   # HKLM 쪽 비중이 커서 우선 이것만으로 채운다 — docs/limitations.md 참고.
   - name: registry:SOFTWARE
     tier: 1

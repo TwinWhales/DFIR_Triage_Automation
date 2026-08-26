@@ -185,8 +185,8 @@ artifacts:
     signal_source: scope
     description: SOFTWARE 하이브. 설치 프로그램·자동실행·예약 작업 캐시.
 
-  # Amcache.hve도 regf 포맷이라 registry 파서를 그대로 재사용한다
-  # (work.md 트랙 B). SYSTEM/SOFTWARE와 같은 이유로 flags가 붙지 않으므로
+  # Amcache.hve도 regf 포맷이라 registry 파서를 그대로 재사용한다.
+  # SYSTEM/SOFTWARE와 같은 이유로 flags가 붙지 않으므로
   # signal_source 도 같다 — 빼먹으면 파싱은 되는데 05단계에서 통째로
   # 사라진다(docs/limitations.md 6-7).
   registry:Amcache:

@@ -1,148 +1,248 @@
 # work.md — 다음에 할 일
 
-AIFT(Dissect 기반 이미지 직접 파싱 + AI 분석 도구)와 비교 검토하며 나온
-결론을 작업 순서로 정리한 문서다. 설계 근거는 여기 옮겨 적지 않는다 —
-각 항목에 붙은 문서가 권위다.
+2026-08-26 실측(K-001 랩 환경 대비 완성도 점검)에서 나온 작업 큐다.
+**설계 근거와 데이터 형식은 여기 옮겨 적지 않는다** — 각 항목에 붙은 문서가
+권위다. 여기 있는 것은 "무엇을, 어디서, 어떻게 확인하며" 뿐이다.
+
+끝낸 항목은 지우고, 그 사실은 `docs/limitations.md`에 남긴다.
 
 ---
 
-## 결론: 트랙 B(핵심 파서 확충)를 먼저, 트랙 A(raw 이미지 지원)는 그다음
+## 먼저 — 이 큐가 어디서 나왔나
 
-두 트랙은 **기술적으로 서로 의존하지 않는다.** 확인된 사실:
+알럿 하나를 만들어 실물 60GB 이미지에 관통시켰다. 결과:
 
-- 파서 넷(`mft` `usnjrnl` `evtx` `registry`) 전부 `stream: BinaryIO` 하나만
-  보고 동작한다. 어디서 온 스트림인지 모른다(`evidence.py` 설계 원칙).
-- `mft.py`만 `stream.seekable()`을 요구하는데, Dissect가 `$MFT`에 대해
-  돌려주는 `dissect.util.stream.RunlistStream`이 `seekable() == True`이고
-  `seek(0)` 후 재읽기 값이 원본과 100% 일치함을 실제 evidence 이미지로
-  확인했다.
-- 즉 **지금 파서를 더 만들어도 나중에 트랙 A를 붙일 때 다시 손댈 일이
-  없다.** 순서를 바꿔도 손해가 없다.
+| 구간 | 결과 |
+|---|---|
+| 02 알럿 → 시나리오 | 기법 8개. 결정론적, LLM 없음 |
+| 03 선별 | selected 22 / deferred 4 / excluded 3 |
+| 04 파싱 | 10종 1,693건. 못 찾은 6종은 `artifact_not_found`로 정직하게 기록 |
+| 05 해석 | **3회 재시도 끝에 중단** (약 25분, 소견 0건) |
+| 05 재시도 `--limit 15` | 첫 시도 통과, 소견 4건 |
+| 06 검증 | **환각률 100%** — 그런데 진짜 환각은 1건 |
 
-그렇다면 우선순위는 "무엇이 오늘 조사 능력을 더 늘려주는가"로 정한다.
+실측 전체는 `docs/limitations.md`의 2026-08-26 절 셋에 있다. **먼저 읽는다.**
 
-- 트랙 A(`VolumeSource`)는 지금 있는 아티팩트 6종을 "추출 없이" 읽게
-  해줄 뿐, **새 조사 능력을 추가하지 않는다.** KAPE/FTK 추출은 이
-  바닥의 표준 워크플로우라 없어서 못 쓰는 상황도 아니다.
-- 트랙 B(새 파서)는 오늘 당장 분석 가능한 아티팩트 종류를 늘린다.
-  지금 카탈로그($MFT·$UsnJrnl·evtx 2종·registry 2종)에는 **실행 흔적
-  (execution evidence) 계열이 하나도 없다** — 실무 트리아지에서 가장
-  자주 쓰는 축이 비어 있다.
+### 재현용 케이스 만들기
 
----
+`cases/`는 gitignore라 K-ALERT가 남아 있지 않다. 다시 만들려면:
 
-## 트랙 B — 핵심 파서 확충
+```bash
+# 01_input.json 을 source_type: "edr_alert" 로 손으로 쓴다.
+# raw 에 들어갈 모양은 src/stage02_normalize/alert_adapter.py 의 convert() 참고
+#   필수: mitre[], severity, detected_at   선택: host, user, process{}, paths[], ips[]
+.venv/Scripts/python.exe -m src.stage02_normalize.normalize \
+  --in cases/K-ALERT/01_input.json --out cases/K-ALERT/02_scenario.json
+.venv/Scripts/python.exe -m src.stage03_select.select \
+  --in cases/K-ALERT/02_scenario.json --out cases/K-ALERT/03_selection.json --mappings mappings/
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
+  --in cases/K-ALERT/03_selection.json --out cases/K-ALERT/04_parsed/ \
+  --evidence evidence/0824test.001 --volume 1
+```
 
-우선순위: **Amcache → Shimcache → Prefetch → LNK**. 이 넷이 채워지면
-"파일시스템+로그+설정(기존 6종)" + "실행+사용자 활동(신규 4종)" 조합으로
-흔한 웹셸/침해 시나리오 대부분을 커버하는 코어 세트가 완성된다.
-
-각 아티팩트는 `.claude/skills/add-parser/SKILL.md`의 10단계를 그대로
-따른다(카탈로그 등재 → `ref` 접두어 → 파서 구현 → 등록소 → 출력 파일명
-→ 플래그 → 매핑 → 테스트 → 외부 도구 대조 → 한계 기록). 아래는 이번
-검토에서 나온, 각 아티팩트별로 다른 부분만 적는다.
-
-### 1. Amcache — 저비용
-
-- `Amcache.hve`는 새 하이브 파일이지만 regf 포맷이라 **`registry.py`를
-  그대로 재사용**한다. 새 파서 클래스가 필요 없다.
-- `evidence.py`의 `FILE_LAYOUT`에 `Amcache.hve` 경로
-  (`Windows/AppCompat/Programs/Amcache.hve`) 추가.
-- 값 해석(실행 파일 경로·SHA1·타임스탬프가 들어있는 서브키 구조)만
-  확인하면 됨 — 온디스크 셀 구조는 이미 검증된 코드가 처리.
-
-### 2. Shimcache — 저비용
-
-- SYSTEM 하이브 안의 단일 값(`AppCompatCache`)이라 **하이브 접근은
-  이미 있다.** 필요한 건 이 값의 바이너리 인코딩을 디코딩하는 함수뿐.
-- Windows 버전별로 인코딩이 다르다는 점은 미리 `docs/limitations.md`
-  범위로 명시해 둘 것(이 프로젝트가 "우리가 만든 테스트 이미지에서
-  동작하면 통과"를 판정 기준으로 삼는다는 `work-guide.md` 3.3과 같은
-  방식으로 범위를 좁혀도 된다).
-
-### 3. Prefetch — 중간 비용, 새 파서 필요
-
-- `.pf` 포맷은 버전별 압축 방식이 다르다(XP~Win8: 없음/LZXPRESS 등).
-  새 `structs/prefetch_record.py` + `parsers/prefetch.py` 필요.
-- `work-guide.md` 3.1의 판단 기준(직접 구현 vs 라이브러리)을 먼저
-  적용해서 결정할 것 — 오프셋 보존이 필요한지, 기존 라이브러리가
-  오프셋을 주는지부터 확인.
-- 외부 도구 대조 후보: `PECmd`(Eric Zimmerman) 또는 공개 테스트 샘플.
-
-### 4. LNK — 중간 비용, 새 파서 필요
-
-- Shell Link Binary File Format(MS-SHLLINK) — 사양이 공개돼 있어
-  직접 구현이 EVTX/레지스트리보다 오히려 수월할 수 있음.
-- JumpList(자동/사용자정의)는 LNK 스트림이 OLE 복합파일 안에 또
-  들어있는 이중 구조라 **범위 밖으로 미룬다.** LNK 단독 파일(바탕화면
-  바로가기, `Recent` 폴더)부터.
-
-### 유의사항 (트랙 B 공통)
-
-- **`Amcache.hve`·`SAM`·`SECURITY`처럼 새 하이브 파일을 늘릴수록,
-  나중에 볼륨당 파일 하나만 찾는 지금의 `FileSource._probe` 구조가
-  한계에 부딪힌다** — 지금 넷(Amcache/Shimcache/Prefetch/LNK)은
-  전부 "볼륨당 하나/폴더"라 문제없지만, 다음 확장 후보인
-  Shellbags·UserAssist·MRU류는 **사용자 프로필마다 하나씩**이라
-  `evidence.py`에 "여러 개 찾기" 기능이 필요하다. 이건 트랙 A 작업과
-  묶어서 처리하는 게 효율적이다(아래 트랙 A 참고).
-- 스키마(`schemas/` 6개)는 동결 대상이다. 새 필드가 필요하면 고치기
-  전에 팀 공지부터.
+`--volume 1`이 필수다. 이 이미지는 NTFS가 둘(0.4GiB 복구 + 59.4GiB 시스템)이다.
 
 ---
 
-## 트랙 B 다음 후보 (참고용, 지금 범위 아님)
+## 0. 코드 작업이 아닌 것 — 먼저 걸어 둔다
 
-AIFT의 Windows 60개 아티팩트를 기준으로 나눈 티어. 트랙 B의 위 4종을
-마치고 확장할 때 참고.
+**키오스크 랩 VM 스냅샷 하나.** Sysmon 설치 + Assigned Access 켠 상태로
+30분 돌린 뒤 이미지를 뜬다. **침해하지 않아도 된다** — 정상 상태로 충분하다.
 
-| 티어 | 예 | 비고 |
-|---|---|---|
-| 저비용 (레지스트리 재사용) | Services, USB 기록, Network History, 방화벽 규칙, 감사 정책 | 카탈로그·매핑 등록만 |
-| 사용자별 하이브 (플러밍 필요) | Shellbags, UserAssist, 각종 MRU, MUIcache | `evidence.py` 다중 매칭 확장 필요 |
-| 고비용 (신규 포맷) | SRUM/AD(ESE), JumpList(OLE), Thumbcache, StartupInfo(ETL) | third_party 라이브러리 신규 도입 필요 |
-| **예외** | 브라우저 기록, Activities Cache | **SQLite** — `sqlite3`가 실제 파일 경로(+WAL)를 요구해서 "스트림만 있으면 된다"는 지금 패턴이 깨짐. 임시 파일 구체화가 필요할 수 있음 |
+이것 하나가 지금 미검증인 것 여섯을 확정한다.
+
+- `evtx:Sysmon`·`AssignedAccess` 3종·`DriverFrameworks`·`RDPConnection`의
+  **파일 경로 문자열**이 맞는가 (`src/stage04_parse/evidence.py`의 `FILE_LAYOUT`)
+- 그 채널들의 **event_id 추정값**이 맞는가 (`mappings/_flags.yaml`)
+- `kiosk_restriction_event`가 "로그가 작다"는 전제대로인가 — 수만 건이면
+  05단계 쿼터를 혼자 태운다
+- `unexpected_parent_process`가 `explorer.exe`를 이상으로 보는 가정이
+  이 랩에서 맞는가
+- `shell_spawned` 목록이 정상 운영 중 몇 건이나 뜨는가
+- 덤으로 **Stage 0 베이스라인**의 시작
+
+**지금 두 실물 이미지 다 Sysmon이 없다.** 기본 탑재가 아니라서다.
+그래서 K-001을 가르는 플래그 셋(`shell_spawned`·`execution_from_unusual_path`·
+`unexpected_parent_process`)이 실물에서 한 번도 붙어 본 적이 없다.
 
 ---
 
-## 트랙 A — `VolumeSource` (raw 이미지 직접 읽기)
+## 1. 프리패치 볼륨 경로가 드라이브 문자로 안 바뀐다
 
-**2026-08-23 부분 완료.** 트랙 B 코어 세트를 다 마치기 전이지만, 실물
-raw 이미지(`evidence/test_image.001`, 60GB, 단일 NTFS 볼륨)가 생겨
-순서를 바꿔 먼저 구현·검증했다. 아래 5개 남은 작업 중 1·2·3은
-끝났고, 카탈로그 7개 아티팩트 전부가 이 이미지로 관통했다
-(575,992건, 전수 스키마 검증 통과) — 대조 기록은
-`docs/artifact-notes.md` "2026-08-23 · 전 파서 관통" 절, 남은 한계는
-`docs/limitations.md` "디스크 이미지를 직접 열 수 있다" 절 참고.
-과정에서 실물 데이터에서만 드러나는 버그 둘(`registry.py`의
-`RegFileTime`→`datetime` JSON 직렬화 실패, `mft.py`의 판독 불가
-타임스탬프 `null` 스키마 위반)을 찾아 고쳤다 — 목업 데이터로는
-재현되지 않던 것들이다.
+**증상** — 06단계가 정상 문장을 기각한다.
 
-트랙 B 코어 세트 완성 후 착수 예정이었던 것. 확인된 사실과 남은 작업:
+```
+모델 주장 : C:\WINDOWS\SYSTEM32\SVCHOST.EXE
+실제 레코드: \VOLUME{01d8e7bd02796420-a202ae01}\WINDOWS\SYSTEM32\SVCHOST.EXE
+```
 
-- **확인됨**: `dissect.target.Target.open(evidence_path)`으로 이미지를
-  열고, `target.filesystems[i].path("$MFT")`로 원시 NTFS 파일시스템
-  객체에서 직접 찾아야 한다 — `target.fs.path("/$MFT")`(OS 레벨 병합
-  뷰)로는 안 나온다.
-- **확인됨**: 반환되는 `dissect.util.stream.RunlistStream`은
-  `seekable() == True`, `mft.py`의 두 번 순회 패턴과 호환.
-- **남은 작업**:
-  1. `requirements.txt`에 `dissect` 계열 패키지 추가 (팀 공지 필요 —
-     새 외부 의존성).
-  2. `evidence.py`의 `VolumeSource`를 `NotImplementedError`에서 실제
-     구현으로. `open(artifact)`가 `FILE_LAYOUT`의 `relative_paths`를
-     받아 `target.filesystems[i].path(...)`로 찾아 스트림을 돌려주면
-     됨 — 파서 쪽은 무수정.
-  3. `evtx.py`/`registry.py`는 `stream.read()` 전체를 한 번에
-     메모리로 올리는데(`evtx.py:269`, `registry.py:323`), Dissect
-     스트림에서도 `.read()` 인자 없이 전체를 다 읽는지 실측 확인 필요
-     (지금까지는 `$MFT`만 테스트함, evtx/registry 하이브도 같은
-     이미지로 재현해 볼 것).
-  4. 사용자별 하이브 다중 매칭 기능(트랙 B 유의사항 참고)을 이 작업과
-     함께 설계하면 `EvidenceSource` 인터페이스를 두 번 안 고쳐도 된다.
-  5. `pyewf` 대신 `dissect.evidence`로 E01도 같은 경로로 커버 가능
-     (libewf 시스템 의존성 불필요) — 검증은 아직 안 함.
+**원인** — `src/stage04_parse/parsers/prefetch.py:87`
+
+```python
+DEVICE_VOLUME = re.compile(r"^\\DEVICE\\HARDDISKVOLUME(\d+)$", re.IGNORECASE)
+```
+
+`device_prefixes()`(97행)가 이 형태만 찾는다. 실물 이미지의 프리패치는
+`\VOLUME{01d8e7bd02796420-a202ae01}` 꼴을 쓴다 — 볼륨 일련번호 형태다.
+못 찾으면 `None`을 돌려주고, `_to_drive()`(314행)가 경로를 **그대로 둔다.**
+주석대로의 동작이다("바꿀 수 없으면 그대로 둔다").
+
+**고칠 자리** — `DEVICE_VOLUME`이 두 형태를 다 받게 한다. 레코드의
+`fields.volumes[].device_path`와 `serial_number`가 짝을 이루고 있으니
+거기서 확인할 수 있다.
+
+**함정 둘.**
+
+- **`SHADOWCOPY`는 여전히 빼야 한다.** 지금 정규식이 그것을 막고 있다.
+  넓히면서 같이 들어오면 섀도 카피의 경로가 `C:`로 둔갑한다.
+- **볼륨이 둘 이상이면 바꾸지 않는다.** 지금 `device_prefixes()`가
+  "정확히 하나일 때만" 답하는 이유다. 여기를 무르게 하면 D: 의 실행
+  파일이 C: 로 보고된다.
+
+**확인** — 위 재현 절차로 04단계를 다시 돌리고 `prefetch.jsonl`의 `path`가
+`C:\`로 시작하는지 본다. 그다음 06단계를 다시 걸면 환각률이 실제로 내려간다
+(F2·F3 두 건). **이번 작업이 끝나야 2026-08-26 의 100%가 25%로 내려가는 것을
+수치로 볼 수 있다.**
+
+**대조 기록을 `docs/artifact-notes.md`에 남긴다.** 파서 변경은 대조 없이는
+"조용히 틀리는" 쪽이다 (CLAUDE.md 작업 규약).
+
+---
+
+## 2. Amcache 값 이름이 숫자라 경로인지 알 수 없다
+
+**증상** — `benchmark/validator_check.py`가 "아는 구멍 1건 (V36)"으로 보고한다.
+
+```
+AMCACHE#15044  fields = {"17": 131343442490135143,
+                         "15": "c:\windows\system32\sppsvc.exe",
+                         "101": "00009b5b7c08..."}
+```
+
+`"15"`가 전체 경로인데 **이름이 아무 뜻도 담고 있지 않다.** 06단계의
+`is_path_field()`가 이름으로 판단하므로 정확 문자열 비교로 떨어지고,
+대소문자 하나로 기각된다.
+
+**06단계에서 풀지 않는다.** `PATH_FIELDS`에 `"15"`를 넣으면 다른 서브키의
+`15`까지 경로로 본다. 값의 생김새로 판단하는 것은 `comparators.py`가
+처음부터 거부한 방식이다.
+
+**고칠 자리** — `src/stage04_parse/parsers/registry.py`. Amcache의 숫자 값
+이름을 뜻 있는 이름으로 옮겨 내보낸다. `HIVE_OF`(110행)가 이미
+`registry:Amcache`를 따로 알고 있으니 분기할 자리는 있다.
+
+**이 이미지의 레이아웃은 `Root\File\{GUID}\`** 다 — Win8+ 의
+`Root\InventoryApplicationFile\`이 아니다. **둘 다 나올 수 있으므로 어느
+쪽을 만났는지 확인하고 시작한다.** 값 이름 대응표는 공개 자료에 있지만,
+**추정으로 채운 것은 그 자리에서 `docs/limitations.md`에 적는다.**
+
+**끝나면 `benchmark/validator_cases.json`의 V36에서 `expect`를 `passed`로
+되돌리고 `gap`을 지운다.** 안 되돌리면
+`tests/test_benchmark.py::test_known_gaps_carry_a_reason_and_are_still_broken`
+이 "이제 통과하니 되돌리라"고 실패시킨다 — 일부러 그렇게 만들었다.
+
+---
+
+## 3. 05단계 프롬프트가 컨텍스트 창을 넘는다
+
+**증상** — 아티팩트가 여럿 걸린 케이스에서 05단계가 3회 재시도 끝에 중단된다.
+
+```
+전달 60건의 JSON   71,476자 ≈ 28,600 토큰 (추정)
+시스템 프롬프트     3,002자
+--num-ctx 기본값   32,768
+qwen2.5:7b 상한    32,768   ← 모델 상한이라 더 열 수 없다
+```
+
+출력에 쓸 자리가 2천 토큰도 안 남는다. `--limit 15`로 낮추면 첫 시도에 통과한다.
+
+**고칠 자리** — `src/stage05_interpret/allocation.py`. 배분기가 이미
+아티팩트별 자릿수를 계산하므로, 거기에 **토큰 예산**을 넣는다.
+`DEFAULT_LIMIT`는 `src/stage05_interpret/record_filter.py:49`에 있다.
+
+**`--limit`를 낮추는 것은 우회지 수정이 아니다.** 기본값 60은 카탈로그가
+11종이던 시절 값이고, 22종이 된 지금 아티팩트가 또 늘면 같은 자리에서
+또 터진다. **넘는데도 조용히 도는 것**이 지금 가장 나쁜 성질이다.
+
+**레코드 다이어트는 이것 다음이다.** 06단계 검증은 `04_parsed/`를 직접
+읽으므로 프롬프트만 줄이는 것은 안전하다. 다만 모델이 인용할 수 있는
+근거의 폭이 줄어드는 거래라, 토큰 예산을 먼저 넣고 그래도 부족할 때 한다.
+
+---
+
+## 4. 05단계가 실패한 모델 원문을 남기지 않는다
+
+**왜 급한가** — 3번의 진단이 "프롬프트가 잘렸다"를 **확인한 것이 아니라
+크기를 재고 `--limit`를 낮춰 재현한 것**이다. 모델이 실제로 무엇을 뱉었는지
+아무도 못 봤다. 다음에 같은 일이 나면 또 추측한다.
+
+**고칠 자리** — `src/stage05_interpret/interpret.py:80` 근처.
+`llm.MalformedOutput`을 잡는 자리에서 응답 원문을 `errors.jsonl` 옆에
+떨군다(예: `05_malformed_attempt1.txt`).
+
+가장 싸고 앞으로 계속 값을 한다. 02단계도 같은 구조라 함께 볼 만하다.
+
+---
+
+## 5. `run_pipeline.sh`가 `--volume`을 못 넘긴다
+
+한 줄이다. 04단계 호출에 `--volume`을 붙이고 스크립트 인자로 받는다.
+
+**일반적인 Win10/11 물리 디스크는 복구 파티션도 NTFS라 거의 항상 볼륨
+선택이 필요하다.** 지금은 그런 이미지에서 04단계를 따로 돌려야 한다.
+
+지정하지 않으면 후보를 보여 주고 멈추는 지금 동작은 **유지한다.** 도구가
+크기로 추측하면 복구 파티션과 시스템 볼륨을 바꿔 골라도 "아티팩트 없음"이
+아니라 다른 볼륨의 결과가 조용히 나온다.
+
+---
+
+## 6. Wazuh 알럿을 그대로는 못 받는다
+
+레포 전체에 `wazuh`·`sigma`·`winlogbeat`·`active-response` 참조가 0건이다.
+`edr_alert` 경로는 있으나 **자체 형식**을 기대한다. 실측:
+
+```
+Wazuh 원본(rule.mitre.id / rule.level / agent.name)  →  AlertAdapterError
+평탄화한 자체 형식(mitre / severity / host)          →  정상 변환
+```
+
+**할 일 셋.**
+
+- `src/stage02_normalize/alert_adapter.py`에 Wazuh 모양을 평탄화하는 변환
+  추가 (약 50줄). `rule.mitre.id`→`mitre`, `rule.level`→`severity`,
+  `agent.name`→`host`, `data.win.eventdata.*`→`process.*`
+- `tools/make_case.py`에 `--alert` 경로. 지금은 자연어 입력만 만든다
+- Wazuh active-response에서 부를 래퍼
+
+**라이브 호스트에서 바로 못 읽는다는 것도 함께 본다.** `open_source()`는
+이미지 파일 또는 폴더만 받는다(`\\.\C:` 없음). 알럿이 나면 KAPE가 먼저
+돌아 폴더를 만들어야 한다 — 계획서에 KAPE가 있으니 운영으로 메꿔지지만,
+그 호출을 감싸는 자리가 지금 없다.
+
+---
+
+## 7. 설계 판단이 필요한 것 둘 — 혼자 정하지 않는다
+
+### 3대 상관분석
+
+한 실행 = 한 볼륨은 `ref` 유일성을 지키려는 **의도된 제약**이다. 깨면
+06단계 검증이 흔들린다. K-001 Stage 8(POS→관리서버)처럼 두 호스트에
+걸친 사실은 지금 사람이 보고서 3장을 합쳐야 한다.
+
+선택지 셋으로 보인다 — (a) 사람이 합친다 (b) `ref`에 호스트 접두어
+(스키마 동결을 건드림) (c) 07단계 위에 병합 리포터를 얹는다.
+**어느 쪽인지는 발표에서 무엇을 보여줄 건지에 달렸다.**
+
+### 스냅샷 A/B 베이스라인 비교
+
+계획서의 오프라인 축이 "정상 A와 침해 후 B를 비교"인데 **코드에 개념
+자체가 없다.** 키오스크처럼 도는 프로세스가 극히 제한적인 환경에서는
+이것이 가장 강한 필터가 된다.
+
+넣지 않은 이유는 `docs/limitations.md`의 "넣지 않은 것 — 화이트리스트
+역탐지"에 있다. 필요한 것은 부정 매처 하나와 목록을 04단계에 넘길
+통로이고, 둘 다 지금 없다. 범위가 커서 별도 트랙이다.
 
 ---
 
@@ -150,8 +250,10 @@ raw 이미지(`evidence/test_image.001`, 60GB, 단일 NTFS 볼륨)가 생겨
 
 | 주제 | 문서 |
 |---|---|
+| **지금 안 되는 것과 그 이유** | `docs/limitations.md` |
 | 새 파서 추가 절차 | `.claude/skills/add-parser/SKILL.md` |
-| 직접 구현 vs 라이브러리 판단 기준 | `work-guide.md` 3.1 |
-| 증거 접근 계층 설계 원칙 | `src/stage04_parse/evidence.py` docstring |
-| 알려진 한계 | `docs/limitations.md` |
-| 매핑 작성 규칙 | `docs/mapping-guide.md` |
+| 새 시나리오 대응 절차 (관문 넷) | `.claude/skills/add-scenario/SKILL.md` |
+| 매핑 작성 규칙, flags 어휘 | `docs/mapping-guide.md` |
+| 온디스크 구조, 외부 도구 대조 기록 | `docs/artifact-notes.md` |
+| 데이터 형식 | `schemas/*.json` + `schemas/README.md` |
+| 설계 근거, 팀 분담, 비목표 | `work-guide.md` |

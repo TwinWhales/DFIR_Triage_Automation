@@ -310,7 +310,7 @@ Windows의 `RtlCompressBuffer`로 압축한 것을 우리 구현으로 풀어
 
 ### 2026-08-23 · 전 파서 관통 · 실물 raw 이미지(트랙 A 첫 실행)
 
-`work.md` 트랙 A(`VolumeSource`)를 `dissect.target` 기반으로 구현하고,
+`VolumeSource`(raw 이미지 직접 읽기)를 `dissect.target` 기반으로 구현하고,
 사용자가 제공한 `evidence/test_image.001`(60GB, 파티션 테이블 없는 단일
 NTFS 볼륨)에 카탈로그 7개 아티팩트 전부를 무제한 범위로 돌렸습니다 —
 $MFT·$UsnJrnl·evtx:Security·evtx:System·registry:SYSTEM·SOFTWARE·Amcache.
