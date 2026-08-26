@@ -50,6 +50,10 @@ _FILETIME_EPOCH = dt.datetime(1601, 1, 1, tzinfo=UTC)
 DEVICE = "\\DEVICE\\HARDDISKVOLUME2"
 SHADOW = "\\DEVICE\\HARDDISKVOLUMESHADOWCOPY1"
 
+#: 마운트 관리자의 영구 볼륨 이름. 2026-08-26 실물
+#: (win10_sysmon_testimage.001) 의 프리패치 127건 전부가 이 형태였다.
+GUID_VOLUME = "\\VOLUME{01d8e7bd02796420-a202ae01}"
+
 #: 버전 23의 파일 정보 블록 크기. 메트릭 배열이 바로 뒤에 붙는다.
 _V23_INFO_SIZE = 156
 
@@ -295,6 +299,66 @@ def test_a_shadow_copy_is_not_the_live_volume(parser):
     record = run(parser, build_pf(loaded=loaded, volumes=volumes), EMPTY)[0]
 
     assert record["path"] == f"{SHADOW}\\WINDOWS\\SYSTEM32\\CMD.EXE"
+
+
+def test_a_guid_volume_name_becomes_a_drive_letter(parser):
+    # 2026-08-26 실물의 127건 전부가 이 형태였고, 하나도 안 바뀌고 있었다.
+    # 06단계는 모델이 쓴 C:\... 와 레코드의 \VOLUME{...}\... 를 대조해
+    # 정상 문장을 환각으로 셌다.
+    volumes = [(GUID_VOLUME, 1, 0)]
+    loaded = [f"{GUID_VOLUME}\\WINDOWS\\SYSTEM32\\CMD.EXE"]
+    record = run(parser, build_pf(loaded=loaded, volumes=volumes), EMPTY)[0]
+
+    assert record["path"] == "C:\\WINDOWS\\SYSTEM32\\CMD.EXE"
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "\\VOLUME{01d8e7bd02796420-a202ae01}",
+        "\\volume{01d8e7bd02796420-a202ae01}",  # 대소문자 무시
+        "\\DEVICE\\HARDDISKVOLUME2",
+    ],
+)
+def test_the_live_volume_forms_we_accept(device):
+    assert prefetch.DEVICE_VOLUME.match(device)
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        SHADOW,
+        "\\DEVICE\\HARDDISKVOLUMESHADOWCOPY12",
+        # GUID 자리에 16진수가 아닌 것이 오면 우리가 아는 형태가 아니다.
+        "\\VOLUME{SHADOWCOPY1-a202ae01}",
+        "\\VOLUME{01d8e7bd02796420}",  # 일련번호 자리가 없다
+        "\\VOLUME{01d8e7bd02796420-a202ae01}\\WINDOWS",  # 접두어가 아니라 경로
+    ],
+)
+def test_the_forms_we_refuse_to_call_a_live_volume(device):
+    # 느슨하게 풀면 섀도 카피의 경로가 C: 로 둔갑한다.
+    assert not prefetch.DEVICE_VOLUME.match(device)
+
+
+def test_a_shadow_copy_next_to_a_guid_volume_is_still_excluded(parser):
+    # 정규식을 넓히면서 SHADOWCOPY 가 함께 들어오지 않았는지 본다.
+    volumes = [
+        (GUID_VOLUME, 1, 0),
+        (SHADOW, 2, 0),
+    ]
+    loaded = [f"{SHADOW}\\WINDOWS\\SYSTEM32\\CMD.EXE"]
+    record = run(parser, build_pf(loaded=loaded, volumes=volumes), EMPTY)[0]
+
+    assert record["path"] == f"{SHADOW}\\WINDOWS\\SYSTEM32\\CMD.EXE"
+
+
+def test_two_live_volumes_of_different_forms_leave_the_path_alone(parser):
+    # 형태가 섞여도 같은 볼륨인지 우리는 모른다. 둘로 세어 포기하는 것이 맞다.
+    volumes = [(GUID_VOLUME, 1, 0), (DEVICE, 2, 0)]
+    loaded = [f"{GUID_VOLUME}\\WINDOWS\\SYSTEM32\\CMD.EXE"]
+    record = run(parser, build_pf(loaded=loaded, volumes=volumes), EMPTY)[0]
+
+    assert record["path"] == f"{GUID_VOLUME}\\WINDOWS\\SYSTEM32\\CMD.EXE"
 
 
 def test_two_live_volumes_leave_the_device_path_alone(parser):

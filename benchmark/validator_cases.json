@@ -9,7 +9,8 @@
     "SYSMON#91",
     "MFT#12345",
     "MFT#12346",
-    "MFT#12400"
+    "MFT#12400",
+    "PF#689046"
   ],
   "cases": [
     {
@@ -670,6 +671,22 @@
           "ref": "SYSMON#91",
           "field": "TargetFilename",
           "value": "c:\\users\\public\\BANKER.EXE"
+        }
+      ]
+    },
+    {
+      "id": "V40",
+      "risk": "프리패치 경로가 장치 이름으로 남는다",
+      "why": "모델은 C:\\ 로 정규화해 쓰는데 레코드가 \\VOLUME{...} 이면 정확 문자열 비교로 떨어진다. 2026-08-26 win10_sysmon_testimage 실측에서 프리패치 127건 **전부**가 그랬다 — 파서가 \\DEVICE\\HARDDISKVOLUME<n> 만 살아 있는 볼륨으로 봤기 때문이다. 04단계가 드라이브 문자로 바꿔 내보내는 것을 여기서 못 박는다.",
+      "statement": "SVCHOST.EXE 가 C:\\WINDOWS\\SYSTEM32 에서 실행됐습니다.",
+      "refs": [
+        "PF#689046"
+      ],
+      "claims": [
+        {
+          "ref": "PF#689046",
+          "field": "path",
+          "value": "C:\\WINDOWS\\SYSTEM32\\SVCHOST.EXE"
         }
       ]
     }

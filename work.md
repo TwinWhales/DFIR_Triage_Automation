@@ -7,7 +7,8 @@
 끝낸 항목은 지우고, 그 사실은 `docs/limitations.md`에 남긴다.
 
 **2026-08-26 처리됨** — `run_pipeline.sh` 의 `--volume` 통로,
-02·05단계의 실패 응답 원문 보존. 둘 다 `docs/limitations.md` 에 있다.
+02·05단계의 실패 응답 원문 보존, Sysmon 세 룰의 EID 제약,
+프리패치 장치 경로 두 번째 형태. 전부 `docs/limitations.md` 에 있다.
 
 ---
 
@@ -44,75 +45,50 @@
 ```
 
 `--volume 1`이 필수다. 이 이미지는 NTFS가 둘(0.4GiB 복구 + 59.4GiB 시스템)이다.
+`win10_sysmon_testimage.001`도 같은 레이아웃이고, **그쪽에만 Sysmon이 있다.**
+
+관통 스크립트로 돌릴 때는 `VOLUME`으로 넘긴다:
+
+```bash
+VOLUME=1 PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh \
+  K-ALERT evidence/win10_sysmon_testimage.001
+```
 
 ---
 
 ## 0. 코드 작업이 아닌 것 — 먼저 걸어 둔다
 
-**키오스크 랩 VM 스냅샷 하나.** Sysmon 설치 + Assigned Access 켠 상태로
-30분 돌린 뒤 이미지를 뜬다. **침해하지 않아도 된다** — 정상 상태로 충분하다.
+**Assigned Access 를 켠 스냅샷 하나.** `win10_sysmon_testimage.001`
+(2026-08-26)로 Sysmon 쪽은 절반이 닫혔다. 남은 것은 **키오스크 모드와
+USB·RDP** 다. 침해하지 않아도 된다 — 정상 상태로 충분하다.
 
-이것 하나가 지금 미검증인 것 여섯을 확정한다.
+닫힌 것:
 
-- `evtx:Sysmon`·`AssignedAccess` 3종·`DriverFrameworks`·`RDPConnection`의
-  **파일 경로 문자열**이 맞는가 (`src/stage04_parse/evidence.py`의 `FILE_LAYOUT`)
+- ~~`evtx:Sysmon` 의 파일 경로 문자열~~ — 맞았다
+- ~~`shell_spawned` 목록이 정상 운영 중 몇 건이나 뜨는가~~ — 5.5분에 5건.
+  전부 Windows 서비싱(`sedsvc.exe`·`CompatTelRunner.exe`)이다
+- ~~`execution_from_unusual_path`~~ — 3건, 전부 `C:\Windows\Temp\{GUID}\DismHost.exe`
+- 덤으로 **세 룰이 EID 5 도 잡던 버그**가 드러나 고쳤다
+
+**여전히 미검증인 것 넷.** 이 다섯 채널은 이미지에 파일 자체가 없었다
+(`AssignedAccess` 3종·`DriverFrameworks`·`RDPConnection`).
+
+- 그 다섯의 **파일 경로 문자열**이 맞는가
+  (`src/stage04_parse/evidence.py`의 `FILE_LAYOUT`)
 - 그 채널들의 **event_id 추정값**이 맞는가 (`mappings/_flags.yaml`)
 - `kiosk_restriction_event`가 "로그가 작다"는 전제대로인가 — 수만 건이면
   05단계 쿼터를 혼자 태운다
 - `unexpected_parent_process`가 `explorer.exe`를 이상으로 보는 가정이
-  이 랩에서 맞는가
-- `shell_spawned` 목록이 정상 운영 중 몇 건이나 뜨는가
-- 덤으로 **Stage 0 베이스라인**의 시작
+  맞는가. **이번 이미지로는 못 쟀다** — Assigned Access 를 안 켠 일반
+  Win10 이라 explorer 가 정상 셸이다
 
-**지금 두 실물 이미지 다 Sysmon이 없다.** 기본 탑재가 아니라서다.
-그래서 K-001을 가르는 플래그 셋(`shell_spawned`·`execution_from_unusual_path`·
-`unexpected_parent_process`)이 실물에서 한 번도 붙어 본 적이 없다.
+덤으로 **Stage 0 베이스라인**의 시작이기도 하다.
 
----
-
-## 1. 프리패치 볼륨 경로가 드라이브 문자로 안 바뀐다
-
-**증상** — 06단계가 정상 문장을 기각한다.
-
-```
-모델 주장 : C:\WINDOWS\SYSTEM32\SVCHOST.EXE
-실제 레코드: \VOLUME{01d8e7bd02796420-a202ae01}\WINDOWS\SYSTEM32\SVCHOST.EXE
-```
-
-**원인** — `src/stage04_parse/parsers/prefetch.py:87`
-
-```python
-DEVICE_VOLUME = re.compile(r"^\\DEVICE\\HARDDISKVOLUME(\d+)$", re.IGNORECASE)
-```
-
-`device_prefixes()`(97행)가 이 형태만 찾는다. 실물 이미지의 프리패치는
-`\VOLUME{01d8e7bd02796420-a202ae01}` 꼴을 쓴다 — 볼륨 일련번호 형태다.
-못 찾으면 `None`을 돌려주고, `_to_drive()`(314행)가 경로를 **그대로 둔다.**
-주석대로의 동작이다("바꿀 수 없으면 그대로 둔다").
-
-**고칠 자리** — `DEVICE_VOLUME`이 두 형태를 다 받게 한다. 레코드의
-`fields.volumes[].device_path`와 `serial_number`가 짝을 이루고 있으니
-거기서 확인할 수 있다.
-
-**함정 둘.**
-
-- **`SHADOWCOPY`는 여전히 빼야 한다.** 지금 정규식이 그것을 막고 있다.
-  넓히면서 같이 들어오면 섀도 카피의 경로가 `C:`로 둔갑한다.
-- **볼륨이 둘 이상이면 바꾸지 않는다.** 지금 `device_prefixes()`가
-  "정확히 하나일 때만" 답하는 이유다. 여기를 무르게 하면 D: 의 실행
-  파일이 C: 로 보고된다.
-
-**확인** — 위 재현 절차로 04단계를 다시 돌리고 `prefetch.jsonl`의 `path`가
-`C:\`로 시작하는지 본다. 그다음 06단계를 다시 걸면 환각률이 실제로 내려간다
-(F2·F3 두 건). **이번 작업이 끝나야 2026-08-26 의 100%가 25%로 내려가는 것을
-수치로 볼 수 있다.**
-
-**대조 기록을 `docs/artifact-notes.md`에 남긴다.** 파서 변경은 대조 없이는
-"조용히 틀리는" 쪽이다 (CLAUDE.md 작업 규약).
+실측 전체는 `docs/limitations.md` 의 "실측 — Sysmon 을 켠 실물 이미지".
 
 ---
 
-## 2. Amcache 값 이름이 숫자라 경로인지 알 수 없다
+## 1. Amcache 값 이름이 숫자라 경로인지 알 수 없다
 
 **증상** — `benchmark/validator_check.py`가 "아는 구멍 1건 (V36)"으로 보고한다.
 
@@ -146,7 +122,7 @@ AMCACHE#15044  fields = {"17": 131343442490135143,
 
 ---
 
-## 3. 05단계 프롬프트가 컨텍스트 창을 넘는다
+## 2. 05단계 프롬프트가 컨텍스트 창을 넘는다
 
 **증상** — 아티팩트가 여럿 걸린 케이스에서 05단계가 3회 재시도 끝에 중단된다.
 
@@ -178,7 +154,7 @@ qwen2.5:7b 상한    32,768   ← 모델 상한이라 더 열 수 없다
 
 ---
 
-## 4. Wazuh 알럿을 그대로는 못 받는다
+## 3. Wazuh 알럿을 그대로는 못 받는다
 
 레포 전체에 `wazuh`·`sigma`·`winlogbeat`·`active-response` 참조가 0건이다.
 `edr_alert` 경로는 있으나 **자체 형식**을 기대한다. 실측:
@@ -203,7 +179,7 @@ Wazuh 원본(rule.mitre.id / rule.level / agent.name)  →  AlertAdapterError
 
 ---
 
-## 5. 설계 판단이 필요한 것 둘 — 혼자 정하지 않는다
+## 4. 설계 판단이 필요한 것 둘 — 혼자 정하지 않는다
 
 ### 3대 상관분석
 
