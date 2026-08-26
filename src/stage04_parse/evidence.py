@@ -298,14 +298,10 @@ FILE_LAYOUT: dict[str, ArtifactLocation] = {
             "Microsoft-Windows-TerminalServices-LocalSessionManager-Operational.evtx",
         ),
     ),
+    # 채널 이름에 '/' 가 없어 %4 인코딩이 없다. Security·System 과 같은 모양이다.
     "evtx:Application": ArtifactLocation(
-        relative_paths=(
-            "Windows/System32/winevt/Logs/Application.evtx",
-        ),
-        filenames=(
-            "Application.evtx",
-            "Application.evtx",
-        ),
+        relative_paths=("Windows/System32/winevt/Logs/Application.evtx",),
+        filenames=("Application.evtx",),
     ),
     "registry:SYSTEM": ArtifactLocation(
         relative_paths=("Windows/System32/config/SYSTEM",),

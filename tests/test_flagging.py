@@ -21,6 +21,7 @@ from src.stage04_parse.parsers.base import Scope
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
+MAPPINGS_DIR = REPO_ROOT / "mappings"
 PARSED = MOCK / "04_parsed"
 
 
@@ -201,10 +202,33 @@ def test_group_name_matching_ignores_case():
     assert "privileged_group_add" in flagging.apply(record)["flags"]
 
 
+def _an_event_id_no_rule_mentions() -> int:
+    """어느 룰에도 안 적힌 event_id 를 **골라서** 돌려준다.
+
+    예전에는 여기에 숫자를 박아 뒀는데 두 번 깨졌다. 4624 를 쓰다
+    ``logon_success`` 가 생기면서, 4634 를 쓰다 ``session_state_changed``
+    가 생기면서(2026-08-25). 어휘가 늘 때마다 "관계없는 이벤트"의 후보가
+    줄어드는 것은 정상이므로, 박아 두지 말고 그때그때 고른다.
+    """
+    vocab = yaml.safe_load((MAPPINGS_DIR / "_flags.yaml").read_text(encoding="utf-8"))["flags"]
+    used = {
+        value
+        for spec in vocab.values()
+        for clause in (spec.get("rule") or {}).get("when", [])
+        if clause.get("match") == "event_id"
+        for value in clause["values"]
+    }
+    return next(candidate for candidate in range(1, 100000) if candidate not in used)
+
+
 def test_unrelated_event_gets_no_flag():
-    # 4634(로그오프)는 어느 룰에도 걸리지 않는다. 4624 를 쓰면 안 된다 —
-    # logon_success 가 생기면서 "관계없는 이벤트"가 아니게 됐다.
-    assert flagging.apply(_evtx(4634, TargetUserName="Administrators"))["flags"] == []
+    """어느 룰도 언급하지 않는 이벤트에는 아무것도 안 붙는다.
+
+    플래그가 필터인 이상, "안 붙어야 할 때 안 붙는가"가 "붙어야 할 때
+    붙는가"만큼 중요하다.
+    """
+    event_id = _an_event_id_no_rule_mentions()
+    assert flagging.apply(_evtx(event_id, TargetUserName="Administrators"))["flags"] == []
 
 
 def test_service_install_event_is_flagged():
@@ -261,10 +285,18 @@ def test_a_shell_started_from_the_order_ui_is_flagged():
 def test_an_ordinary_process_creation_is_not_flagged():
     """**EID 1 전체에 붙으면 필터가 일을 안 한다.**
 
-    프로세스 생성은 이 장비에서 가장 흔한 이벤트다. 주문 UI 자신이
-    실행되는 것까지 후보로 올리면 05단계 쿼터를 혼자 태운다.
+    프로세스 생성은 이 장비에서 가장 흔한 이벤트다. 정상 서비스가 뜨는
+    것까지 후보로 올리면 05단계 쿼터를 혼자 태운다.
+
+    예전에는 부모를 ``explorer.exe`` 로 썼는데, 잠긴 키오스크에서 셸이
+    주문 UI 로 대체된다는 점을 근거로 ``unexpected_parent_process`` 가
+    생기면서(2026-08-25) 그것이 더는 "평범한" 부모가 아니게 됐다.
     """
-    record = _sysmon(1, Image=r"C:\kiosk\order.exe", ParentImage=r"C:\Windows\explorer.exe")
+    record = _sysmon(
+        1,
+        Image=r"C:\Windows\System32\svchost.exe",
+        ParentImage=r"C:\Windows\System32\services.exe",
+    )
     assert flagging.apply(record)["flags"] == []
 
 
@@ -473,3 +505,77 @@ def test_records_are_not_mutated_in_place():
 def test_apply_all_streams_every_record():
     records = [_mft(ref=f"MFT#{i}", record_num=i) for i in range(3)]
     assert len(list(flagging.apply_all(records))) == 3
+
+
+# ================================ 이름을 모르는 채로 맥락으로 가르는가
+#
+# shell_spawned 는 **이름**으로 건다. 공격자가 무엇을 실행할지는 모르므로
+# 그것만으로는 K-001 Stage 2(USB 안의 비승인 실행파일)를 못 잡는다.
+# 아래 둘이 그 반쪽을 맡는다 — 어디에 있나, 누가 실행시켰나.
+
+
+def test_a_binary_run_straight_from_a_usb_drive_is_flagged():
+    """K-001 Stage 1→2 의 주 경로. 이름을 몰라도 볼륨으로 걸린다."""
+    record = _sysmon(1, Image=r"E:\banker.exe", ParentImage=r"C:\kiosk\order.exe")
+    assert "execution_from_unusual_path" in flagging.apply(record)["flags"]
+
+
+def test_a_binary_copied_to_a_writable_folder_is_flagged():
+    """USB 에서 직접 실행하지 않고 로컬로 복사한 경우."""
+    for image in (
+        r"C:\Users\kiosk\AppData\Local\Temp\banker.exe",
+        r"C:\Windows\Temp\banker.exe",
+        r"C:\Users\Public\banker.exe",
+    ):
+        record = _sysmon(1, Image=image, ParentImage=r"C:\kiosk\order.exe")
+        assert "execution_from_unusual_path" in flagging.apply(record)["flags"], image
+
+
+def test_a_binary_in_a_normal_install_location_is_not_flagged():
+    """정상 앱이 걸리면 필터가 일을 안 한다."""
+    for image in (
+        r"C:\Program Files\POS\pos.exe",
+        r"C:\Windows\System32\svchost.exe",
+        r"C:\kiosk\order.exe",
+    ):
+        record = _sysmon(1, Image=image, ParentImage=r"C:\Windows\System32\services.exe")
+        assert flagging.apply(record)["flags"] == [], image
+
+
+def test_the_path_fragments_carry_separators():
+    """구분자 없이 조각만 쓰면 엉뚱한 데서 걸린다.
+
+    ``temp`` 로 썼다면 ``C:\Program Files\Tempo\app.exe`` 가 걸린다.
+    """
+    record = _sysmon(1, Image=r"C:\Program Files\Tempo\app.exe",
+                     ParentImage=r"C:\Windows\System32\services.exe")
+    assert flagging.apply(record)["flags"] == []
+
+
+def test_a_child_of_explorer_is_flagged_on_a_locked_kiosk():
+    """잠긴 키오스크에서는 셸이 주문 UI 로 대체되어 explorer 가 부모가 되지 않는다.
+
+    그래서 explorer 가 부모로 나오는 것 자체가 제한 환경을 벗어난 정황이다.
+    **이 전제는 초기 접근 모델에 달려 있다**(설계서 §1.3) — 서드파티 키오스크
+    SW 가 explorer 위에서 도는 구성이면 정상 부모가 될 수 있다.
+    """
+    record = _sysmon(1, Image=r"C:\kiosk\tool.exe", ParentImage=r"C:\Windows\explorer.exe")
+    assert "unexpected_parent_process" in flagging.apply(record)["flags"]
+
+
+def test_a_child_of_a_script_host_or_document_viewer_is_flagged():
+    for parent in (r"C:\Windows\System32\wscript.exe", r"C:\Program Files\Adobe\AcroRd32.exe"):
+        record = _sysmon(1, Image=r"C:\kiosk\tool.exe", ParentImage=parent)
+        assert "unexpected_parent_process" in flagging.apply(record)["flags"], parent
+
+
+def test_the_three_sysmon_signals_do_not_collapse_into_one():
+    """셋이 겹치지 않는 사실을 본다. 하나로 합치면 어느 쪽이 걸렸는지 모른다."""
+    shell = _sysmon(1, Image=r"C:\Windows\System32\cmd.exe",
+                    ParentImage=r"C:\kiosk\order.exe")
+    usb = _sysmon(1, Image=r"E:\banker.exe", ParentImage=r"C:\kiosk\order.exe")
+    parent = _sysmon(1, Image=r"C:\kiosk\tool.exe", ParentImage=r"C:\Windows\explorer.exe")
+
+    assert flagging.apply(shell)["flags"] == ["shell_spawned"]
+    assert flagging.apply(usb)["flags"] == ["execution_from_unusual_path"]
+    assert flagging.apply(parent)["flags"] == ["unexpected_parent_process"]

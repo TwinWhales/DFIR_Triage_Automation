@@ -1,6 +1,6 @@
 ---
 name: add-scenario
-description: 새 침해 시나리오(웹셸 외 — 키오스크·USB·랜섬웨어 등)에 대응하게 만들 때 쓴다. ATT&CK 기법을 추가하거나 매핑 YAML을 새로 쓸 때. 관문이 넷이고 어디까지가 YAML만으로 되는지 가른다. 넷 중 flags 관문만 조용히 실패한다 — 03단계는 정상인데 05단계에 레코드가 한 건도 가지 않고 errors.jsonl에도 남지 않는다.
+description: 새 침해 시나리오(웹셸 외 — 키오스크·USB·랜섬웨어 등)에 대응하게 만들 때, ATT&CK 기법을 추가하거나 매핑 YAML·flags 어휘를 고칠 때 쓴다. 관문이 넷이고 어디까지가 YAML만으로 되는지 가른다. 넷 중 flags 관문만 조용히 실패한다 — 03단계는 정상이고 04단계는 파싱까지 하는데 05단계에 레코드가 한 건도 가지 않고 errors.jsonl에도 남지 않는다. event_id 를 적을 때 함께 봐야 할 넷(받을 flag 가 있나·artifact 를 정확히 썼나·채널 전체 요청을 받나·실제로 거르나)도 여기 있다.
 ---
 
 # 새 시나리오 대응 추가
@@ -166,6 +166,89 @@ print('scope 로 보면 :', len(allocation.allocate_records(
 있어 깨졌다. 깨지면 테스트를 고치는 게 맞다. 다만 **왜 그 ID가 더는
 중립이 아닌지 주석으로 남긴다.**
 
+**5-1. flag 를 걸었으면 넷을 더 본다**
+
+관문 4를 "플래그가 붙나"로만 확인하면 부족하다. 2026-08-25 에 K-001 매핑을
+쓰면서 이 넷을 다 밟았고, 지금은 `tests/test_flag_rules.py` 가 막는다.
+**막히니까 안 봐도 된다는 뜻이 아니라, 걸렸을 때 무슨 뜻인지 알아야 한다.**
+
+**① 적은 event_id 를 받을 flag 가 있는가**
+
+매핑에 `event_ids: [11, 22]` 를 적어도 그것을 받는 flag 가 없으면 05단계에
+한 건도 가지 않는다. 03단계는 "봤다"고 적고 04단계는 파싱까지 하며
+`errors.jsonl` 에도 안 남는다. **관문 4가 조용히 실패하는 자리가 정확히
+여기다.** 한 번에 13개를 만든 적이 있다.
+
+메꿀 때는 **새 이름을 만들기 전에 기존 어휘를 먼저 본다.** Sysmon 11
+(FileCreate)은 `$UsnJrnl` 의 `file_create` 와 같은 사실이라 절만 더했다.
+이름이 갈라지면 05단계가 같은 것을 두 번 찾아야 한다.
+
+**② flag 의 `artifact` 를 정확히 썼는가**
+
+`artifact: evtx:*` 로 쓰면 **카탈로그에 채널을 더할 때마다 사정거리가
+조용히 넓어진다.** EventID 는 제공자 안에서만 유일하다 — 실측하면
+`System.evtx` 하나에 제공자가 22개다.
+
+채널이 5개에서 14개가 된 날 여섯 룰이 그렇게 됐고, 그중 AssignedAccess
+세 채널은 event_id 필터 없이 전량 파싱되던 터라 그 채널의 ID 를 모르는
+채로 노출돼 있었다. `evtx:Application` EID 4720 → `account_created` 가
+붙는 것을 실제로 확인했다.
+
+**③ 채널 전체를 요구했으면 그것을 받는 절이 있는가**
+
+`scope_template: {}` 로 "이 채널을 다 읽겠다"고 해 놓고, 그 채널의 flag 가
+특정 event_id 에만 걸려 있으면 나머지는 모델에 닿지 않는다.
+
+`T1041` 이 `evtx:Firewall` 을 그렇게 걸고 rationale 에 "아웃바운드 연결의
+허용·차단 기록"이라고 적었는데 **그 채널에는 그런 기록이 없었다** — 규칙
+구성 변경만 담는다. 검사는 "받아 줄 절이 없다"까지만 안다. **rationale 이
+틀렸는지는 사람이 채널 내용을 확인해야 나온다.** 걸리면 "고쳐라"가 아니라
+"왜 그런지 보라"는 신호로 읽는다.
+
+**④ 그 flag 가 실제로 거르는가**
+
+"붙는가"와 "거르는가"는 다르다. Sysmon EID 1 전체에 붙이면 프로세스 생성이
+전량 후보가 돼 쿼터를 혼자 태운다. 반대로 너무 좁히면 겨냥한 대상이 빠진다 —
+`shell_spawned` 는 셸만 잡으므로 **USB 에서 실행된 비셸 악성코드는 Sysmon
+쪽 근거가 0건이다.** 좁힐 때마다 "그래서 이 기법이 겨냥하는 것이 걸리나"를
+되물어야 한다.
+
+붙는 쪽과 안 붙는 쪽을 **같은 비중으로** 확인한다.
+
+**이름으로만 거는 룰은 반쪽이다.** 공격자가 무엇을 실행할지는 모른다.
+K-001 Stage 2 가 그 경우였다 — `shell_spawned` 는 셸 이름 목록으로 거는데
+USB 로 들여온 `banker.exe` 는 그 목록에 없다. 이름 대신 **맥락**으로 거는
+축을 함께 둔다.
+
+| 축 | 무엇을 보나 | 예 |
+|---|---|---|
+| 무엇이 | 실행 파일의 이름 | `fields.Image` 가 셸·시스템 유틸리티 |
+| **어디에** | 실행 파일이 놓인 자리 | 비시스템 볼륨, 쓰기 가능 임시 폴더 |
+| **누가** | 부모 프로세스 | `fields.ParentImage` 가 explorer·스크립트 호스트 |
+
+**부정으로 쓰지 않는다.** "정상 목록에 없으면"이 가장 강한 필터지만, 그
+목록은 환경마다 다르고 베이스라인(Stage 0)에서 나온다. 전역 어휘인
+`_flags.yaml` 에 특정 랩의 목록을 박으면 다른 환경에서 전량이 걸린다.
+형식 가정이 틀렸을 때도 마찬가지다 — 긍정은 아무것도 안 걸리고(조용하지만
+필터는 산다) 부정은 전부 걸린다(필터가 죽는다).
+
+```bash
+.venv/Scripts/python.exe -X utf8 -c "
+import sys; sys.path.insert(0,'.')
+from src.stage04_parse import flagging
+from src.stage05_interpret import allocation
+from src.stage03_select.mapping_loader import load_catalog
+sigs = {n: s.signal_source for n, s in load_catalog('mappings').artifacts.items()}
+def probe(artifact, **extra):
+    rec = [{'artifact': artifact, 'ref': f'X#{i}', 'record_num': i, 'offset': '0x0',
+            'timestamp': '2026-08-25T09:0%d:00Z' % i, 'fields': {}, **extra} for i in range(5)]
+    f = list(flagging.apply_all(iter(rec)))
+    return sum(1 for r in f if r['flags']), len(allocation.allocate_records(f, signal_sources=sigs)[0])
+print('걸려야 하는 것:', probe('evtx:Sysmon', event_id=3))
+print('안 걸려야 하는 것:', probe('evtx:Sysmon', event_id=255))
+"
+```
+
 **6. 관통 확인**
 
 ```bash
@@ -203,6 +286,11 @@ print('scope 로 보면 :', len(allocation.allocate_records(
 
 - **flags 어휘를 남발하지 않는다.** 필터가 일을 안 하게 된다. 기존 어휘로
   될 일이면 새로 만들지 않는다.
+- **`match: event_id` 절에 `evtx:*` 를 쓰지 않는다.** 채널을 더할 때마다
+  사정거리가 조용히 넓어진다. 정확한 아티팩트 이름으로 건다.
+- **테스트가 통과하는 것만 보고 넘어가지 않는다.** 새로 붙인 가드는 **일부러
+  되돌려** 실제로 잡는지 확인한다. 안 그러면 가드가 죽어도 모른다 — 실패하지
+  않으므로 죽었다는 사실 자체가 안 드러난다.
 - **선언으로 되는 조건을 `handler`로 내리지 않는다.** 내리는 순간
   `_flags.yaml`만 읽어서는 무슨 조건인지 알 수 없게 된다.
 - **`03_selection.json`이 비었는데 매핑을 늘려서 때우지 않는다.** 원인이

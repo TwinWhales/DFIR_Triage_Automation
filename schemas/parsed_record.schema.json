@@ -46,12 +46,17 @@
           "bits_transfer",
           "network_state_changed",
           "shell_spawned",
+          "execution_from_unusual_path",
+          "unexpected_parent_process",
           "network_connection",
           "device_connected",
           "kiosk_restriction_event",
           "remote_session",
           "app_crash",
           "timestamp_truncated",
+          "account_modified",
+          "session_state_changed",
+          "scheduled_task_changed",
           "outside_time_range"
         ]
       }
