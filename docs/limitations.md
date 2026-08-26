@@ -11,7 +11,7 @@
 
 ## 1. 증거 입력
 
-### 디스크 이미지를 직접 열 수 있다 (**부분 해결**, `work.md` 트랙 A)
+### 디스크 이미지를 직접 열 수 있다 (**부분 해결**)
 
 `evidence.py`의 `VolumeSource`가 이제 `dissect.target` 기반으로
 구현돼 있습니다. `--evidence`에 추출된 폴더 대신 raw 이미지 **파일**을
@@ -77,7 +77,7 @@ E01/dd 이미지를 추출된 파일 단위로 다루려면 여전히 FTK Imager
 | `$UsnJrnl:$J` | 구현 — 전부 자체 구현 |
 | `evtx:Security` / `evtx:System` | 구현 — python-evtx 기반 어댑터 |
 | `registry:SYSTEM` / `registry:SOFTWARE` | 구현 — python-registry 기반 어댑터 |
-| `registry:Amcache` | 구현 — python-registry 기반 어댑터 (SYSTEM/SOFTWARE와 같은 클래스 재사용, `work.md` 트랙 B). **Windows 8 이상에만 존재** |
+| `registry:Amcache` | 구현 — python-registry 기반 어댑터 (SYSTEM/SOFTWARE와 같은 클래스 재사용). **Windows 8 이상에만 존재** |
 | `recentfilecache` | 구현 — 전부 자체 구현. **Windows 7 전용.** 실물 1건 대조 완료, 아래 단서 참조 |
 | `prefetch` | 구현 — 전부 자체 구현 (압축 해제 포함). 아래 단서 참조 |
 | `$LogFile` | 미지원 (카탈로그에서 제외 처리) |
@@ -333,7 +333,7 @@ evtx가 python-evtx의 `timestamp()`를 우회한 것과 같은 결론입니다
 #### `registry:Amcache` — 실물 하이브 구조는 확인, 값 의미는 대조 안 함 (**부분 해결**)
 
 `Amcache.hve`도 regf 포맷이라 `RegistryParser`를 그대로 재사용했습니다
-(`work.md` 트랙 B, `HIVE_OF`에 `"registry:Amcache": "Amcache"` 추가).
+(`HIVE_OF`에 `"registry:Amcache": "Amcache"` 추가).
 셀 구조 자체의 정확성은 위 세 가지 우회(한글 잘림·`MULTI_SZ` 종결자·
 타임스탬프 반올림)와 `docs/artifact-notes.md`의 `scan_hive_cells.py`
 대조가 이미 검증한 것을 그대로 물려받습니다 — SYSTEM/SOFTWARE와 셀
@@ -345,7 +345,7 @@ evtx가 python-evtx의 `timestamp()`를 우회한 것과 같은 결론입니다
 `InventoryApplicationFile` 레코드의 `fields`에 `LowerCaseLongPath`
 (전체 경로)·`FileId`(`0000`+SHA1로 보이는 41자리 값)·`BinFileVersion`·
 `BinaryType`·`Size`·`ProgramId`가 실제로 담겨 있음을 확인했습니다 —
-`work.md`가 기대한 "실행 파일 경로·SHA1·타임스탬프"가 맞습니다.
+파서 확충 때 기대한 "실행 파일 경로·SHA1·타임스탬프"가 맞습니다.
 
 **다만 두 가지는 여전히 안 됐습니다.**
 - **필드 이름의 의미를 우리가 해석하지 않습니다** — 그럴 필요가
@@ -434,6 +434,33 @@ SAM 하이브인데 지원하지 않습니다. 사용자별 흔적(NTUSER.DAT의
 04단계 산출물이 원본에 충실해야 한다는 것과 충돌하므로 06단계에서
 풀어야 할 문제로 남깁니다.
 
+#### 장치 속성의 DEVPROP 타입을 못 읽는다 (2026-08-26 실측)
+
+`K-ALERT` 실행에서 04단계가 경고 **90건**을 냈고, 90건 전부 같은 자리였습니다.
+
+```
+SYSTEM\ControlSet001\Enum\USB\...\Properties\{GUID}\NNNN
+  → Unknown Type Exception (Unknown VK Record type 0x12)
+```
+
+`0x12`는 `DEVPROP_TYPE_STRING`입니다. 장치 속성 저장소는 표준 레지스트리
+값 타입(`REG_SZ` 등)이 아니라 **DEVPROP 타입 체계**를 쓰는데,
+python-registry가 이것을 모릅니다.
+
+**Stage 1(USB 삽입) 증거에는 손실이 없습니다.** 정작 중요한 타임스탬프는
+멀쩡히 나옵니다.
+
+```
+Properties\{83da6326-97a6-4088-9453-a1923f573b29}\0064  InstallDate       2022-10-24T15:29:48.8920000Z
+                                                 \0065  FirstInstallDate  2022-10-24T15:29:48.8920000Z
+                                                 \0066  LastArrivalDate   2022-10-24T15:45:41.6995900Z
+```
+
+못 읽는 90건은 문자열형 속성(장치 설명·제조사 등)이고, 같은 사실이
+`DeviceDesc`·`Mfg`·`HardwareID`·`ContainerID` 같은 평범한 값으로 **이미
+따로 들어옵니다.** 그래서 우선순위를 낮게 둡니다 — 다만 경고 90줄이
+04단계 출력을 덮어 다른 경고를 가릴 수 있습니다.
+
 ### evtx에서 못 보는 것
 
 - **메시지 문자열을 만들지 않습니다.** 이벤트 로그 뷰어가 보여 주는 문장은
@@ -475,7 +502,7 @@ SAM 하이브인데 지원하지 않습니다. 사용자별 흔적(NTUSER.DAT의
 | SRUM (`SRUDB.dat`) | **앱별 송수신 바이트** | ESE 포맷. 신규 라이브러리 필요 |
 | WebCache | 브라우저 방문·다운로드 | ESE 포맷 |
 | `qmgr.db` | BITS 작업 큐 원본 | ESE 포맷 |
-| NTUSER.DAT | 사용자별 흔적 | 사용자 프로필마다 하나 (`work.md` 트랙 A) |
+| NTUSER.DAT | 사용자별 흔적 | 사용자 프로필마다 하나 (다중 매칭 미지원) |
 | DNS 클라이언트 로그 | 조회한 도메인 | 기본적으로 비활성 |
 
 **SRUM이 가장 아픕니다.** "어느 프로그램이 얼마를 보냈나"에 직접 답하는
@@ -818,8 +845,8 @@ Stage 4에 `T1078`(상위)을 쓰는데 우리에겐 `T1078.003`(하위)도 있�
   않으면 매핑이 아니라 모델 문제로 잘못 집계될 수 있습니다.
 - **`T1547.001.yaml`이 HKLM Run/RunOnce만 봅니다** — HKCU 쪽(사용자별
   자동실행)은 `NTUSER.DAT`가 필요한데 지금 카탈로그는 볼륨 공용 하이브
-  (`SYSTEM`·`SOFTWARE`)만 지원합니다(`work.md` 트랙 A, 사용자별 하이브
-  다중 매칭). 단일 로컬 계정으로 상시 로그인되는 키오스크에서는 영향이
+  (`SYSTEM`·`SOFTWARE`)만 지원합니다 — 사용자별 하이브 다중 매칭이
+  아직 없습니다. 단일 로컬 계정으로 상시 로그인되는 키오스크에서는 영향이
   작을 것으로 보고 우선 이렇게 두었으나 검증하지 않은 가정입니다.
 - **`T1091.yaml`의 `$UsnJrnl` 요청에 `path_prefix`가 없습니다** — 이동식
   매체에서 옮겨진 파일이 어느 경로에 놓일지 미리 알 수 없어 확장자만
@@ -1356,6 +1383,174 @@ V34(맨 이름)·V35(반대 방향)를 더해 33건 → 35건입니다. 이 부�
 **한 건이지만 실물 수치가 있습니다**(통과 1 / 기각 0). 다만 표본이
 findings 1건이라 비율로 말할 수 없고, `priority`가 비어 있는 동안의
 배분으로 얻은 결과라는 점도 그대로입니다(6-5).
+
+### 검증기가 경로 표기 차이를 환각으로 센다 (**부분 해결**, 2026-08-26 실측)
+
+**같은 일이 다른 표기 부류로 또 일어났습니다.** 위 절이 `fields.` 접두어를
+메꾸고 감시 사례를 35건으로 늘린 지 이틀 만입니다.
+
+`K-ALERT`(실물 이미지 + 알럿 입력, 기법 8개)에서 06단계가 소견 4건을
+**전부 기각해 환각률 100%**를 냈습니다. 열어 보니 셋이 오탐입니다.
+
+| | 모델 주장 | 실제 레코드 | 판정 |
+|---|---|---|---|
+| F4 | `C:\WINDOWS\SYSTEM32\sppsvc.exe` | `c:\windows\system32\sppsvc.exe` | 대소문자만 다름 — **오탐** |
+| F2 | `C:\WINDOWS\SYSTEM32\SVCHOST.EXE` | `\VOLUME{01d8e7bd02796420-a202ae01}\WINDOWS\...` | 볼륨 GUID 표기 — **오탐** |
+| F3 | `C:\WINDOWS\SYSTEM32\WERMGR.EXE` | 같음 | **오탐** |
+| F1 | `SubjectUserName` = `MINWINPC$` | `-` (레코드에 그 문자열 없음) | **진짜 환각** |
+
+**실제 환각률은 100%가 아니라 25%입니다.**
+
+#### 원인 — 경로 비교 규칙이 필드 **이름**으로 켜진다
+
+```python
+# comparators.py:48
+PATH_FIELDS = frozenset({"path", "target_path", "source_path", "image_path"})
+```
+
+`is_path_field()`가 이 넷(과 `*_path`)일 때만 `normalize_path`를 태웁니다.
+그 밖의 이름은 `_scalar_equal`의 정확 문자열 비교로 갑니다. 실측:
+
+```
+compare("15",   'C:\WINDOWS\...\sppsvc.exe', 'c:\windows\...\sppsvc.exe')  →  False
+compare("path", 같은 값)                                                    →  True
+```
+
+F4의 필드명이 `"15"`인 것은 Amcache 값 이름이 숫자 문자열이기 때문입니다.
+
+**K-001 랩에서 이것이 훨씬 크게 터집니다.** Sysmon 이 실린 순간
+Stage 2·3 이 통째로 기대는 필드들이 전부 경로로 인식되지 않습니다.
+
+```
+is_path_field('Image')          = False   ← Sysmon EID 1
+is_path_field('ParentImage')    = False   ← Stage 3 의 결정적 근거
+is_path_field('TargetFilename') = False   ← Sysmon EID 11
+```
+
+F2·F3 은 별개 원인입니다 — 프리패치의 `_to_drive()` 가
+`\DEVICE\HARDDISKVOLUME*` 만 드라이브 문자로 바꾸고, 실물에서 나온
+`\VOLUME{serial-serial}` 형태는 그대로 둡니다("바꿀 수 없으면 그대로
+둔다"는 주석대로의 동작). **04단계에서 풀 문제이지 06단계가 흡수할
+것이 아닙니다.**
+
+#### 과엄격 감시가 또 못 잡았다
+
+같은 시점에 `benchmark/validator_check.py` 는 **35건 중 35건 통과,
+"오탐 없음"**을 보고했습니다. 볼륨 GUID 표기도 숫자 필드명도 사례에
+없는 부류입니다.
+
+**위 절이 예고한 그대로입니다** — 감시는 사례에 있는 부류만 봅니다.
+새 표기 부류가 생기면 100% 통과를 보고하면서 정상 문장을 기각합니다.
+**`PATH_FIELDS` 를 손대기 전에 사례부터 추가해야 합니다.**
+
+#### 영향
+
+**이 상태에서 나온 환각률 수치는 쓸 수 없습니다.** 발표 수치가 모델의
+환각이 아니라 우리 비교기의 이름 화이트리스트를 재고 있습니다. 위 절이
+"실물 수치가 있습니다(통과 1 / 기각 0)"라고 적은 것도 findings 1건짜리
+표본이라 이 오탐 부류를 만날 기회가 없었을 뿐입니다.
+
+#### 조치 — 이름 목록을 넓혔다. 셋 중 하나만 풀렸다
+
+**순서를 지켰습니다** — `benchmark/validator_cases.json` 에 사례 V36~V39 를
+먼저 넣어 넷 다 기각되는 것을 확인하고, 그다음 `PATH_FIELDS` 를 고쳤습니다.
+사례 없이 비교기만 고치면 감시가 계속 "오탐 없음"을 보고합니다.
+
+사례용 레코드는 `benchmark/validator_records/` 에 따로 뒀습니다. C-001
+목업은 웹셸 벤치마크의 입력이라, 표기 시험용 레코드를 섞으면 파싱 건수와
+05단계 배분이 함께 흔들립니다.
+
+| | 상태 |
+|---|---|
+| Sysmon `Image`·`ParentImage`·`TargetFilename`·`ImageLoaded` | **해결** — `PATH_FIELDS` 에 추가 |
+| Security `ProcessName`·`NewProcessName`·`ParentProcessName` | **해결** — 같음 |
+| `filename` 으로 끝나는 새 이름 | **해결** — `PATH_FIELD_SUFFIXES` 가 받음 |
+| Amcache 숫자 값 이름 (`"15"`) | **미해결** — 아래 |
+| 프리패치 볼륨 GUID 경로 | **미해결** — 06단계 문제가 아니라 04단계 `_to_drive()` 몫 |
+
+**`CommandLine` 은 일부러 넣지 않았습니다.** 앞머리는 경로지만 뒤는
+인자입니다. 경로 규칙으로 대소문자를 지우면 인자의 실제 차이까지 같이
+지워져 검증이 물러집니다.
+
+#### 남은 것 — Amcache 숫자 값 이름은 04단계 몫이다
+
+`"15"` 는 전체 경로지만 **이름이 아무 뜻도 담고 있지 않습니다.**
+`PATH_FIELDS` 에 `"15"` 를 넣으면 다른 서브키의 `15` 까지 경로로 봅니다.
+값의 생김새로 판단하는 것은 이 모듈이 처음부터 거부한 방식입니다.
+
+**04단계가 Amcache 값 이름을 해석해 내보내면 풀립니다.** `V36` 에
+`expect: "rejected"` 와 `gap` 을 달아 두었고, 고쳐지면
+`test_known_gaps_carry_a_reason_and_are_still_broken` 이 **"이제 통과하니
+expect 를 되돌리라"**고 알립니다 — 목록이 낡은 채 남아 진짜 회귀를 덮는
+것을 막습니다.
+
+#### 이 조치로 K-ALERT 수치는 움직이지 않았습니다
+
+**중요합니다.** 다시 검증해도 환각률은 100% 그대로입니다.
+
+```
+F1  value_mismatch  SubjectUserName   ← 진짜 환각 (올바른 기각)
+F2  value_mismatch  path              ← 프리패치 볼륨 GUID (04단계 몫)
+F3  value_mismatch  path              ← 같음
+F4  value_mismatch  "15"              ← Amcache (아는 구멍)
+```
+
+그 이미지에 Sysmon 이 없어 이번에 고친 필드들이 등장하지 않기 때문입니다.
+**이번 조치는 K-001 랩에서 터질 것을 미리 막은 것이지, 이 케이스의 수치를
+고친 것이 아닙니다.** 수치가 정상으로 돌아오려면 위 표의 미해결 둘이
+남아 있습니다.
+
+### 05단계 프롬프트가 컨텍스트 창을 넘는다 (**미해결**, 2026-08-26 실측)
+
+`K-ALERT`(기법 8개 → 아티팩트 10종 1,693건)에서 05단계가 **3회 재시도
+끝에 중단**됐습니다. 약 25분 소모, 소견 0건.
+
+```
+attempt 1  malformed_output   응답에서 JSON 객체를 찾지 못함
+attempt 2  timeout            qwen2.5:7b: 900.0초 내 응답 없음
+attempt 3  malformed_output   응답에서 JSON 객체를 찾지 못함
+           abort              → SystemExit(1)
+```
+
+프롬프트를 그대로 재현해 재 봤습니다.
+
+| | |
+|---|---|
+| 전달 레코드 60건의 JSON | 71,476자 (**추정 28,600 토큰** — 글자수÷2.5, 토크나이저를 돌린 값이 아님) |
+| 시스템 프롬프트 | 3,002자 |
+| `--num-ctx` 기본값 | 32,768 |
+| `qwen2.5:7b` 의 `context_length` | 32,768 (**모델 상한이라 더 열 수 없음**) |
+
+출력에 쓸 자리가 2천 토큰도 남지 않습니다.
+
+**`--limit 15` 로 낮추니 첫 시도에 통과했습니다**(소견 4건, 재시도 0회,
+`errors.jsonl` 0건). 원인이 프롬프트 크기임이 확인됐고, attempt 2의
+타임아웃도 같은 원인입니다 — 3만 토큰 프롬프트의 처리 시간입니다.
+
+**5장이 "넘는지는 아무도 검사하지 않습니다"라고 적어 둔 자리이고,
+이번이 실제로 넘긴 첫 실측입니다.** 웹셸 목업은 레코드가 5건이라 닿을
+수 없던 지점입니다.
+
+#### 왜 60건이 이렇게 커졌나
+
+4-3이 적은 것과 같은 구조입니다 — 아티팩트가 늘면 자리를 나눠 갖지만
+**총량 60건은 그대로**라, 레코드 하나당 평균 1,190자가 그대로 실립니다.
+
+```
+evtx:Security  후보 482 → 9자리     registry:Amcache  후보 392 → 8자리
+evtx:KernelPnP 후보 385 → 9자리     registry:SYSTEM   후보 258 → 8자리
+prefetch       후보 137 → 9자리     evtx:RDPSession   후보  12 → 9자리
+```
+
+`--limit` 기본값 60은 카탈로그가 11종이던 시절 값입니다.
+
+#### 조치하지 않은 것
+
+**실패한 모델 원문을 남기지 않습니다.** 그래서 위 진단이 "프롬프트가
+잘렸다"까지 확인한 것이 아니라 **크기를 재고 `--limit` 를 낮춰 재현한
+것**입니다. 프롬프트가 실제로 어디서 잘렸는지, 모델이 무엇을 뱉었는지는
+보지 못했습니다. `malformed_output` 일 때 응답 원문을 남기면 다음부터는
+추측 없이 판단합니다.
 
 ### 외부 도구 대조가 부분적이다
 

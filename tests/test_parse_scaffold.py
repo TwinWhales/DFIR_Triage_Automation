@@ -651,7 +651,7 @@ def test_real_image_every_catalogued_layout_path_is_found():
 
 @pytestmark_real_image
 def test_real_image_streams_are_seekable_and_reread_matches():
-    """work.md 트랙 A의 핵심 전제 — RunlistStream이 두 번 순회를 견디는가."""
+    """raw 이미지 직접 읽기의 핵심 전제 — RunlistStream이 두 번 순회를 견디는가."""
     source = evidence.open_source(REAL_IMAGE)
 
     with source.open("$MFT") as stream:

@@ -71,7 +71,12 @@ PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01
 파이프라인은 **01→07 전 구간이 관통합니다.** 카탈로그의 아티팩트에는
 전부 파서가 있고, **실물 디스크 이미지와 실제 sLLM으로 관통을
 확인했습니다**(2026-08-24, 60GB 물리 디스크 + Ollama `qwen2.5:7b`).
-알려진 한계 전체는 [`docs/limitations.md`](docs/limitations.md)에 있습니다.
+
+**단, 기본값 그대로는 아닙니다.** 아티팩트가 여럿 걸린 실제 케이스에서는
+05단계 프롬프트가 모델의 컨텍스트 창을 넘겨 중단됩니다. `--limit` 을
+낮춰야 통과합니다 — 실측과 원인은
+[`limitations.md`](docs/limitations.md) "05단계 프롬프트가 컨텍스트 창을
+넘는다" 절에 있습니다. 알려진 한계 전체도 같은 문서에 있습니다.
 
 | | 상태 |
 |---|---|
@@ -79,14 +84,23 @@ PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01
 | `src/common/` | 구현 완료 — `io` `schema` `errors` `refs` `attack` `llm` |
 | C-001 목업 세트 | 작성 완료 |
 | 02 시나리오 정규화 | 구현 완료 — 알럿 어댑터·스텁·Ollama 전부 실동작 |
-| 03 아티팩트 선별 | 구현 완료 — 매핑 16개 + 카탈로그 11종 (`mapping_table_version` 0.9) |
-| **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx` 11채널(python-evtx 기반), `registry` 3하이브(python-registry 기반), `prefetch`·`recentfilecache`(자체 구현). 증거의 Windows 버전을 판정해 그 버전에 없는 아티팩트를 가려 냅니다 |
+| 03 아티팩트 선별 | 구현 완료 — 매핑 30개 + 카탈로그 22종 (`mapping_table_version` 1.1) |
+| **04 파싱** | 구현 완료 — `$MFT`(analyzeMFT 기반, MIT), `$UsnJrnl`(자체 구현), `evtx` 14채널(python-evtx 기반), `registry` 3하이브(python-registry 기반), `prefetch`·`recentfilecache`(자체 구현). 증거의 Windows 버전을 판정해 그 버전에 없는 아티팩트를 가려 냅니다 |
 | 05 sLLM 해석 | 구현 완료 — 아티팩트별 자릿수 배분·스텁·Ollama 전부 실동작 |
 | 06 근거 검증 | 구현 완료 — 체커 3종 + `--checkers` 조합 |
 | 07 결과 보고 | 구현 완료 — Jinja2 템플릿 (LLM 미사용) |
 | **평가 (`benchmark/`)** | **구현 완료** — 단계별 진단 + 검증기 오탐 확인 |
 
-### 남은 것 둘
+### 남은 것 셋
+
+**검증기가 정상 문장을 환각으로 셉니다.** 2026-08-26 실측 — 실물 이미지
+케이스에서 06단계가 소견 4건을 전부 기각해 환각률 100%를 냈는데, 사람이
+열어 보니 **진짜 환각은 1건**이고 셋은 표기 차이였습니다(대소문자,
+프리패치 볼륨 GUID). `benchmark/validator_check.py` 는 같은 시점에
+"오탐 없음 35/35"를 보고했습니다 — 사례에 없는 표기 부류라 못 잡았습니다.
+**이 상태의 환각률 수치는 쓸 수 없습니다.** 원인과 재현은
+[`limitations.md`](docs/limitations.md) "검증기가 경로 표기 차이를
+환각으로 센다" 절.
 
 **정답 데이터가 없습니다.** `ground_truth.json`은 스펙 예시에서 역산한
 것이라 자기채점이고, `evaluate.py`가 그 사실을 경고로 띄웁니다. 발표에
@@ -113,6 +127,12 @@ PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01
 **시간을 지배하는 것은 이미지 크기가 아니라 모델 호출 두 번입니다** —
 전체의 98%. 04단계는 선별 범위에 좌우됩니다(`$MFT` 98,151건이 걸린
 실행은 약 4분).
+
+**위 표는 기법 3개짜리 케이스입니다.** 기법 8개가 걸려 아티팩트 10종이
+파싱된 케이스에서는 05단계가 프롬프트 크기 때문에 3회 재시도 끝에
+중단됐습니다(약 25분 소모, 소견 0건). `--limit 15` 로 낮추면 한 번에
+통과합니다. 05단계 시간은 레코드 수가 아니라 **프롬프트 토큰 수**를
+따라갑니다.
 
 ### 한 실행은 한 볼륨
 
@@ -170,8 +190,13 @@ evidence/0824test.001: NTFS 파일시스템이 2개 발견됐습니다. ...
   32,768로 두었지만 그것도 넘으면 같은 일이 벌어집니다 — 넘는지는
   아무도 검사하지 않습니다([`limitations.md`](docs/limitations.md) 5장).
 
-- **evtx** — 채널 5종(`Security`·`System`·`Firewall`·`BITS`·
-  `NetworkProfile`). 온디스크 계층은 [python-evtx](docs/artifact-notes.md)가
+- **evtx** — 채널 14종. 기본 탑재 로그(`Security`·`System`·`Application`·
+  `Firewall`·`BITS`·`NetworkProfile`), 장치 연결(`DriverFrameworks`·
+  `KernelPnP`), 키오스크 제한환경(`AssignedAccess` 3종), 원격 세션
+  (`RDPConnection`·`RDPSession`), 그리고 `Sysmon`. **`Sysmon`만 기본
+  탑재가 아닙니다** — 대상에 설치돼 있어야 하고, 없으면
+  `artifact_not_found`로 빠집니다.
+  온디스크 계층은 [python-evtx](docs/artifact-notes.md)가
   맡고, 청크 순회 감사·필드 추출·`ref`/`offset` 규약은 우리 어댑터가 합니다.
   채널이 달라도 형식이 같아 파서는 하나이고, **아티팩트마다 인스턴스를
   따로 만듭니다** — 공유하면 한 채널의 레코드가 다른 접두어로 나가고
