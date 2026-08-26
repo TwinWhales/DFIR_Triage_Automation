@@ -213,6 +213,8 @@ service_installed:
 | `list_contains` | 리스트 필드 `field`가 `values`와 겹치는가 |
 | `field_equals` | `record[field]`가 `value`와 같은가 |
 | `field_endswith` | 점 표기 `field`(예: `fields.Image`)의 값이 `values` 중 하나로 끝나는가. 대소문자 무시 |
+| `field_startswith` | 같은 형태로 **시작하는가**. 실행 파일이 어느 볼륨에 있는지를 가릴 때 |
+| `field_contains` | 같은 형태를 **포함하는가**. 경로 가운데에 사용자 이름이 끼는 자리를 가릴 때 |
 
 `artifact`는 `$MFT`처럼 정확히 쓰거나 `evtx:*`로 접두어를, `*`로 전부를
 가리킵니다. 카탈로그에 있는 이름이어야 합니다.
@@ -223,9 +225,17 @@ service_installed:
 여섯 룰이 그렇게 됐습니다(`docs/limitations.md`). `tests/test_flag_rules.py`가
 이제 막습니다. `*`는 `match` 없는 전역 표식(`outside_time_range`)에만 씁니다.
 
-`field_endswith`의 값에는 **경로 구분자를 포함시키십시오** — `\cmd.exe`
-처럼. `cmd.exe`만 쓰면 `evilcmd.exe`가 함께 걸립니다. 매처가 그 판단을
-대신하지 않는 것은, YAML만 읽고도 무엇이 걸리는지 보여야 하기 때문입니다.
+세 매처 다 값에 **경로 구분자를 포함시키십시오** — `\cmd.exe`, `	emp\`
+처럼. `cmd.exe`만 쓰면 `evilcmd.exe`가, `temp`만 쓰면
+`C:\Program Files\Tempo\`가 함께 걸립니다. 매처가 그 판단을 대신하지
+않는 것은, YAML만 읽고도 무엇이 걸리는지 보여야 하기 때문입니다.
+
+**부정으로 쓰고 싶을 때 한 번 더 생각하세요.** "`C:`가 아니면"은 한 줄로
+끝나지만, 형식 가정이 틀리면 **전량이 걸려 필터가 죽습니다.** 긍정으로
+열거하면 형식이 틀렸을 때 아무것도 안 걸립니다 — 그것도 문제지만 조용히
+넘어가는 쪽이지 05단계 쿼터를 태우지는 않습니다. 그래서
+`execution_from_unusual_path`는 드라이브 문자를 스물다섯 줄로 늘어놓습니다
+(`docs/limitations.md`).
 
 ### `handler`는 선언으로 안 되는 것만
 

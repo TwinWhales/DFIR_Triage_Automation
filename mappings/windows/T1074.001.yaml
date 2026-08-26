@@ -32,4 +32,7 @@ artifacts:
     rationale: 경로를 모르는 상태에서의 파일 생성·삭제 이력
 
 defaults:
+  # 스테이징 경로는 공격자가 정하므로 맞힐 수 없다. 관례적인 자리를
+  # 넣어 두되, 못 맞혔을 때를 대비해 Tier 2 로 $UsnJrnl 을 함께 건다 —
+  # 저쪽은 경로를 좁히지 않는다.
   staging_root: 'C:\ProgramData'

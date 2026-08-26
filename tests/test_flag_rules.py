@@ -267,7 +267,11 @@ def _is_marker(clause: dict) -> bool:
 #: 생각하게 한다. **"그냥 통과시키려고" 적지 말 것** — 그러면 이 검사가
 #: 없는 것과 같아진다.
 _COVERED_BY_FIELD_CONDITION = {
-    # shell_spawned: Sysmon 1 중 fields.Image 가 셸·시스템 유틸리티인 것만.
+    # Sysmon 1 은 세 flag 가 **맥락으로** 나눠 받는다. event_id 로 적혀
+    # 있지 않아 자동으로는 커버리지가 안 보인다.
+    #   shell_spawned                 무엇이 실행됐나 (fields.Image 가 셸)
+    #   execution_from_unusual_path   어디에 있나 (비시스템 볼륨·쓰기 가능 경로)
+    #   unexpected_parent_process     누가 실행시켰나 (fields.ParentImage)
     # EID 1 전체에 붙이면 필터가 일을 안 하므로 일부러 좁힌 것이다.
     ("evtx:Sysmon", 1),
 }

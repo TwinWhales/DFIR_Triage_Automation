@@ -237,12 +237,53 @@ def _match_field_endswith(record: dict[str, Any], clause: Clause) -> bool:
     return any(lowered.endswith(str(value).lower()) for value in clause.values)
 
 
+def _match_field_startswith(record: dict[str, Any], clause: Clause) -> bool:
+    r"""``field`` 의 값이 ``values`` 중 하나로 **시작하는가**. 대소문자 무시.
+
+    실행 파일이 어느 볼륨에 있는지를 가릴 때 씁니다.
+
+    **"C: 가 아니면"으로 쓰고 싶은 유혹을 참으십시오.** 부정으로 쓰면 형식
+    가정이 틀렸을 때 **전량이 걸립니다** — Sysmon 설정에 따라 ``Image`` 가
+    ``\Device\HarddiskVolume2\...`` 로 올 수 있고, 그러면 정상 프로세스
+    생성이 모두 신호가 되어 05단계 쿼터를 통째로 태웁니다. 긍정으로 열거하면
+    형식이 다를 때 아무것도 안 걸립니다 — 그것도 문제지만 조용히 넘어가는
+    쪽이지 필터를 죽이지는 않습니다.
+
+    실물 Sysmon 로그를 아직 한 번도 파싱해 본 적이 없어서 내린 판단입니다.
+    """
+    actual = _dotted(record, str(clause.field))
+    if not isinstance(actual, str):
+        return False
+    lowered = actual.lower()
+    return any(lowered.startswith(str(value).lower()) for value in clause.values)
+
+
+def _match_field_contains(record: dict[str, Any], clause: Clause) -> bool:
+    r"""``field`` 의 값이 ``values`` 중 하나를 **포함하는가**. 대소문자 무시.
+
+    경로의 중간 조각을 가릴 때 씁니다. ``C:\Users\kiosk\AppData\Local\Temp\x.exe``
+    처럼 사용자 이름이 가운데 끼는 경로는 접두어로도 접미어로도 못 잡습니다.
+
+    **접두어·접미어로 되는 것을 이걸로 쓰지 마십시오.** 포함 검사는 가장
+    헐거워서, 값이 짧으면 엉뚱한 데서 걸립니다. 경로를 가릴 때는 앞뒤에
+    구분자를 붙이십시오 — ``\temp\`` 가 아니라 ``temp`` 로 쓰면
+    ``C:\Program Files\Tempo\app.exe`` 가 걸립니다.
+    """
+    actual = _dotted(record, str(clause.field))
+    if not isinstance(actual, str):
+        return False
+    lowered = actual.lower()
+    return any(str(value).lower() in lowered for value in clause.values)
+
+
 #: ``match:`` 에 쓸 수 있는 이름. YAML 이 목록 밖을 부르면 로드가 실패한다.
 MATCHERS: dict[str, Callable[[dict[str, Any], Clause], bool]] = {
     "event_id": _match_event_id,
     "list_contains": _match_list_contains,
     "field_equals": _match_field_equals,
     "field_endswith": _match_field_endswith,
+    "field_contains": _match_field_contains,
+    "field_startswith": _match_field_startswith,
 }
 
 #: ``match`` 별 필수 항목. 빠뜨리면 조건이 조용히 헐거워진다.
@@ -251,6 +292,8 @@ _MATCH_REQUIRES: dict[str, tuple[str, ...]] = {
     "list_contains": ("field", "values"),
     "field_equals": ("field", "value"),
     "field_endswith": ("field", "values"),
+    "field_contains": ("field", "values"),
+    "field_startswith": ("field", "values"),
 }
 
 
