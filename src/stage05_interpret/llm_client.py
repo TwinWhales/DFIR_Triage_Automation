@@ -38,6 +38,10 @@ class InterpretClient:
 
     def __init__(self, backend: Backend) -> None:
         self.backend = backend
+        #: 마지막으로 받은 모델 응답 원문. 실패했을 때 무엇을 뱉었는지
+        #: 파일로 떨구기 위한 것이다. 파싱 전에 채우므로 JSON 을 못 찾은
+        #: 경우에도 남는다. 성공하면 아무도 읽지 않는다.
+        self.last_raw: str | None = None
 
     @property
     def name(self) -> str:
@@ -93,5 +97,6 @@ class InterpretClient:
         raw = self.backend.complete(
             self.system_prompt(), self.user_prompt(scenario, records, feedback)
         )
+        self.last_raw = raw
         parsed = extract_json(raw)
         return {key: parsed.get(key, []) for key in FINDINGS_BODY_FIELDS}

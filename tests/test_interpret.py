@@ -214,6 +214,54 @@ def test_a_schema_violation_is_retried(records, scenario, tmp_path):
     assert logged[0]["action"] == "retry"
 
 
+def test_the_failed_response_is_kept_verbatim(records, scenario, tmp_path):
+    # 원문이 없으면 프롬프트가 잘린 것인지 모델이 형식을 어긴 것인지
+    # 가릴 수 없다. 2026-08-26 실측에서 실제로 추측으로 진단했다.
+    log = errlog.ErrorLog.for_case(tmp_path)
+    backend = FakeBackend(
+        "여기서 잘렸습니다 {\"findings\": [",
+        (MOCK / "05_findings.json").read_text(encoding="utf-8"),
+    )
+    selected = _selected(records.values())
+    interpret(scenario, selected, InterpretClient(backend), log)
+
+    dumped = tmp_path / "05_interpret_raw_attempt1.txt"
+    assert dumped.read_text(encoding="utf-8") == "여기서 잘렸습니다 {\"findings\": ["
+
+    logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    assert logged[0]["type"] == "malformed_output"
+    assert logged[0]["detail"]["raw"] == dumped.name
+
+
+def test_a_schema_violation_keeps_the_response_too(records, scenario, tmp_path):
+    # JSON 이긴 한데 스키마를 어긴 경우가 실측에서 더 잦았다.
+    log = errlog.ErrorLog.for_case(tmp_path)
+    broken = copy.deepcopy(io.read_json(MOCK / "05_findings.json"))
+    broken["findings"][0]["severity"] = "catastrophic"
+    backend = FakeBackend(
+        json.dumps(broken, ensure_ascii=False),
+        (MOCK / "05_findings.json").read_text(encoding="utf-8"),
+    )
+    interpret(scenario, _selected(records.values()), InterpretClient(backend), log)
+
+    dumped = tmp_path / "05_interpret_raw_attempt1.txt"
+    assert "catastrophic" in dumped.read_text(encoding="utf-8")
+
+
+def test_each_attempt_gets_its_own_file(records, scenario, tmp_path):
+    # 한 파일에 덮어쓰면 마지막 시도만 남아, 모델이 지적을 받고 어떻게
+    # 달라졌는지(또는 달라지지 않았는지)를 볼 수 없다.
+    log = errlog.ErrorLog.for_case(tmp_path)
+    backend = FakeBackend("첫째 쓰레기", "둘째 쓰레기")
+    with pytest.raises(SystemExit):
+        interpret(
+            scenario, _selected(records.values()), InterpretClient(backend), log, max_attempts=2
+        )
+
+    assert (tmp_path / "05_interpret_raw_attempt1.txt").read_text(encoding="utf-8") == "첫째 쓰레기"
+    assert (tmp_path / "05_interpret_raw_attempt2.txt").read_text(encoding="utf-8") == "둘째 쓰레기"
+
+
 # ================================================================== CLI
 
 
