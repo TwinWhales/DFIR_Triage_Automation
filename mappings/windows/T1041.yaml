@@ -18,12 +18,18 @@ artifacts:
       event_ids: [3, 22]
     rationale: 송신 프로세스와 목적지 IP·포트·도메인
 
-  - name: evtx:Firewall
-    tier: 1
-    priority: 2
-    scope_template: {}
-    rationale: 아웃바운드 연결의 허용·차단 기록
-
+  # evtx:Firewall 은 걸지 않는다 (2026-08-25 에 뺐다).
+  #
+  # 한때 "아웃바운드 연결의 허용·차단 기록"이라는 rationale 로 Tier 1 에
+  # 걸려 있었는데 **그 채널에는 그런 기록이 없다.** Windows Firewall With
+  # Advanced Security/Firewall 이 담는 것은 방화벽 규칙·프로필의 구성
+  # 변경이다(그쪽은 T1562.004 가 본다).
+  #
+  # 연결 단위 허용/차단 감사는 Security 의 5152·5156·5157(필터링 플랫폼)에
+  # 있다. 걸지 않는 이유는 둘이다 — 기본 감사가 꺼져 있어 대개 안 남고,
+  # 켜면 정상 트래픽으로 로그가 가득 차 05단계 쿼터를 혼자 태운다.
+  #
+  # 외부 통신의 근거는 Sysmon 3·22 가 Tier 1 로 들고 있다.
   - name: evtx:NetworkProfile
     tier: 2
     trigger: Tier1에서 외부 통신이 확인되어 그 시각의 네트워크 연결 상태를 확인해야 하는 경우

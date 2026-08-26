@@ -217,6 +217,12 @@ service_installed:
 `artifact`는 `$MFT`처럼 정확히 쓰거나 `evtx:*`로 접두어를, `*`로 전부를
 가리킵니다. 카탈로그에 있는 이름이어야 합니다.
 
+**`match: event_id`와 접두어 와일드카드를 함께 쓰지 마세요.** EventID는
+제공자 안에서만 유일해서, `evtx:*`로 걸면 **카탈로그에 채널을 더할 때마다
+사정거리가 조용히 넓어집니다.** 2026-08-25에 채널이 5개에서 14개가 되면서
+여섯 룰이 그렇게 됐습니다(`docs/limitations.md`). `tests/test_flag_rules.py`가
+이제 막습니다. `*`는 `match` 없는 전역 표식(`outside_time_range`)에만 씁니다.
+
 `field_endswith`의 값에는 **경로 구분자를 포함시키십시오** — `\cmd.exe`
 처럼. `cmd.exe`만 쓰면 `evilcmd.exe`가 함께 걸립니다. 매처가 그 판단을
 대신하지 않는 것은, YAML만 읽고도 무엇이 걸리는지 보여야 하기 때문입니다.
