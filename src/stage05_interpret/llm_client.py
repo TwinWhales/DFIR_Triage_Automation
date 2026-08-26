@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..common.llm import Backend, extract_json
+from .allocation import MAX_LIST_ITEMS, for_prompt
 
 __all__ = ["DEFAULT_MODEL", "FINDINGS_BODY_FIELDS", "InterpretClient"]
 
@@ -36,8 +37,16 @@ FINDINGS_BODY_FIELDS = ("findings", "timeline")
 class InterpretClient:
     """레코드 → 해석 문장과 claims."""
 
-    def __init__(self, backend: Backend) -> None:
+    def __init__(self, backend: Backend, *, max_list_items: int | None = MAX_LIST_ITEMS) -> None:
         self.backend = backend
+        #: ``fields`` 안의 목록을 몇 개까지 실을 것인가. ``allocation``이
+        #: 예산을 잴 때 쓰는 값과 **같아야 한다** — 어긋나면 예산이 맞아도
+        #: 프롬프트가 넘친다. ``interpret``이 둘에 같은 값을 넘긴다.
+        self.max_list_items = max_list_items
+        #: 마지막으로 받은 모델 응답 원문. 실패했을 때 무엇을 뱉었는지
+        #: 파일로 떨구기 위한 것이다. 파싱 전에 채우므로 JSON 을 못 찾은
+        #: 경우에도 남는다. 성공하면 아무도 읽지 않는다.
+        self.last_raw: str | None = None
 
     @property
     def name(self) -> str:
@@ -45,6 +54,20 @@ class InterpretClient:
 
     def system_prompt(self) -> str:
         return (PROMPT_DIR / "interpret_system.txt").read_text(encoding="utf-8")
+
+    def _trim_notice(self) -> str:
+        """목록이 잘렸다는 사실을 모델에게 말한다.
+
+        말하지 않으면 모델이 "적재 파일은 20개였다"고 쓸 수 있고, 그것은
+        우리가 **유발한** 환각이다. 전체 개수는 레코드의 ``*_count`` 필드에
+        원본 그대로 실려 있다(프리패치의 ``loaded_file_count`` 등).
+        """
+        if self.max_list_items is None:
+            return ""
+        return (
+            f". fields 안의 목록은 앞에서 {self.max_list_items}개까지만 실려 있으니 "
+            "전체 개수는 함께 있는 개수 필드를 보고 말하십시오"
+        )
 
     def user_prompt(
         self,
@@ -65,8 +88,11 @@ class InterpretClient:
             # 레코드를 JSONL로 준다. 한 줄이 한 레코드라 모델이 경계를
             # 헷갈리지 않고, 토큰도 들여쓰기 JSON보다 적게 든다.
             "### 레코드 ("
-            f"{len(records)}건, 이 목록에 없는 ref를 쓰면 기각됩니다)\n"
-            + "\n".join(json.dumps(record, ensure_ascii=False) for record in records),
+            f"{len(records)}건, 이 목록에 없는 ref를 쓰면 기각됩니다{self._trim_notice()})\n"
+            + "\n".join(
+                json.dumps(for_prompt(record, self.max_list_items), ensure_ascii=False)
+                for record in records
+            ),
         ]
 
         if feedback:
@@ -78,6 +104,19 @@ class InterpretClient:
 
         parts.append("### 출력")
         return "\n\n".join(parts)
+
+    def prompt_overhead_chars(self, scenario: dict[str, Any]) -> int:
+        """레코드를 빼고 프롬프트가 이미 차지하는 글자 수.
+
+        토큰 예산이 레코드에 얼마를 쓸 수 있는지 정할 때 씁니다
+        (``allocation.char_budget``). **추정하지 않고 실제로 조립해 잽니다** —
+        시스템 프롬프트가 길어지거나 머리말에 줄이 늘면 그만큼 예산이
+        자동으로 줄어야 하고, 상수로 적어 두면 그 순간 어긋납니다.
+
+        재시도의 ``feedback`` 은 빠져 있습니다. 길이가 지적 하나만큼이라
+        작고, 예산은 첫 시도 기준으로 잡습니다.
+        """
+        return len(self.system_prompt()) + len(self.user_prompt(scenario, []))
 
     def propose_findings(
         self,
@@ -93,5 +132,6 @@ class InterpretClient:
         raw = self.backend.complete(
             self.system_prompt(), self.user_prompt(scenario, records, feedback)
         )
+        self.last_raw = raw
         parsed = extract_json(raw)
         return {key: parsed.get(key, []) for key in FINDINGS_BODY_FIELDS}

@@ -219,6 +219,34 @@ service_installed:
 `artifact`는 `$MFT`처럼 정확히 쓰거나 `evtx:*`로 접두어를, `*`로 전부를
 가리킵니다. 카탈로그에 있는 이름이어야 합니다.
 
+#### `event_ids` — 채널 안에서 한 번 더 좁힐 때
+
+`artifact`와 같은 자리입니다. 둘 다 **대상을 좁히고**(AND) 그다음 `match`가
+판정합니다.
+
+```yaml
+    when:
+      - artifact: evtx:Sysmon
+        event_ids: [1]          # ← ProcessCreate 만
+        match: field_endswith
+        field: fields.Image
+        values: ['\cmd.exe']
+```
+
+**한 채널이 여러 뜻의 이벤트를 담을 때 필요합니다.** Sysmon이 그렇습니다 —
+같은 `fields.Image`가 EID 1(생성)에도 5(종료)에도 실려 있어서, 이름만 보는
+룰은 한 프로세스를 **두 번** 셉니다. 종료 레코드에는 `ParentImage`도
+`CommandLine`도 없으므로 05단계 자리는 먹고 정보는 더 적습니다. 실측에서
+`shell_spawned` 10건 중 5건이 그것이었습니다(`docs/limitations.md`).
+
+**`match: event_id`와는 다릅니다.** 그쪽은 "이 EventID라는 사실 자체가
+신호"일 때 씁니다(`network_connection` = Sysmon 3·22). 이쪽은 다른 판정을
+걸기 전에 대상을 좁히는 것입니다. 뜻이 갈리므로 **함께 쓰면 거부됩니다.**
+
+`fields.Image`·`fields.ParentImage`처럼 **여러 이벤트 종류에 공통으로 실리는
+필드**로 판정할 때는 `event_ids`를 붙였는지 확인하십시오. 안 붙이면 조용히
+넓어지고, 그 결과는 오탐이 아니라 **중복**이라 눈에 잘 띄지 않습니다.
+
 **`match: event_id`와 접두어 와일드카드를 함께 쓰지 마세요.** EventID는
 제공자 안에서만 유일해서, `evtx:*`로 걸면 **카탈로그에 채널을 더할 때마다
 사정거리가 조용히 넓어집니다.** 2026-08-25에 채널이 5개에서 14개가 되면서

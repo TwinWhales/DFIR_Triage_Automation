@@ -173,6 +173,38 @@ def test_timeout_is_recorded_under_its_own_type(tmp_path, scenario_body):
     assert logged[0]["type"] == "timeout"
 
 
+def test_the_failed_response_is_kept_verbatim(tmp_path, scenario_body):
+    log = errlog.ErrorLog.for_case(tmp_path)
+    client = NormalizeClient(
+        FakeBackend("설명만 있고 JSON은 없음", json.dumps(scenario_body, ensure_ascii=False)),
+        few_shot=False,
+    )
+    normalize({"case_id": "C-001", "raw": "x", "evidence": {}}, client, log)
+
+    dumped = tmp_path / "02_normalize_raw_attempt1.txt"
+    assert dumped.read_text(encoding="utf-8") == "설명만 있고 JSON은 없음"
+
+    logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    assert logged[0]["detail"]["raw"] == dumped.name
+
+
+def test_a_timeout_leaves_no_file(tmp_path, scenario_body):
+    # 응답이 아예 없었다. 직전 시도의 원문을 떨구면 이번 실패의 것으로 읽힌다.
+    log = errlog.ErrorLog.for_case(tmp_path)
+    backend = FakeBackend(
+        llm.LLMTimeout("120초 내 응답 없음"), json.dumps(scenario_body, ensure_ascii=False)
+    )
+    normalize(
+        {"case_id": "C-001", "raw": "x", "evidence": {}},
+        NormalizeClient(backend, few_shot=False),
+        log,
+    )
+
+    assert not (tmp_path / "02_normalize_raw_attempt1.txt").exists()
+    logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    assert "raw" not in logged[0]["detail"]
+
+
 def test_the_prompt_carries_the_allowed_technique_ids():
     # 목록을 주지 않으면 모델이 그럴듯한 ID를 지어낸다.
     client = NormalizeClient(FakeBackend("{}"), few_shot=False)

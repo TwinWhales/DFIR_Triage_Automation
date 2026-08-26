@@ -48,6 +48,10 @@ class NormalizeClient:
     def __init__(self, backend: Backend, *, few_shot: bool = True) -> None:
         self.backend = backend
         self.few_shot = few_shot
+        #: 마지막으로 받은 모델 응답 원문. 실패했을 때 무엇을 뱉었는지
+        #: 파일로 떨구기 위한 것이다. 파싱 전에 채우므로 JSON 을 못 찾은
+        #: 경우에도 남는다. 성공하면 아무도 읽지 않는다.
+        self.last_raw: str | None = None
 
     @property
     def name(self) -> str:
@@ -99,5 +103,6 @@ class NormalizeClient:
         골라낸다. 실제 모델은 본문만 내도록 프롬프트가 지시한다.
         """
         raw_response = self.backend.complete(self.system_prompt(), self.user_prompt(raw, evidence, feedback))
+        self.last_raw = raw_response
         parsed = extract_json(raw_response)
         return {key: parsed[key] for key in SCENARIO_BODY_FIELDS if key in parsed}

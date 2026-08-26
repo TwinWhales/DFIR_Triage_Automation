@@ -36,10 +36,27 @@ from ..stage03_select import mapping_loader
 from . import allocation, record_filter
 from .llm_client import DEFAULT_MODEL, FINDINGS_BODY_FIELDS, InterpretClient
 
-__all__ = ["STAGE", "build_findings", "interpret", "main"]
+__all__ = ["STAGE", "build_findings", "dump_raw", "interpret", "main"]
 
 STAGE = "05_interpret"
 MAX_ATTEMPTS = 3
+
+
+def dump_raw(log: errlog.ErrorLog, attempt: int, raw: "str | None") -> "str | None":
+    """실패한 시도의 모델 응답 원문을 ``errors.jsonl`` 옆에 떨군다.
+
+    무엇이 잘못됐는지 **추측하지 않기 위해서** 있다. 원문 없이는 프롬프트가
+    잘린 것인지 모델이 형식을 어긴 것인지 가릴 수 없고, 다음 사람이 크기를
+    다시 재고 ``--limit``을 낮춰 재현하는 일을 반복한다.
+
+    돌려주는 값은 기록한 파일 이름이다. 남길 것이 없으면 ``None``.
+    """
+    if not raw:
+        return None
+    path = log.path.parent / f"{STAGE}_raw_attempt{attempt}.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(raw, encoding="utf-8")
+    return path.name
 
 
 def build_findings(
@@ -78,25 +95,37 @@ def interpret(
             return findings
 
         except llm.MalformedOutput as e:
-            log.record(
-                STAGE, "malformed_output", {"message": str(e)}, action="retry", attempt=attempt
-            )
+            detail: dict[str, Any] = {"message": str(e)}
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "malformed_output", detail, action="retry", attempt=attempt)
             feedback = f"응답에서 JSON을 찾지 못했습니다: {e}"
 
         except llm.LLMTimeout as e:
+            # 시간 초과는 응답 자체가 없다. last_raw 는 이전 시도의 것이므로
+            # 떨구면 이번 실패의 원문으로 오해된다.
             log.record(STAGE, "timeout", {"message": str(e)}, action="retry", attempt=attempt)
             feedback = None
 
         except schema.SchemaViolation as violation:
-            log.record(
-                STAGE, "schema_violation", violation.as_detail(), action="retry", attempt=attempt
-            )
+            detail = violation.as_detail()
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "schema_violation", detail, action="retry", attempt=attempt)
             feedback = f"{violation.field}: {violation.message}"
 
     log.abort(
         STAGE,
         "schema_violation",
-        {"field": "<retries>", "message": f"{max_attempts}회 재시도 후에도 스키마를 만족하지 못함"},
+        {
+            "field": "<retries>",
+            "message": (
+                f"{max_attempts}회 재시도 후에도 스키마를 만족하지 못함. "
+                f"모델 응답 원문은 {log.path.parent}/{STAGE}_raw_attempt*.txt 에 있다"
+            ),
+        },
     )
 
 
@@ -140,7 +169,28 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         "--limit",
         type=int,
         default=record_filter.DEFAULT_LIMIT,
-        help="모델에 전달할 최대 레코드 수. 기본 %(default)s",
+        help=(
+            "모델에 전달할 최대 레코드 수. 기본 %(default)s. **상한이지 목표가 "
+            "아니다** — 토큰 예산에 안 맞으면 이보다 적게 나간다"
+        ),
+    )
+    parser.add_argument(
+        "--max-list-items",
+        type=int,
+        default=allocation.MAX_LIST_ITEMS,
+        help=(
+            "프롬프트에 실을 때 fields 안의 목록을 몇 개까지 남길지. 기본 %(default)s, "
+            "0 이면 안 자른다. 04_parsed/ 의 원본과 06단계 검증은 영향받지 않는다"
+        ),
+    )
+    parser.add_argument(
+        "--reserve-output-tokens",
+        type=int,
+        default=allocation.RESERVE_OUTPUT_TOKENS,
+        help=(
+            "모델이 답을 쓸 자리로 남겨 둘 토큰. 기본 %(default)s. "
+            "프롬프트가 창을 꽉 채우면 응답이 잘려 malformed_output 으로 온다"
+        ),
     )
     parser.add_argument(
         "--window-seconds",
@@ -207,27 +257,8 @@ def main(argv: "list[str] | None" = None) -> int:
         log.abort(STAGE, "schema_violation", {"field": "<mappings>", "message": str(e)})
     signal_sources = {name: spec.signal_source for name, spec in catalog.artifacts.items()}
 
-    records, quotas = allocation.allocate_records(
-        parsed.values(),
-        priorities=priorities,
-        signal_sources=signal_sources,
-        limit=args.limit,
-        window_seconds=args.window_seconds,
-    )
-    if not records:
-        # 파싱은 됐는데 후보가 하나도 없다. 모델을 부를 이유가 없고,
-        # 빈 findings를 만들면 06단계 통계가 0/0이 되어 무의미해진다.
-        log.abort(
-            STAGE,
-            "empty_result",
-            {
-                "message": (
-                    f"전달할 레코드가 없음 (파싱 {len(parsed)}건 중 후보 0건). "
-                    "flags 룰 또는 선별 범위를 확인한다."
-                )
-            },
-        )
-
+    # 클라이언트를 배분보다 **먼저** 만든다. 예산이 시스템 프롬프트와
+    # 머리말의 실제 길이에서 나오기 때문이다(추정하지 않는다).
     try:
         backend = llm.build_backend(
             args.llm,
@@ -242,8 +273,58 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"[{STAGE}] {e}", file=sys.stderr)
         return 2
 
+    # 0 은 "안 자른다"로 읽는다. argparse 에 None 을 넘길 방법이 마땅치 않고,
+    # 목록을 0개만 싣는 것은 아무도 원하지 않는 동작이다.
+    max_list_items = args.max_list_items if args.max_list_items > 0 else None
+
+    client = InterpretClient(backend, max_list_items=max_list_items)
+    budget_chars = allocation.char_budget(
+        args.num_ctx,
+        client.prompt_overhead_chars(scenario),
+        reserve_output_tokens=args.reserve_output_tokens,
+    )
+
+    records, quotas, budget = allocation.allocate_records(
+        parsed.values(),
+        priorities=priorities,
+        signal_sources=signal_sources,
+        limit=args.limit,
+        window_seconds=args.window_seconds,
+        char_budget=budget_chars,
+        max_list_items=max_list_items,
+    )
+    if not records:
+        # 파싱은 됐는데 후보가 하나도 없다. 모델을 부를 이유가 없고,
+        # 빈 findings를 만들면 06단계 통계가 0/0이 되어 무의미해진다.
+        #
+        # 예산이 한 건도 못 들여보내는 경우도 여기로 온다. 그 경우는 사유가
+        # 다르므로 따로 말한다 — flags 룰을 들여다봐야 풀리는 문제가 아니다.
+        if budget.enforced and budget.effective_limit == 0 and budget.requested_limit > 0:
+            log.abort(
+                STAGE,
+                "empty_result",
+                {
+                    "message": (
+                        f"레코드 한 건도 예산에 들어가지 않음 "
+                        f"(예산 {budget_chars:,}자 = --num-ctx {args.num_ctx} "
+                        f"− 출력 {args.reserve_output_tokens}토큰 − 프롬프트 고정분). "
+                        "--num-ctx 를 올리거나 창이 더 큰 모델을 쓴다."
+                    )
+                },
+            )
+        log.abort(
+            STAGE,
+            "empty_result",
+            {
+                "message": (
+                    f"전달할 레코드가 없음 (파싱 {len(parsed)}건 중 후보 0건). "
+                    "flags 룰 또는 선별 범위를 확인한다."
+                )
+            },
+        )
+
     findings = interpret(
-        scenario, records, InterpretClient(backend), log, max_attempts=args.max_attempts
+        scenario, records, client, log, max_attempts=args.max_attempts
     )
     io.write_json(out_path, findings)
 
@@ -255,6 +336,15 @@ def main(argv: "list[str] | None" = None) -> int:
             f"  {quota.artifact:<18} priority {quota.priority}  "
             f"파싱 {quota.parsed}건 / 후보 {quota.candidates}건 / "
             f"전달 {quota.seats}건 ({short})"
+        )
+    # 예산은 깎였을 때만 말한다. 안 깎였으면 --limit 이 그대로 상한이라
+    # 위 배분 내역이 이미 전부를 말하고 있다.
+    if budget.trimmed:
+        print(
+            f"  토큰 예산: {budget.natural_records}건 → {len(records)}건으로 줄임 "
+            f"({budget.used_chars:,}자 ≈ {budget.estimated_tokens:,}토큰 / "
+            f"예산 {budget_chars:,}자). "
+            f"--num-ctx {args.num_ctx} 에서 출력 {args.reserve_output_tokens}토큰을 뺀 값이다"
         )
     print(
         f"{out_path}: 레코드 {len(parsed)}건 중 {len(records)}건 전달, "

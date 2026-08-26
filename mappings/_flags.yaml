@@ -268,6 +268,7 @@ flags:
     rule:
       when:
         - artifact: evtx:Sysmon
+          event_ids: [1]
           match: field_endswith
           field: fields.Image
           values:
@@ -318,6 +319,7 @@ flags:
         # **정상 D: 파티션이 있는 랩이면 그 줄을 지운다.** 지우기 쉬우라고
         # 한 줄에 하나씩 늘어놓은 것이기도 하다.
         - artifact: evtx:Sysmon
+          event_ids: [1]
           match: field_startswith
           field: fields.Image
           values:
@@ -351,6 +353,7 @@ flags:
         # 권한 없이 파일을 떨어뜨릴 수 있는 자리. USB 에서 직접 실행하지
         # 않고 로컬로 복사한 뒤 실행하는 경우를 받는다.
         - artifact: evtx:Sysmon
+          event_ids: [1]
           match: field_contains
           field: fields.Image
           values:
@@ -382,6 +385,7 @@ flags:
     rule:
       when:
         - artifact: evtx:Sysmon
+          event_ids: [1]
           match: field_endswith
           field: fields.ParentImage
           values:

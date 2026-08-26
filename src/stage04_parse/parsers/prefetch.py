@@ -83,8 +83,28 @@ _log = logging.getLogger(__name__)
 #: 카탈로그(``mappings/_artifacts.yaml``)의 이름과 같아야 한다.
 ARTIFACT = "prefetch"
 
-#: 살아 있는 볼륨의 장치 경로. ``SHADOWCOPY``는 여기 걸리지 않는다.
-DEVICE_VOLUME = re.compile(r"^\\DEVICE\\HARDDISKVOLUME(\d+)$", re.IGNORECASE)
+#: 살아 있는 볼륨의 장치 경로. 두 형태를 받는다.
+#:
+#: 1. ``\DEVICE\HARDDISKVOLUME<n>`` — 장치 번호로 적힌 것
+#: 2. ``\VOLUME{<생성시각>-<일련번호>}`` — 마운트 관리자의 영구 볼륨 이름
+#:
+#: 2번을 뒤늦게 넣었다. 2026-08-26 실물(win10_sysmon_testimage.001)의
+#: 프리패치 **127건 전부**가 이 형태였고, 1번만 보던 탓에 경로가 하나도
+#: 드라이브 문자로 안 바뀌었다. 그러면 06단계가 정상 문장을 환각으로
+#: 센다 — 모델은 ``C:\WINDOWS\...``라고 쓰는데 레코드는
+#: ``\VOLUME{...}\WINDOWS\...``라서 문자열이 안 맞는다.
+#:
+#: 뒤 8자리는 ``fields.volumes[].serial_number``와 같은 값이다(실측 확인).
+#: 그래도 대조하지는 않는다 — 어긋날 때 변환을 포기하면 경로가 조용히
+#: 안 바뀌고, 그건 지금 고치는 증상 그대로다.
+#:
+#: **``SHADOWCOPY``는 여전히 여기 걸리지 않는다.** 1번은 숫자만 받고
+#: 2번은 16진수만 받으므로 ``HARDDISKVOLUMESHADOWCOPY1``은 양쪽 다
+#: 어긋난다. 느슨하게 풀면 섀도 카피의 경로가 ``C:``로 둔갑한다.
+DEVICE_VOLUME = re.compile(
+    r"^(?:\\DEVICE\\HARDDISKVOLUME\d+|\\VOLUME\{[0-9a-f]{16}-[0-9a-f]{8}\})$",
+    re.IGNORECASE,
+)
 
 #: 헤더의 실행 파일 이름 자리가 담을 수 있는 최대 글자 수. 이 길이면
 #: 잘렸을 수 있으므로 목록에서 찾을 때 접두어로 맞춰 본다.
@@ -97,7 +117,13 @@ _EXE_SUFFIX = ".EXE"
 def device_prefixes(volumes: "list[pf.Volume]") -> "str | None":
     """드라이브 문자로 바꿔도 되는 장치 경로. 정할 수 없으면 ``None``.
 
-    섀도 카피를 뺀 ``HARDDISKVOLUME<n>``이 정확히 하나일 때만 답합니다.
+    섀도 카피를 뺀 살아 있는 볼륨(``DEVICE_VOLUME`` 참조)이 **정확히
+    하나일 때만** 답합니다. 둘 이상이면 어느 것이 ``volume_letter``인지
+    알 수 없고, 무르게 굴면 D: 의 실행 파일이 C: 로 보고됩니다.
+
+    형태가 섞여도(``\\DEVICE\\HARDDISKVOLUME1`` 과 ``\\VOLUME{...}``)
+    서로 다른 문자열이므로 둘로 세어 ``None``이 됩니다. 그 편이 맞습니다 —
+    같은 볼륨인지 우리는 모릅니다.
     """
     live = {v.device_path.upper() for v in volumes if DEVICE_VOLUME.match(v.device_path)}
     return live.pop() if len(live) == 1 else None

@@ -40,13 +40,29 @@ from ..common.llm import DEFAULT_NUM_CTX, DEFAULT_TIMEOUT
 from . import alert_adapter
 from .llm_client import DEFAULT_MODEL, SCENARIO_BODY_FIELDS, NormalizeClient
 
-__all__ = ["STAGE", "build_scenario", "check_attack_ids", "normalize", "main"]
+__all__ = ["STAGE", "build_scenario", "check_attack_ids", "dump_raw", "normalize", "main"]
 
 STAGE = "02_normalize"
 
 #: 재시도 횟수. 늘려도 소형 모델은 대개 같은 실수를 반복하므로,
 #: 이 값을 키우기보다 프롬프트를 고치는 것이 낫다.
 MAX_ATTEMPTS = 3
+
+
+def dump_raw(log: errlog.ErrorLog, attempt: int, raw: "str | None") -> "str | None":
+    """실패한 시도의 모델 응답 원문을 ``errors.jsonl`` 옆에 떨군다.
+
+    무엇이 잘못됐는지 **추측하지 않기 위해서** 있다. 원문 없이는 프롬프트가
+    잘린 것인지 모델이 형식을 어긴 것인지 가릴 수 없다.
+
+    돌려주는 값은 기록한 파일 이름이다. 남길 것이 없으면 ``None``.
+    """
+    if not raw:
+        return None
+    path = log.path.parent / f"{STAGE}_raw_attempt{attempt}.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(raw, encoding="utf-8")
+    return path.name
 
 
 def build_scenario(body: dict[str, Any], case_id: str, generator: str) -> dict[str, Any]:
@@ -99,26 +115,35 @@ def normalize(
             return scenario
 
         except llm.MalformedOutput as e:
-            log.record(
-                STAGE, "malformed_output", {"message": str(e)}, action="retry", attempt=attempt
-            )
+            detail: dict[str, Any] = {"message": str(e)}
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "malformed_output", detail, action="retry", attempt=attempt)
             feedback = f"응답에서 JSON을 찾지 못했습니다: {e}"
 
         except llm.LLMTimeout as e:
+            # 시간 초과는 응답 자체가 없다. last_raw 는 이전 시도의 것이므로
+            # 떨구면 이번 실패의 원문으로 오해된다.
             log.record(STAGE, "timeout", {"message": str(e)}, action="retry", attempt=attempt)
             feedback = None
 
         except schema.SchemaViolation as violation:
-            log.record(
-                STAGE, "schema_violation", violation.as_detail(), action="retry", attempt=attempt
-            )
+            detail = violation.as_detail()
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "schema_violation", detail, action="retry", attempt=attempt)
             feedback = f"{violation.field}: {violation.message}"
 
     log.abort(
         STAGE,
         "schema_violation",
         {
-            "message": f"{max_attempts}회 재시도 후에도 스키마를 만족하지 못함",
+            "message": (
+                f"{max_attempts}회 재시도 후에도 스키마를 만족하지 못함. "
+                f"모델 응답 원문은 {log.path.parent}/{STAGE}_raw_attempt*.txt 에 있다"
+            ),
             "field": "<retries>",
         },
     )

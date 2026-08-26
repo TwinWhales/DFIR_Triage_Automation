@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -153,7 +154,7 @@ def test_a_scope_artifact_reaches_the_model_without_any_flag():
     """
     records = [_reg(i) for i in range(1754)] + [_evtx(1)]
 
-    chosen, quotas = allocation.allocate_records(
+    chosen, quotas, _budget = allocation.allocate_records(
         records, signal_sources=SCOPE_SOURCES, limit=60
     )
 
@@ -168,7 +169,7 @@ def test_a_flags_artifact_still_drops_records_with_nothing_to_say():
     # scope 아티팩트의 예외가 다른 아티팩트로 새면 안 된다. 플래그도 없고
     # 시간창에도 안 걸린 $UsnJrnl 레코드는 볼 이유가 없다.
     quiet = _usn(1, seconds=0, flags=())
-    chosen, _ = allocation.allocate_records([quiet], signal_sources=SCOPE_SOURCES, limit=60)
+    chosen, _quotas, _budget = allocation.allocate_records([quiet], signal_sources=SCOPE_SOURCES, limit=60)
     assert chosen == []
 
 
@@ -177,7 +178,7 @@ def test_within_a_scope_artifact_the_keys_nearest_the_incident_come_first():
     near = [_reg(i, days=0, seconds=i) for i in range(3)]
     far = [_reg(100 + i, days=-400) for i in range(50)]
 
-    chosen, _ = allocation.allocate_records(
+    chosen, _quotas, _budget = allocation.allocate_records(
         [*far, *near, _evtx(1)], signal_sources=SCOPE_SOURCES, limit=6
     )
 
@@ -195,7 +196,7 @@ def test_an_anchor_from_one_artifact_pulls_in_another():
     same_minute = _reg(1, days=0, seconds=20)
     much_later = _reg(2, days=0, seconds=99_999)
 
-    chosen, _ = allocation.allocate_records(
+    chosen, _quotas, _budget = allocation.allocate_records(
         [logon, same_minute, much_later], signal_sources=SCOPE_SOURCES, limit=2
     )
 
@@ -231,7 +232,7 @@ def test_the_scenario_changes_which_evidence_reaches_the_model():
     records += [_usn(i, seconds=i) for i in range(100)]
 
     def registry_seats(priorities):
-        _chosen, quotas = allocation.allocate_records(
+        _chosen, quotas, _budget = allocation.allocate_records(
             records, priorities=priorities, signal_sources=SCOPE_SOURCES, limit=60
         )
         return next(q.seats for q in quotas if q.artifact == "registry:SYSTEM")
@@ -250,7 +251,7 @@ def test_the_quota_report_covers_every_parsed_artifact():
     # 남아야 한다. 후보를 다 못 넣은 아티팩트는 여기서만 보인다.
     records = [_reg(i) for i in range(10)] + [_evtx(1)] + [_usn(1)]
 
-    _chosen, quotas = allocation.allocate_records(
+    _chosen, quotas, _budget = allocation.allocate_records(
         records, signal_sources=SCOPE_SOURCES, limit=5
     )
 
@@ -350,3 +351,254 @@ def test_naive_anchors_are_dropped_not_crashed():
     index = record_filter.AnchorIndex([datetime(2026, 8, 24, 6, 55, 9)])
 
     assert len(index) == 0
+
+
+# ============================================================== 토큰 예산
+#
+# 자릿수만으로는 컨텍스트 창을 넘는지 알 수 없습니다. 레코드 하나의 크기가
+# 아티팩트마다 열 배씩 차이 나기 때문입니다. 2026-08-26 K-ALERT 실측에서
+# 60건이 71,476자가 되어 32,768 창을 넘겼고 05단계가 3회 재시도 끝에
+# 중단됐습니다. 같은 날 win10_sysmon_testimage 로 다시 재니 60건이
+# 100,068자였습니다 — 자릿수는 그대로인데 크기는 40% 더 컸습니다.
+
+
+def _fat(num, size, seconds=0):
+    """덩치가 큰 레코드. 프리패치의 loaded_files 자리를 흉내 낸다."""
+    return {
+        "ref": f"PF#{num}",
+        "artifact": "prefetch",
+        "flags": ["execution_from_unusual_path"],
+        "timestamp": _at(seconds=seconds),
+        "fields": {"loaded_files": ["C:/W/" + "x" * 40] * size},
+    }
+
+
+def test_record_chars_measures_what_the_prompt_actually_sends():
+    """다르게 재면 예산이 맞아도 프롬프트가 넘친다.
+
+    ``llm_client.user_prompt`` 은 레코드를 줄당 하나의 JSONL 로 내보낸다.
+    여기서 재는 것이 그 문자열과 같아야 한다.
+    """
+    from src.common import llm
+    from src.stage05_interpret.llm_client import InterpretClient
+
+    records = [_evtx(1), _reg(2), _fat(3, 5)]
+    client = InterpretClient(llm.StubBackend.__new__(llm.StubBackend))
+    scenario = {"target_os": "windows_10", "techniques": [], "time_range": {}}
+
+    overhead = len(client.system_prompt()) + len(client.user_prompt(scenario, []))
+    whole = len(client.system_prompt()) + len(client.user_prompt(scenario, records))
+    measured = sum(allocation.record_chars(r) for r in records)
+
+    # 머리말의 "N건" 이 자릿수만큼 늘어나는 것까지 정확히 맞출 수는 없다.
+    # 재는 쪽이 **더 크게** 나오는 것이 안전한 방향이다.
+    assert measured >= whole - overhead
+    assert measured - (whole - overhead) < 10
+
+
+def test_the_budget_takes_the_output_seat_first():
+    # 프롬프트가 창을 꽉 채우면 응답이 잘려 malformed_output 으로 온다.
+    full = allocation.char_budget(32768, 0, reserve_output_tokens=0)
+    reserved = allocation.char_budget(32768, 0, reserve_output_tokens=4096)
+
+    assert reserved < full
+    assert full - reserved == int(4096 * allocation.CHARS_PER_TOKEN)
+
+
+def test_a_long_system_prompt_shrinks_the_budget():
+    assert allocation.char_budget(32768, 2000) == allocation.char_budget(32768, 0) - 2000
+
+
+def test_a_budget_smaller_than_the_prompt_is_zero_not_negative():
+    assert allocation.char_budget(1024, 999_999) == 0
+
+
+def test_seats_shrink_until_the_records_fit():
+    records = [_fat(i, 20, seconds=i) for i in range(30)]
+    one = allocation.record_chars(records[0])
+
+    _chosen, _quotas, budget = allocation.allocate_records(
+        records, limit=30, char_budget=one * 7
+    )
+
+    assert budget.trimmed
+    assert budget.effective_limit == 7
+    assert budget.used_chars <= one * 7
+
+
+def test_the_largest_fitting_limit_is_chosen():
+    # 예산이 남는데 더 줄이면 근거를 버리는 것이다. 이분 탐색이 가장 큰
+    # 값을 고르는지 본다 — 딱 맞는 자리에서 한 칸씩 어긋나기 쉽다.
+    # 한 아티팩트뿐이고 전부 신호라 전달 순서가 곧 시각순 = 목록 순서다.
+    records = [_fat(i, 20, seconds=i) for i in range(30)]
+
+    for want in range(1, 12):
+        exact = sum(allocation.record_chars(r) for r in records[:want])
+
+        _c, _q, budget = allocation.allocate_records(records, limit=30, char_budget=exact)
+        assert budget.effective_limit == want, want
+
+        # 한 글자만 모자라면 한 자리가 줄어야 한다.
+        _c, _q, tight = allocation.allocate_records(records, limit=30, char_budget=exact - 1)
+        assert tight.effective_limit == want - 1, want
+
+
+def test_a_budget_that_fits_leaves_the_seats_alone():
+    records = [_evtx(i, seconds=i) for i in range(10)]
+
+    _chosen, _quotas, budget = allocation.allocate_records(
+        records, limit=10, char_budget=1_000_000
+    )
+
+    assert not budget.trimmed
+    assert budget.effective_limit == 10
+
+
+def test_without_a_budget_nothing_is_measured():
+    records = [_fat(i, 50, seconds=i) for i in range(20)]
+
+    chosen, _quotas, budget = allocation.allocate_records(records, limit=20)
+
+    assert len(chosen) == 20
+    assert not budget.enforced
+    assert not budget.trimmed
+    # used_chars 는 참고값으로 채운다. 예산을 안 쟀다고 크기를 모르는 것은 아니다.
+    assert budget.used_chars > 0
+
+
+def test_a_budget_too_small_for_one_record_gives_nothing():
+    # 조용히 잘린 레코드를 보내는 것보다 낫다. interpret 이 여기서 사유를
+    # 구분해 중단한다.
+    records = [_fat(i, 20, seconds=i) for i in range(5)]
+
+    chosen, _quotas, budget = allocation.allocate_records(records, limit=5, char_budget=10)
+
+    assert chosen == []
+    assert budget.effective_limit == 0
+    assert budget.trimmed
+
+
+def test_trimming_keeps_the_scenario_weighting():
+    # 꼬리를 자르면 시간순 마지막 아티팩트가 통째로 사라져 4-2-1 이 고친
+    # 문제가 되살아난다. 자릿수를 낮춰 다시 배분하므로 priority 는 살아 있다.
+    records = [_evtx(i, seconds=i) for i in range(20)] + [_usn(i, seconds=i) for i in range(20)]
+    priorities = {"evtx:Security": 1, "$UsnJrnl": 3}
+
+    _chosen, quotas, budget = allocation.allocate_records(
+        records, limit=20, priorities=priorities, char_budget=2_000
+    )
+    seats = {q.artifact: q.seats for q in quotas}
+
+    assert budget.trimmed
+    # 둘 다 살아 있고(바닥 한 자리), 강한 쪽이 더 많이 받는다.
+    assert seats["$UsnJrnl"] >= 1
+    assert seats["evtx:Security"] > seats["$UsnJrnl"]
+
+
+def test_the_budget_reports_what_would_have_gone_without_it():
+    # 후보가 4건인데 "60 → 2 자리로 줄임" 이라고 하면 58건을 버린 것처럼
+    # 읽힌다. 사람에게 뜻이 있는 것은 실제 건수다.
+    records = [_fat(i, 20, seconds=i) for i in range(4)]
+    exact = sum(allocation.record_chars(r) for r in records[:2])
+
+    _c, _q, budget = allocation.allocate_records(records, limit=60, char_budget=exact)
+
+    assert budget.requested_limit == 60
+    assert budget.natural_records == 4
+    assert budget.effective_limit == 2
+
+
+# ========================================================== 레코드 다이어트
+
+
+def test_a_long_list_inside_fields_is_capped():
+    record = _fat(1, 100)
+
+    trimmed = allocation.for_prompt(record, 20)
+
+    assert len(trimmed["fields"]["loaded_files"]) == 20
+    # 원본은 안 건드린다. 06단계 검증은 04_parsed/ 의 원본을 읽는다.
+    assert len(record["fields"]["loaded_files"]) == 100
+
+
+def test_a_short_list_is_left_alone_and_the_record_is_not_copied():
+    record = _fat(1, 5)
+    assert allocation.for_prompt(record, 20) is record
+
+
+def test_top_level_lists_are_never_capped():
+    """``flags`` 가 최상위에 있다. 신호 판정 자체를 자르면 안 된다."""
+    record = dict(_evtx(1), flags=[f"f{i}" for i in range(30)])
+
+    trimmed = allocation.for_prompt(record, 3)
+
+    assert len(trimmed["flags"]) == 30
+
+
+def test_capping_can_be_turned_off():
+    record = _fat(1, 100)
+    assert allocation.for_prompt(record, None) is record
+
+
+def test_a_record_without_fields_survives():
+    assert allocation.for_prompt(_reg(1), 20) == _reg(1)
+
+
+def test_the_budget_measures_the_trimmed_size_not_the_original():
+    # 어긋나면 예산이 맞아도 프롬프트가 넘친다. 실제로 터진 자리다.
+    record = _fat(1, 100)
+
+    assert allocation.record_chars(record, 20) < allocation.record_chars(record, None)
+    assert allocation.record_chars(record, 20) == allocation.record_chars(
+        allocation.for_prompt(record, 20), None
+    )
+
+
+def test_the_prompt_and_the_budget_measure_the_same_string():
+    """둘이 어긋나면 조용히 창을 넘는다. 같은 for_prompt 을 쓰는지 본다."""
+    from src.common import llm
+    from src.stage05_interpret.llm_client import InterpretClient
+
+    records = [_fat(i, 100, seconds=i) for i in range(3)]
+    client = InterpretClient(llm.StubBackend.__new__(llm.StubBackend), max_list_items=20)
+    scenario = {"target_os": "windows_10", "techniques": [], "time_range": {}}
+
+    body = client.user_prompt(scenario, records)
+
+    # 레코드 3건 × 20개만 실린다. 원본은 3건 × 100개다.
+    assert body.count(json.dumps("C:/W/" + "x" * 40, ensure_ascii=False)) == 3 * 20
+    assert all(len(r["fields"]["loaded_files"]) == 100 for r in records)
+
+    measured = sum(allocation.record_chars(r, 20) for r in records)
+    overhead = len(client.user_prompt(scenario, []))
+    assert measured >= len(body) - overhead
+
+
+def test_the_prompt_says_the_lists_were_cut():
+    """말하지 않으면 모델이 "적재 파일은 20개였다"고 쓴다 — 우리가 유발한 환각이다."""
+    from src.common import llm
+    from src.stage05_interpret.llm_client import InterpretClient
+
+    scenario = {"target_os": "windows_10", "techniques": [], "time_range": {}}
+
+    cut = InterpretClient(llm.StubBackend.__new__(llm.StubBackend), max_list_items=20)
+    assert "20개까지만" in cut.user_prompt(scenario, [_fat(1, 100)])
+
+    whole = InterpretClient(llm.StubBackend.__new__(llm.StubBackend), max_list_items=None)
+    assert "까지만" not in whole.user_prompt(scenario, [_fat(1, 100)])
+
+
+def test_trimming_lets_more_records_through_the_same_budget():
+    # 이 작업의 논지다. 한 아티팩트의 목록 때문에 다른 아티팩트가 자리를
+    # 잃는 것은 증거의 폭으로 보아 손해다.
+    records = [_fat(i, 200, seconds=i) for i in range(10)]
+    budget = 20_000
+
+    _c, _q, fat = allocation.allocate_records(
+        records, limit=10, char_budget=budget, max_list_items=None
+    )
+    _c, _q, lean = allocation.allocate_records(
+        records, limit=10, char_budget=budget, max_list_items=20
+    )
+
+    assert lean.effective_limit > fat.effective_limit

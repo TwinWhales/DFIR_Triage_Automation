@@ -134,6 +134,85 @@ def test_artifact_patterns(pattern, artifact, expected):
     assert clause.matches({"artifact": artifact}) is expected
 
 
+def test_event_ids_narrows_the_clause_like_artifact_does():
+    # artifact 와 같은 자리다 — 둘 다 대상을 좁히고(AND) 그다음 match 가 판정한다.
+    clause = flagging.Clause(
+        artifact="evtx:Sysmon",
+        event_ids=(1,),
+        match="field_endswith",
+        field="fields.Image",
+        values=("\\cmd.exe",),
+    )
+    fields = {"Image": "C:\\Windows\\System32\\cmd.exe"}
+    assert clause.matches({"artifact": "evtx:Sysmon", "event_id": 1, "fields": fields}) is True
+    assert clause.matches({"artifact": "evtx:Sysmon", "event_id": 5, "fields": fields}) is False
+
+
+def test_an_empty_event_ids_is_refused(flags_dir):
+    directory = _write(
+        flags_dir,
+        {"x": {"rule": {"when": [{"artifact": "evtx:Sysmon", "event_ids": []}]}}},
+    )
+    with pytest.raises(flagging.VocabularyError, match="event_ids"):
+        flagging.load_vocabulary(directory)
+
+
+def test_a_non_integer_event_id_is_refused(flags_dir):
+    directory = _write(
+        flags_dir,
+        {"x": {"rule": {"when": [{"artifact": "evtx:Sysmon", "event_ids": ["one"]}]}}},
+    )
+    with pytest.raises(flagging.VocabularyError, match="event_ids"):
+        flagging.load_vocabulary(directory)
+
+
+def test_event_ids_and_match_event_id_together_are_refused(flags_dir):
+    # 뜻이 다르다. 함께 쓰면 어느 쪽 의도인지 읽는 사람이 알 수 없다.
+    directory = _write(
+        flags_dir,
+        {
+            "x": {
+                "rule": {
+                    "when": [
+                        {
+                            "artifact": "evtx:Sysmon",
+                            "event_ids": [1],
+                            "match": "event_id",
+                            "values": [1],
+                        }
+                    ]
+                }
+            }
+        },
+    )
+    with pytest.raises(flagging.VocabularyError, match="event_ids"):
+        flagging.load_vocabulary(directory)
+
+
+@pytest.mark.parametrize(
+    "flag,fields",
+    [
+        # 셋 다 win10_sysmon_testimage 에서 실제로 EID 5 에 붙던 모양이다.
+        ("shell_spawned", {"Image": "C:\\Windows\\System32\\cmd.exe"}),
+        ("execution_from_unusual_path", {"Image": "C:\\Windows\\Temp\\{GUID}\\DismHost.exe"}),
+        ("unexpected_parent_process", {"ParentImage": "C:\\Windows\\explorer.exe"}),
+    ],
+)
+def test_the_sysmon_process_rules_ignore_process_terminate(flag, fields):
+    """세 룰의 condition 은 "Sysmon 1" 이라고 적혀 있다. 실제로 그런지 본다.
+
+    2026-08-26 win10_sysmon_testimage 실측에서 세 룰이 EID 5(ProcessTerminate)
+    에도 붙었다. 같은 fields.Image 가 생성·종료 양쪽에 실려 있어서다. 한
+    프로세스가 두 번 세어지는데, 종료 레코드에는 ParentImage 도 CommandLine
+    도 없어 **05단계 자리는 먹고 정보는 더 적다.**
+    """
+    rule = next(r for r in flagging.load_vocabulary().rules if r.name == flag)
+    ctx = flagging.Context(groups=frozenset())
+
+    assert rule.matches({"artifact": "evtx:Sysmon", "event_id": 1, "fields": fields}, ctx)
+    assert not rule.matches({"artifact": "evtx:Sysmon", "event_id": 5, "fields": fields}, ctx)
+
+
 def test_clauses_are_or_not_and():
     # deleted 가 $MFT 와 $UsnJrnl 양쪽에서 나오는 것이 이 규칙에 달려 있다.
     rule = next(r for r in flagging.load_vocabulary().rules if r.name == "deleted")

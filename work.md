@@ -6,6 +6,11 @@
 
 끝낸 항목은 지우고, 그 사실은 `docs/limitations.md`에 남긴다.
 
+**2026-08-26 처리됨** — `run_pipeline.sh` 의 `--volume` 통로,
+02·05단계의 실패 응답 원문 보존, Sysmon 세 룰의 EID 제약,
+프리패치 장치 경로 두 번째 형태, 05단계 토큰 예산과 레코드 다이어트.
+전부 `docs/limitations.md` 에 있다.
+
 ---
 
 ## 먼저 — 이 큐가 어디서 나왔나
@@ -41,71 +46,94 @@
 ```
 
 `--volume 1`이 필수다. 이 이미지는 NTFS가 둘(0.4GiB 복구 + 59.4GiB 시스템)이다.
+`win10_sysmon_testimage.001`도 같은 레이아웃이고, **그쪽에만 Sysmon이 있다.**
+
+관통 스크립트로 돌릴 때는 `VOLUME`으로 넘긴다:
+
+```bash
+VOLUME=1 PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh \
+  K-ALERT evidence/win10_sysmon_testimage.001
+```
 
 ---
 
 ## 0. 코드 작업이 아닌 것 — 먼저 걸어 둔다
 
-**키오스크 랩 VM 스냅샷 하나.** Sysmon 설치 + Assigned Access 켠 상태로
-30분 돌린 뒤 이미지를 뜬다. **침해하지 않아도 된다** — 정상 상태로 충분하다.
+**Assigned Access 를 켠 스냅샷 하나.** `win10_sysmon_testimage.001`
+(2026-08-26)로 Sysmon 쪽은 절반이 닫혔다. 남은 것은 **키오스크 모드와
+USB·RDP** 다. 침해하지 않아도 된다 — 정상 상태로 충분하다.
 
-이것 하나가 지금 미검증인 것 여섯을 확정한다.
+닫힌 것:
 
-- `evtx:Sysmon`·`AssignedAccess` 3종·`DriverFrameworks`·`RDPConnection`의
-  **파일 경로 문자열**이 맞는가 (`src/stage04_parse/evidence.py`의 `FILE_LAYOUT`)
+- ~~`evtx:Sysmon` 의 파일 경로 문자열~~ — 맞았다
+- ~~`shell_spawned` 목록이 정상 운영 중 몇 건이나 뜨는가~~ — 5.5분에 5건.
+  전부 Windows 서비싱(`sedsvc.exe`·`CompatTelRunner.exe`)이다
+- ~~`execution_from_unusual_path`~~ — 3건, 전부 `C:\Windows\Temp\{GUID}\DismHost.exe`
+- 덤으로 **세 룰이 EID 5 도 잡던 버그**가 드러나 고쳤다
+
+**여전히 미검증인 것 넷.** 이 다섯 채널은 이미지에 파일 자체가 없었다
+(`AssignedAccess` 3종·`DriverFrameworks`·`RDPConnection`).
+
+- 그 다섯의 **파일 경로 문자열**이 맞는가
+  (`src/stage04_parse/evidence.py`의 `FILE_LAYOUT`)
 - 그 채널들의 **event_id 추정값**이 맞는가 (`mappings/_flags.yaml`)
 - `kiosk_restriction_event`가 "로그가 작다"는 전제대로인가 — 수만 건이면
   05단계 쿼터를 혼자 태운다
 - `unexpected_parent_process`가 `explorer.exe`를 이상으로 보는 가정이
-  이 랩에서 맞는가
-- `shell_spawned` 목록이 정상 운영 중 몇 건이나 뜨는가
-- 덤으로 **Stage 0 베이스라인**의 시작
+  맞는가. **이번 이미지로는 못 쟀다** — Assigned Access 를 안 켠 일반
+  Win10 이라 explorer 가 정상 셸이다
 
-**지금 두 실물 이미지 다 Sysmon이 없다.** 기본 탑재가 아니라서다.
-그래서 K-001을 가르는 플래그 셋(`shell_spawned`·`execution_from_unusual_path`·
-`unexpected_parent_process`)이 실물에서 한 번도 붙어 본 적이 없다.
+덤으로 **Stage 0 베이스라인**의 시작이기도 하다.
+
+실측 전체는 `docs/limitations.md` 의 "실측 — Sysmon 을 켠 실물 이미지".
 
 ---
 
-## 1. 프리패치 볼륨 경로가 드라이브 문자로 안 바뀐다
+## 1. `loaded_files`가 장치 경로라 경로 기준으로 고를 수 없다
 
-**증상** — 06단계가 정상 문장을 기각한다.
+**왜 지금 하나** — 05단계에 보낼 때 `fields` 안의 목록을 앞에서 20개까지만
+자른다(2026-08-26). 앞에서 자르는 이유는 "어느 항목이 중요한지 고르는 근거가
+없어서"인데, **근거를 만들 수 있다.** 공격과 연계되는 DLL을 먼저 남기면
+같은 20자리로 훨씬 나은 20개를 보낸다.
+
+**막는 것** — `path`는 드라이브 문자로 바뀌는데 `fields.loaded_files`는
+`\VOLUME{...}\WINDOWS\...` 그대로다. 그래서 경로 기준이 성립하지 않는다.
+실측이 그것을 이렇게 보여 준다:
 
 ```
-모델 주장 : C:\WINDOWS\SYSTEM32\SVCHOST.EXE
-실제 레코드: \VOLUME{01d8e7bd02796420-a202ae01}\WINDOWS\SYSTEM32\SVCHOST.EXE
+적재 경로 10,109건 (프리패치 127건, win10_sysmon_testimage)
+
+  _flags.yaml 드롭 자리 어휘      378건  3.74%   ← 부분 문자열이라 된다
+  Users 폴더 아래                531건  5.25%   ← 같은 이유로 된다
+  Windows 폴더 밖             10,109건 100.00%  ← 안 된다. 접두어가 안 맞을 뿐
+  실행 파일과 같은 폴더              0건  0.00%   ← 안 된다. 진짜 0이 아니다
 ```
 
-**원인** — `src/stage04_parse/parsers/prefetch.py:87`
+아래 둘이 **사이드로딩(T1574)의 가장 강한 신호**인데 비교 자체가 성립하지
+않는다.
 
-```python
-DEVICE_VOLUME = re.compile(r"^\\DEVICE\\HARDDISKVOLUME(\d+)$", re.IGNORECASE)
-```
+**고칠 자리** — `src/stage04_parse/parsers/prefetch.py`. `_to_drive()`를
+`loaded_files`에도 적용한다. **그 함수가 이미 조건부다** — 살아 있는 볼륨이
+정확히 하나일 때만 바꾸고(`device_prefixes()`), 섀도 카피는 접두어가 안
+맞아 그대로 남는다. 지금 `path` 하나에만 걸려 있는 것을 목록에도 거는 일이다.
 
-`device_prefixes()`(97행)가 이 형태만 찾는다. 실물 이미지의 프리패치는
-`\VOLUME{01d8e7bd02796420-a202ae01}` 꼴을 쓴다 — 볼륨 일련번호 형태다.
-못 찾으면 `None`을 돌려주고, `_to_drive()`(314행)가 경로를 **그대로 둔다.**
-주석대로의 동작이다("바꿀 수 없으면 그대로 둔다").
+**대조가 필요하다.** `artifact-notes.md`가 "원본 경로는 `fields.loaded_files`
+에 손대지 않은 채로 남고, 바꾼 값은 `path` 하나뿐"이라고 **명시**하고 있다.
+그 결정을 뒤집는 것이므로 왜 뒤집는지와 섀도 카피가 여전히 안 바뀌는지를
+실물로 확인해 기록한다. 실측 이미지에는 섀도 카피가 0건이라 **그것을 가진
+이미지가 따로 필요하다** — `evidence/[root]` 73건 중 17건이 그랬다(지금
+디스크에 없음).
 
-**고칠 자리** — `DEVICE_VOLUME`이 두 형태를 다 받게 한다. 레코드의
-`fields.volumes[].device_path`와 `serial_number`가 짝을 이루고 있으니
-거기서 확인할 수 있다.
+**그다음에 keep 목록을 넣는다** (`allocation.for_prompt`).
 
-**함정 둘.**
-
-- **`SHADOWCOPY`는 여전히 빼야 한다.** 지금 정규식이 그것을 막고 있다.
-  넓히면서 같이 들어오면 섀도 카피의 경로가 `C:`로 둔갑한다.
-- **볼륨이 둘 이상이면 바꾸지 않는다.** 지금 `device_prefixes()`가
-  "정확히 하나일 때만" 답하는 이유다. 여기를 무르게 하면 D: 의 실행
-  파일이 C: 로 보고된다.
-
-**확인** — 위 재현 절차로 04단계를 다시 돌리고 `prefetch.jsonl`의 `path`가
-`C:\`로 시작하는지 본다. 그다음 06단계를 다시 걸면 환각률이 실제로 내려간다
-(F2·F3 두 건). **이번 작업이 끝나야 2026-08-26 의 100%가 25%로 내려가는 것을
-수치로 볼 수 있다.**
-
-**대조 기록을 `docs/artifact-notes.md`에 남긴다.** 파서 변경은 대조 없이는
-"조용히 틀리는" 쪽이다 (CLAUDE.md 작업 규약).
+- 기준은 `mappings/_flags.yaml`에 **별도 최상위 키로 선언한다**
+  (`privileged_groups` 선례). `execution_from_unusual_path`의 `values`를
+  직접 빌려 쓰면 그 룰을 Sysmon 사정으로 고쳤을 때 프리패치 자르기가
+  조용히 바뀐다.
+- **keep 목록도 상한을 받아야 한다.** 드롭 자리 어휘 기준으로 6개 레코드가
+  20을 넘고 최대 143건이다.
+- 출력은 **원래 순서를 유지한다.** 부분집합이지 재정렬이 아니다.
+- 적중이 0인 레코드가 127건 중 101건이라, 대부분은 지금 동작 그대로다.
 
 ---
 
@@ -143,61 +171,7 @@ AMCACHE#15044  fields = {"17": 131343442490135143,
 
 ---
 
-## 3. 05단계 프롬프트가 컨텍스트 창을 넘는다
-
-**증상** — 아티팩트가 여럿 걸린 케이스에서 05단계가 3회 재시도 끝에 중단된다.
-
-```
-전달 60건의 JSON   71,476자 ≈ 28,600 토큰 (추정)
-시스템 프롬프트     3,002자
---num-ctx 기본값   32,768
-qwen2.5:7b 상한    32,768   ← 모델 상한이라 더 열 수 없다
-```
-
-출력에 쓸 자리가 2천 토큰도 안 남는다. `--limit 15`로 낮추면 첫 시도에 통과한다.
-
-**고칠 자리** — `src/stage05_interpret/allocation.py`. 배분기가 이미
-아티팩트별 자릿수를 계산하므로, 거기에 **토큰 예산**을 넣는다.
-`DEFAULT_LIMIT`는 `src/stage05_interpret/record_filter.py:49`에 있다.
-
-**`--limit`를 낮추는 것은 우회지 수정이 아니다.** 기본값 60은 카탈로그가
-11종이던 시절 값이고, 22종이 된 지금 아티팩트가 또 늘면 같은 자리에서
-또 터진다. **넘는데도 조용히 도는 것**이 지금 가장 나쁜 성질이다.
-
-**레코드 다이어트는 이것 다음이다.** 06단계 검증은 `04_parsed/`를 직접
-읽으므로 프롬프트만 줄이는 것은 안전하다. 다만 모델이 인용할 수 있는
-근거의 폭이 줄어드는 거래라, 토큰 예산을 먼저 넣고 그래도 부족할 때 한다.
-
----
-
-## 4. 05단계가 실패한 모델 원문을 남기지 않는다
-
-**왜 급한가** — 3번의 진단이 "프롬프트가 잘렸다"를 **확인한 것이 아니라
-크기를 재고 `--limit`를 낮춰 재현한 것**이다. 모델이 실제로 무엇을 뱉었는지
-아무도 못 봤다. 다음에 같은 일이 나면 또 추측한다.
-
-**고칠 자리** — `src/stage05_interpret/interpret.py:80` 근처.
-`llm.MalformedOutput`을 잡는 자리에서 응답 원문을 `errors.jsonl` 옆에
-떨군다(예: `05_malformed_attempt1.txt`).
-
-가장 싸고 앞으로 계속 값을 한다. 02단계도 같은 구조라 함께 볼 만하다.
-
----
-
-## 5. `run_pipeline.sh`가 `--volume`을 못 넘긴다
-
-한 줄이다. 04단계 호출에 `--volume`을 붙이고 스크립트 인자로 받는다.
-
-**일반적인 Win10/11 물리 디스크는 복구 파티션도 NTFS라 거의 항상 볼륨
-선택이 필요하다.** 지금은 그런 이미지에서 04단계를 따로 돌려야 한다.
-
-지정하지 않으면 후보를 보여 주고 멈추는 지금 동작은 **유지한다.** 도구가
-크기로 추측하면 복구 파티션과 시스템 볼륨을 바꿔 골라도 "아티팩트 없음"이
-아니라 다른 볼륨의 결과가 조용히 나온다.
-
----
-
-## 6. Wazuh 알럿을 그대로는 못 받는다
+## 3. Wazuh 알럿을 그대로는 못 받는다
 
 레포 전체에 `wazuh`·`sigma`·`winlogbeat`·`active-response` 참조가 0건이다.
 `edr_alert` 경로는 있으나 **자체 형식**을 기대한다. 실측:
@@ -222,7 +196,7 @@ Wazuh 원본(rule.mitre.id / rule.level / agent.name)  →  AlertAdapterError
 
 ---
 
-## 7. 설계 판단이 필요한 것 둘 — 혼자 정하지 않는다
+## 4. 설계 판단이 필요한 것 둘 — 혼자 정하지 않는다
 
 ### 3대 상관분석
 
