@@ -300,3 +300,66 @@ def test_cli_aborts_when_no_record_carries_a_signal(tmp_path):
         )
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
     assert logged[-1]["type"] == "empty_result"
+
+
+def test_cli_aborts_when_the_budget_admits_nothing(tmp_path, capsys):
+    """예산이 한 건도 못 들여보내면 사유를 구분해 말한다.
+
+    flags 룰을 들여다봐야 풀리는 문제가 아니다 — 창을 키우거나 모델을
+    바꿔야 한다. 두 경우가 같은 메시지로 나오면 엉뚱한 데를 파게 된다.
+    """
+    with pytest.raises(SystemExit):
+        interpret_mod.main(
+            [
+                "--in", str(PARSED),
+                "--scenario", str(MOCK / "02_scenario.json"),
+                "--out", str(tmp_path / "05_findings.json"),
+                "--llm", "stub",
+                "--replay", str(MOCK / "05_findings.json"),
+                # 출력 자리로 창을 통째로 떼어 레코드에 남는 예산을 0으로.
+                "--num-ctx", "4096",
+                "--reserve-output-tokens", "4096",
+            ]
+        )
+    logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    assert logged[-1]["type"] == "empty_result"
+    assert "예산" in logged[-1]["detail"]["message"]
+    assert "num-ctx" in logged[-1]["detail"]["message"]
+
+
+def test_cli_says_so_when_the_budget_trims_seats(tmp_path, capsys):
+    # 넘는데도 조용히 도는 것이 이 자리에서 가장 나쁜 성질이다.
+    out = tmp_path / "05_findings.json"
+    code = interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(MOCK / "02_scenario.json"),
+            "--out", str(out),
+            "--llm", "stub",
+            "--replay", str(MOCK / "05_findings.json"),
+            # 레코드 넷 중 둘만 들어갈 만큼만 연다.
+            "--num-ctx", "5300",
+            "--reserve-output-tokens", "4096",
+        ]
+    )
+    assert code == 0
+    printed = capsys.readouterr().out
+    assert "토큰 예산" in printed
+
+    # 전달된 것만 input_refs 에 남는다. 모델이 못 받은 것을 목록에 넣으면
+    # ref_not_in_input 검사가 무력해진다.
+    doc = io.read_json(out)
+    assert len(doc["input_refs"]) < 4
+
+
+def test_a_roomy_context_says_nothing_about_the_budget(tmp_path, capsys):
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(MOCK / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "stub",
+            "--replay", str(MOCK / "05_findings.json"),
+        ]
+    )
+    assert "토큰 예산" not in capsys.readouterr().out

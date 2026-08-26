@@ -169,7 +169,19 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         "--limit",
         type=int,
         default=record_filter.DEFAULT_LIMIT,
-        help="모델에 전달할 최대 레코드 수. 기본 %(default)s",
+        help=(
+            "모델에 전달할 최대 레코드 수. 기본 %(default)s. **상한이지 목표가 "
+            "아니다** — 토큰 예산에 안 맞으면 이보다 적게 나간다"
+        ),
+    )
+    parser.add_argument(
+        "--reserve-output-tokens",
+        type=int,
+        default=allocation.RESERVE_OUTPUT_TOKENS,
+        help=(
+            "모델이 답을 쓸 자리로 남겨 둘 토큰. 기본 %(default)s. "
+            "프롬프트가 창을 꽉 채우면 응답이 잘려 malformed_output 으로 온다"
+        ),
     )
     parser.add_argument(
         "--window-seconds",
@@ -236,27 +248,8 @@ def main(argv: "list[str] | None" = None) -> int:
         log.abort(STAGE, "schema_violation", {"field": "<mappings>", "message": str(e)})
     signal_sources = {name: spec.signal_source for name, spec in catalog.artifacts.items()}
 
-    records, quotas = allocation.allocate_records(
-        parsed.values(),
-        priorities=priorities,
-        signal_sources=signal_sources,
-        limit=args.limit,
-        window_seconds=args.window_seconds,
-    )
-    if not records:
-        # 파싱은 됐는데 후보가 하나도 없다. 모델을 부를 이유가 없고,
-        # 빈 findings를 만들면 06단계 통계가 0/0이 되어 무의미해진다.
-        log.abort(
-            STAGE,
-            "empty_result",
-            {
-                "message": (
-                    f"전달할 레코드가 없음 (파싱 {len(parsed)}건 중 후보 0건). "
-                    "flags 룰 또는 선별 범위를 확인한다."
-                )
-            },
-        )
-
+    # 클라이언트를 배분보다 **먼저** 만든다. 예산이 시스템 프롬프트와
+    # 머리말의 실제 길이에서 나오기 때문이다(추정하지 않는다).
     try:
         backend = llm.build_backend(
             args.llm,
@@ -271,8 +264,53 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"[{STAGE}] {e}", file=sys.stderr)
         return 2
 
+    client = InterpretClient(backend)
+    budget_chars = allocation.char_budget(
+        args.num_ctx,
+        client.prompt_overhead_chars(scenario),
+        reserve_output_tokens=args.reserve_output_tokens,
+    )
+
+    records, quotas, budget = allocation.allocate_records(
+        parsed.values(),
+        priorities=priorities,
+        signal_sources=signal_sources,
+        limit=args.limit,
+        window_seconds=args.window_seconds,
+        char_budget=budget_chars,
+    )
+    if not records:
+        # 파싱은 됐는데 후보가 하나도 없다. 모델을 부를 이유가 없고,
+        # 빈 findings를 만들면 06단계 통계가 0/0이 되어 무의미해진다.
+        #
+        # 예산이 한 건도 못 들여보내는 경우도 여기로 온다. 그 경우는 사유가
+        # 다르므로 따로 말한다 — flags 룰을 들여다봐야 풀리는 문제가 아니다.
+        if budget.enforced and budget.effective_limit == 0 and budget.requested_limit > 0:
+            log.abort(
+                STAGE,
+                "empty_result",
+                {
+                    "message": (
+                        f"레코드 한 건도 예산에 들어가지 않음 "
+                        f"(예산 {budget_chars:,}자 = --num-ctx {args.num_ctx} "
+                        f"− 출력 {args.reserve_output_tokens}토큰 − 프롬프트 고정분). "
+                        "--num-ctx 를 올리거나 창이 더 큰 모델을 쓴다."
+                    )
+                },
+            )
+        log.abort(
+            STAGE,
+            "empty_result",
+            {
+                "message": (
+                    f"전달할 레코드가 없음 (파싱 {len(parsed)}건 중 후보 0건). "
+                    "flags 룰 또는 선별 범위를 확인한다."
+                )
+            },
+        )
+
     findings = interpret(
-        scenario, records, InterpretClient(backend), log, max_attempts=args.max_attempts
+        scenario, records, client, log, max_attempts=args.max_attempts
     )
     io.write_json(out_path, findings)
 
@@ -284,6 +322,15 @@ def main(argv: "list[str] | None" = None) -> int:
             f"  {quota.artifact:<18} priority {quota.priority}  "
             f"파싱 {quota.parsed}건 / 후보 {quota.candidates}건 / "
             f"전달 {quota.seats}건 ({short})"
+        )
+    # 예산은 깎였을 때만 말한다. 안 깎였으면 --limit 이 그대로 상한이라
+    # 위 배분 내역이 이미 전부를 말하고 있다.
+    if budget.trimmed:
+        print(
+            f"  토큰 예산: {budget.natural_records}건 → {len(records)}건으로 줄임 "
+            f"({budget.used_chars:,}자 ≈ {budget.estimated_tokens:,}토큰 / "
+            f"예산 {budget_chars:,}자). "
+            f"--num-ctx {args.num_ctx} 에서 출력 {args.reserve_output_tokens}토큰을 뺀 값이다"
         )
     print(
         f"{out_path}: 레코드 {len(parsed)}건 중 {len(records)}건 전달, "

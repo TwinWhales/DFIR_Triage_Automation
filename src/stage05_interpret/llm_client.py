@@ -83,6 +83,19 @@ class InterpretClient:
         parts.append("### 출력")
         return "\n\n".join(parts)
 
+    def prompt_overhead_chars(self, scenario: dict[str, Any]) -> int:
+        """레코드를 빼고 프롬프트가 이미 차지하는 글자 수.
+
+        토큰 예산이 레코드에 얼마를 쓸 수 있는지 정할 때 씁니다
+        (``allocation.char_budget``). **추정하지 않고 실제로 조립해 잽니다** —
+        시스템 프롬프트가 길어지거나 머리말에 줄이 늘면 그만큼 예산이
+        자동으로 줄어야 하고, 상수로 적어 두면 그 순간 어긋납니다.
+
+        재시도의 ``feedback`` 은 빠져 있습니다. 길이가 지적 하나만큼이라
+        작고, 예산은 첫 시도 기준으로 잡습니다.
+        """
+        return len(self.system_prompt()) + len(self.user_prompt(scenario, []))
+
     def propose_findings(
         self,
         scenario: dict[str, Any],

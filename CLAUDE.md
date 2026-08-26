@@ -21,8 +21,8 @@
 ## 자주 쓰는 명령
 
 ```bash
-# 테스트 — 기준선 842개 통과 + 8 skip. skip 은 evidence/ 가 없는 기계에서
-#          실물 대조가 빠지는 것이라, 이미지가 있으면 850개가 돈다
+# 테스트 — 기준선 856개 통과 + 8 skip. skip 은 evidence/ 가 없는 기계에서
+#          실물 대조가 빠지는 것이라, 이미지가 있으면 864개가 돈다
 .venv/Scripts/python.exe -m pytest -q
 
 # 관통 실행 (LLM 스텁, 세 번째 인자가 replay 디렉터리)
