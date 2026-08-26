@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -505,3 +506,99 @@ def test_the_budget_reports_what_would_have_gone_without_it():
     assert budget.requested_limit == 60
     assert budget.natural_records == 4
     assert budget.effective_limit == 2
+
+
+# ========================================================== 레코드 다이어트
+
+
+def test_a_long_list_inside_fields_is_capped():
+    record = _fat(1, 100)
+
+    trimmed = allocation.for_prompt(record, 20)
+
+    assert len(trimmed["fields"]["loaded_files"]) == 20
+    # 원본은 안 건드린다. 06단계 검증은 04_parsed/ 의 원본을 읽는다.
+    assert len(record["fields"]["loaded_files"]) == 100
+
+
+def test_a_short_list_is_left_alone_and_the_record_is_not_copied():
+    record = _fat(1, 5)
+    assert allocation.for_prompt(record, 20) is record
+
+
+def test_top_level_lists_are_never_capped():
+    """``flags`` 가 최상위에 있다. 신호 판정 자체를 자르면 안 된다."""
+    record = dict(_evtx(1), flags=[f"f{i}" for i in range(30)])
+
+    trimmed = allocation.for_prompt(record, 3)
+
+    assert len(trimmed["flags"]) == 30
+
+
+def test_capping_can_be_turned_off():
+    record = _fat(1, 100)
+    assert allocation.for_prompt(record, None) is record
+
+
+def test_a_record_without_fields_survives():
+    assert allocation.for_prompt(_reg(1), 20) == _reg(1)
+
+
+def test_the_budget_measures_the_trimmed_size_not_the_original():
+    # 어긋나면 예산이 맞아도 프롬프트가 넘친다. 실제로 터진 자리다.
+    record = _fat(1, 100)
+
+    assert allocation.record_chars(record, 20) < allocation.record_chars(record, None)
+    assert allocation.record_chars(record, 20) == allocation.record_chars(
+        allocation.for_prompt(record, 20), None
+    )
+
+
+def test_the_prompt_and_the_budget_measure_the_same_string():
+    """둘이 어긋나면 조용히 창을 넘는다. 같은 for_prompt 을 쓰는지 본다."""
+    from src.common import llm
+    from src.stage05_interpret.llm_client import InterpretClient
+
+    records = [_fat(i, 100, seconds=i) for i in range(3)]
+    client = InterpretClient(llm.StubBackend.__new__(llm.StubBackend), max_list_items=20)
+    scenario = {"target_os": "windows_10", "techniques": [], "time_range": {}}
+
+    body = client.user_prompt(scenario, records)
+
+    # 레코드 3건 × 20개만 실린다. 원본은 3건 × 100개다.
+    assert body.count(json.dumps("C:/W/" + "x" * 40, ensure_ascii=False)) == 3 * 20
+    assert all(len(r["fields"]["loaded_files"]) == 100 for r in records)
+
+    measured = sum(allocation.record_chars(r, 20) for r in records)
+    overhead = len(client.user_prompt(scenario, []))
+    assert measured >= len(body) - overhead
+
+
+def test_the_prompt_says_the_lists_were_cut():
+    """말하지 않으면 모델이 "적재 파일은 20개였다"고 쓴다 — 우리가 유발한 환각이다."""
+    from src.common import llm
+    from src.stage05_interpret.llm_client import InterpretClient
+
+    scenario = {"target_os": "windows_10", "techniques": [], "time_range": {}}
+
+    cut = InterpretClient(llm.StubBackend.__new__(llm.StubBackend), max_list_items=20)
+    assert "20개까지만" in cut.user_prompt(scenario, [_fat(1, 100)])
+
+    whole = InterpretClient(llm.StubBackend.__new__(llm.StubBackend), max_list_items=None)
+    assert "까지만" not in whole.user_prompt(scenario, [_fat(1, 100)])
+
+
+def test_trimming_lets_more_records_through_the_same_budget():
+    # 이 작업의 논지다. 한 아티팩트의 목록 때문에 다른 아티팩트가 자리를
+    # 잃는 것은 증거의 폭으로 보아 손해다.
+    records = [_fat(i, 200, seconds=i) for i in range(10)]
+    budget = 20_000
+
+    _c, _q, fat = allocation.allocate_records(
+        records, limit=10, char_budget=budget, max_list_items=None
+    )
+    _c, _q, lean = allocation.allocate_records(
+        records, limit=10, char_budget=budget, max_list_items=20
+    )
+
+    assert lean.effective_limit > fat.effective_limit

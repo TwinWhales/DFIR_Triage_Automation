@@ -72,11 +72,13 @@ from .record_filter import (
 
 __all__ = [
     "CHARS_PER_TOKEN",
+    "MAX_LIST_ITEMS",
     "RESERVE_OUTPUT_TOKENS",
     "PRIORITY_WEIGHT",
     "Budget",
     "Quota",
     "char_budget",
+    "for_prompt",
     "record_chars",
     "priorities_from_selection",
     "allocate_seats",
@@ -101,6 +103,26 @@ CHARS_PER_TOKEN = 2.5
 #: findings 여러 건과 timeline 을 담은 JSON 이 이 정도다. 실측 소견 4건이
 #: 약 1,800토큰이었고, 재시도 없이 한 번에 끝나려면 여유가 있어야 한다.
 RESERVE_OUTPUT_TOKENS = 4096
+
+#: 프롬프트에 실을 때 ``fields`` 안의 목록을 몇 개까지 남길 것인가
+#: (``for_prompt`` 참조). ``None`` 이면 안 자른다.
+#:
+#: **20 은 실측에서 나온 값이다.** ``win10_sysmon_testimage`` 의 60건이
+#: 100,068자였고 그중 54%가 ``fields.loaded_files`` 하나였다. 상한별로:
+#:
+#: .. code-block:: text
+#:
+#:     안 자름  100,068자  →  32,768 창에 44건만 들어감
+#:     40        78,026자  →  54건
+#:     20        63,041자  →  60건 전부      ← 여기서 천장을 넘는다
+#:     10        54,395자  →  60건 (더 줄여도 이득이 급감)
+#:
+#: **20 아래로는 수익이 급감한다.** 20→3 이 14,731자를 더 아낄 뿐인데,
+#: 모델이 볼 수 있는 근거는 계속 줄어든다.
+#:
+#: 잘리지 않아야 할 것들과도 안 부딪힌다 — 실측에서 ``run_times`` 는 최대
+#: 8(포맷 상한), ``volumes`` 는 1 이다. 10 이상이면 그 둘은 건드리지 않는다.
+MAX_LIST_ITEMS = 20
 
 #: ``priority`` → 자릿수 배분 가중치. priority는 작을수록 강하므로 뒤집는다.
 #:
@@ -168,14 +190,62 @@ class Budget:
         return int(self.used_chars / CHARS_PER_TOKEN)
 
 
-def record_chars(record: dict[str, Any]) -> int:
+def for_prompt(record: dict[str, Any], max_list_items: int | None = MAX_LIST_ITEMS) -> dict[str, Any]:
+    """레코드를 프롬프트에 실을 모양으로. ``04_parsed/``의 원본은 안 건드립니다.
+
+    ``fields`` 안의 긴 목록을 앞에서 ``max_list_items``개까지만 남깁니다.
+    ``None``이면 자르지 않습니다.
+
+    **왜 자르나.** 실측(``win10_sysmon_testimage``, 60건 100,068자)에서
+    ``fields.loaded_files`` 하나가 프롬프트의 **54%**를 먹었습니다. 한
+    레코드가 1,017건을 들고 있었습니다. 그 목록 때문에 다른 아티팩트가
+    자리를 잃는 것은 증거의 폭으로 보아 손해입니다.
+
+    **왜 ``fields`` 안만.** 최상위는 스키마가 정한 자리라 길이가 묶여 있고,
+    무엇보다 ``flags``가 거기 있습니다 — 신호 판정 자체를 자르면 안 됩니다.
+    ``fields``는 아티팩트마다 다른 무제한 주머니이고, 터지는 곳은 늘 이쪽
+    입니다.
+
+    **왜 앞에서부터.** 어느 항목이 중요한지 고르는 물리적 근거가 없습니다.
+    "시스템 DLL은 덜 중요하다" 같은 추측으로 순위를 매기면 그 추측이 틀렸을
+    때 조용히 증거를 버립니다. 파일에 있던 순서는 근거는 아니지만 **재현은
+    됩니다**(6-6이 말하는 "임시"와 같은 자리).
+
+    **잘렸다는 사실은 프롬프트가 말합니다**(``llm_client.user_prompt``).
+    말하지 않으면 모델이 "적재 파일은 20개였다"고 쓸 수 있고, 그것은 우리가
+    **유발한** 환각입니다. 다만 그런 문장은 06단계가 잡습니다 — 검증은
+    ``04_parsed/``의 원본을 읽으므로 ``loaded_file_count``가 1,017인 것과
+    맞지 않아 기각됩니다.
+    """
+    fields = record.get("fields")
+    if max_list_items is None or not isinstance(fields, dict):
+        return record
+
+    trimmed = {
+        key: value[:max_list_items]
+        if isinstance(value, list) and len(value) > max_list_items
+        else value
+        for key, value in fields.items()
+    }
+    if trimmed == fields:
+        return record
+
+    out = dict(record)
+    out["fields"] = trimmed
+    return out
+
+
+def record_chars(
+    record: dict[str, Any], max_list_items: int | None = MAX_LIST_ITEMS
+) -> int:
     """레코드 하나가 프롬프트에서 차지할 글자 수.
 
-    ``llm_client.user_prompt``이 레코드를 내보내는 방식(줄당 하나의 JSONL,
-    ``ensure_ascii=False``)과 **같은 문자열을 잽니다.** 다르게 재면 예산이
-    맞아도 프롬프트가 넘칩니다. 줄바꿈 한 글자를 더합니다.
+    ``llm_client.user_prompt``이 레코드를 내보내는 방식(``for_prompt``을
+    거친 뒤 줄당 하나의 JSONL, ``ensure_ascii=False``)과 **같은 문자열을
+    잽니다.** 다르게 재면 예산이 맞아도 프롬프트가 넘칩니다. 줄바꿈 한
+    글자를 더합니다.
     """
-    return len(json.dumps(record, ensure_ascii=False)) + 1
+    return len(json.dumps(for_prompt(record, max_list_items), ensure_ascii=False)) + 1
 
 
 def char_budget(
@@ -273,6 +343,7 @@ def allocate_records(
     limit: int = DEFAULT_LIMIT,
     window_seconds: float = DEFAULT_WINDOW_SECONDS,
     char_budget: int | None = None,
+    max_list_items: int | None = MAX_LIST_ITEMS,
 ) -> tuple[list[dict[str, Any]], list[Quota], Budget]:
     """전달할 레코드를 시간순으로, 배분 내역·예산과 함께 돌려준다.
 
@@ -283,6 +354,11 @@ def allocate_records(
     ``char_budget``을 주면 **레코드 전체가 그 글자 수 안에 들어올 때까지
     ``limit``을 낮춰 다시 배분한다.** 자릿수만으로는 창을 넘는지 알 수
     없어서다(모듈 docstring 참조). 주지 않으면 재지 않는다.
+
+    ``max_list_items``는 **크기를 잴 때만** 쓴다. 돌려주는 것은 원본
+    레코드이고, 자르는 것은 ``llm_client``가 프롬프트를 만들 때다. 여기서
+    미리 자르면 ``interpret``이 원본을 볼 길이 없어진다 — 둘이 같은
+    ``for_prompt``을 쓰므로 크기는 어긋나지 않는다.
     """
     priorities = priorities or {}
     signal_sources = signal_sources or {}
@@ -326,7 +402,7 @@ def allocate_records(
         for artifact in sorted(ranked):
             for _key, moment, record in ranked[artifact][: seats[artifact]]:
                 picked.append((moment, record))
-                chars += record_chars(record)
+                chars += record_chars(record, max_list_items)
         return seats, picked, chars
 
     effective_limit = max(0, limit)

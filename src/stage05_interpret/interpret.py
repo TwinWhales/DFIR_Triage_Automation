@@ -175,6 +175,15 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--max-list-items",
+        type=int,
+        default=allocation.MAX_LIST_ITEMS,
+        help=(
+            "프롬프트에 실을 때 fields 안의 목록을 몇 개까지 남길지. 기본 %(default)s, "
+            "0 이면 안 자른다. 04_parsed/ 의 원본과 06단계 검증은 영향받지 않는다"
+        ),
+    )
+    parser.add_argument(
         "--reserve-output-tokens",
         type=int,
         default=allocation.RESERVE_OUTPUT_TOKENS,
@@ -264,7 +273,11 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"[{STAGE}] {e}", file=sys.stderr)
         return 2
 
-    client = InterpretClient(backend)
+    # 0 은 "안 자른다"로 읽는다. argparse 에 None 을 넘길 방법이 마땅치 않고,
+    # 목록을 0개만 싣는 것은 아무도 원하지 않는 동작이다.
+    max_list_items = args.max_list_items if args.max_list_items > 0 else None
+
+    client = InterpretClient(backend, max_list_items=max_list_items)
     budget_chars = allocation.char_budget(
         args.num_ctx,
         client.prompt_overhead_chars(scenario),
@@ -278,6 +291,7 @@ def main(argv: "list[str] | None" = None) -> int:
         limit=args.limit,
         window_seconds=args.window_seconds,
         char_budget=budget_chars,
+        max_list_items=max_list_items,
     )
     if not records:
         # 파싱은 됐는데 후보가 하나도 없다. 모델을 부를 이유가 없고,
