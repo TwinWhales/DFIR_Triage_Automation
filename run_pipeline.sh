@@ -16,6 +16,16 @@
 # (C-001-C, C-001-D). 도구가 어느 볼륨인지 추측하지 않게 하려는 것이고,
 # 덤으로 ref 가 유일해진다.
 #
+# evidence_root 가 **디스크 이미지 파일**이면 그 안에 NTFS 가 여럿일 수
+# 있다. 일반적인 Win10/11 물리 디스크는 복구 파티션도 NTFS 라 거의 항상
+# 해당한다. 그때는 VOLUME 으로 어느 것인지 고른다:
+#
+#   VOLUME=1 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh K-ALERT evidence/0824test.001
+#
+# 주지 않으면 04단계가 후보를 보여 주고 멈춘다. 그 동작이 정상이다 —
+# 크기로 추측하면 복구 파티션과 시스템 볼륨을 바꿔 골라도 "아티팩트 없음"이
+# 아니라 다른 볼륨의 결과가 조용히 나온다.
+#
 # 04단계는 카탈로그에 등재된 아티팩트를 파싱한다($MFT, $UsnJrnl, evtx,
 # 레지스트리). --skip-existing 이 붙어 있으므로 cases/<id>/04_parsed/ 에 산출물이
 # 미리 있으면 건너뛴다. tools/make_case.py --seed-parsed 로 채울 수 있다.
@@ -28,6 +38,14 @@ REPLAY="${3:-}"
 
 C="cases/$CASE_ID"
 PY="${PYTHON:-python}"
+
+# 이미지에 NTFS 가 여럿일 때 열 볼륨. 빈 값을 그대로 넘기면 --volume 이
+# 인자 없이 붙어 04단계가 죽으므로, 있을 때만 배열을 채운다.
+if [[ -n "${VOLUME:-}" ]]; then
+  PARSE_VOLUME=(--volume "$VOLUME")
+else
+  PARSE_VOLUME=()
+fi
 
 if [[ -n "$REPLAY" ]]; then
   NORMALIZE_LLM=(--llm stub --replay "$REPLAY/02_scenario.json")
@@ -49,7 +67,7 @@ $PY -m src.stage03_select.select \
 echo "== 04 파싱 =="
 $PY -m src.stage04_parse.parse \
     --in "$C/03_selection.json" --out "$C/04_parsed/" \
-    --evidence "$EVIDENCE" --skip-existing
+    --evidence "$EVIDENCE" --skip-existing "${PARSE_VOLUME[@]+"${PARSE_VOLUME[@]}"}"
 
 echo "== 05 해석 =="
 $PY -m src.stage05_interpret.interpret \
