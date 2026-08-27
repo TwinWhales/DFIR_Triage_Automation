@@ -12,7 +12,7 @@
   "properties": {
     "ref": {
       "type": "string",
-      "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF|SYSMON|EVTX-DRV|EVTX-PNP|EVTX-AAOP|EVTX-AAADM|EVTX-AABRK|EVTX-RDPCM|EVTX-RDPLSM|EVTX-APP)#(0|[1-9]\\d*)$",
+      "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF|SYSMON|EVTX-DRV|EVTX-PNP|EVTX-AAOP|EVTX-AAADM|EVTX-AABRK|EVTX-RDPCM|EVTX-RDPLSM|EVTX-APP|SRUM-NET|SRUM-APP|SRUM-CONN)#(0|[1-9]\\d*)$",
       "description": "앞자리 0을 허용하지 않는다. MFT#012345와 MFT#12345가 같은 레코드를 가리키면서 문자열로 다르면 06단계의 집합 대조가 통과해야 할 것을 기각한다."
     },
     "artifact": { "type": "string", "minLength": 1 },

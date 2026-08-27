@@ -30,6 +30,27 @@ artifacts:
   # 켜면 정상 트래픽으로 로그가 가득 차 05단계 쿼터를 혼자 태운다.
   #
   # 외부 통신의 근거는 Sysmon 3·22 가 Tier 1 로 들고 있다.
+
+  # SRUM 네트워크 사용량. **Sysmon 이 없는 호스트에서 유일한 근거가 된다** —
+  # 2026-08-26 K-ALERT 실측 이미지가 정확히 그 상황이었다(Sysmon 미설치).
+  #
+  # Sysmon 3 과 보는 것이 다르다. 저쪽은 "연결이 있었다"이고 이쪽은
+  # **"얼마나 나갔다"** 이다. 유출의 규모는 SRUM 에만 있다.
+  #
+  # 대가를 알고 건다 — 시간 해상도가 시간 단위 집계라 개별 전송을 못
+  # 가른다. 목적지 IP 도 없다. 그 둘은 Sysmon 3 이 들고 있다.
+  - name: srum:NetworkUsage
+    tier: 1
+    priority: 2
+    rationale: 앱별 송신·수신 바이트와 시각. 유출의 규모
+
+  # 시각 확인용. evtx:NetworkProfile 과 같은 자리를 다른 각도로 본다 —
+  # 저쪽은 프로필 연결/해제고 이쪽은 인터페이스별 접속 지속 시간이다.
+  - name: srum:NetworkConnectivity
+    tier: 2
+    trigger: Tier1에서 외부 통신이 확인되어 그 시각의 네트워크 연결 상태를 확인해야 하는 경우
+    rationale: 전송 시각을 감싸는 네트워크 접속 시작 시각과 지속 시간
+
   - name: evtx:NetworkProfile
     tier: 2
     trigger: Tier1에서 외부 통신이 확인되어 그 시각의 네트워크 연결 상태를 확인해야 하는 경우

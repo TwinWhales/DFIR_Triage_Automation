@@ -1126,3 +1126,103 @@ V36 이 가리키던 것은 `Root\File` 하나였지만 구멍은 Amcache 전체
 않았습니다 — 대응표 자체는 `AMCACHE_FILE_VALUE_NAMES` 가 들고 있고,
 회귀는 `tests/test_registry_parser.py` 의 "Amcache 숫자 값 이름" 절이
 봅니다.
+
+---
+
+## 2026-08-27 · SRUM(`SRUDB.dat`) · dissect.esedb 어댑터 (최초)
+
+증거: `evidence/0824test.001` 볼륨 1 (Windows 10 Pro, 빌드 15063).
+`Windows\System32\sru\SRUDB.dat` 640KB.
+
+- 공급자 테이블 3종 423건 (NetworkUsage 76 / AppResourceUsage 341 /
+  NetworkConnectivity 6)
+- 스키마 위반 0건
+- 판정: **통과**
+
+**외부 도구 대조는 하지 않았습니다.** 아래 셋은 그 대신 **파일 자신이
+들고 있는 값**과 맞춰 본 것입니다 — 프리패치에서 헤더 해시와 .pf 파일명을
+맞춰 본 것과 같은 방식입니다.
+
+### 대조 1 — 시각 인코딩이 서로를 지지한다
+
+`TimeStamp` 는 FILETIME 이 **아닙니다.** ESE 의 `JET_coltyp.DateTime`,
+즉 OLE Automation date 입니다. FILETIME 으로 읽으면 `OverflowError` 입니다.
+
+같은 DB 의 `ConnectStartTime` 은 **진짜 FILETIME** 입니다. 둘은 인코딩이
+독립인데 같은 시각대를 가리킵니다:
+
+```
+TimeStamp        4676398138920708779  →(OLE)      2022-10-24 15:30:00.000000+00:00
+ConnectStartTime  133110989883930110  →(FILETIME) 2022-10-24 15:29:48.393011+00:00
+                                                          차이 12초
+```
+
+우리 해석이 틀렸다면 두 값이 같은 12초 안에 떨어질 이유가 없습니다.
+
+**밟은 함정** — `dissect.esedb` 는 `DateTime` 컬럼을 **원시 int64 로**
+돌려줍니다. `float(값)` 을 씌우면 같은 크기의 실수가 될 뿐이고, 그
+8바이트를 **IEEE 754 double 로 다시 읽어야** 44858.6458... 이 나옵니다.
+처음에 이것을 놓쳐 **76건 전부가 `timestamp` 없이** 나갔습니다. 조용한
+실패였습니다 — 파싱은 성공했다고 보고되는데 레코드가 타임라인에 못 놓입니다.
+
+### 대조 2 — 페이지 → 파일 오프셋 공식
+
+라이브러리를 써도 `offset` 을 포기하지 않았습니다(`parsers/base.py` 의
+세 가지 중 둘째). ESE 의 논리 페이지 `n` 은 파일의 `(n + 1) * page_size`
+에 있습니다 — 앞의 두 페이지가 DB 헤더와 그 그림자이기 때문입니다.
+
+**추측하지 않고 확인했습니다.** 76건 전부에서 그 위치의 파일 바이트가
+라이브러리가 들고 있는 페이지 버퍼와 정확히 일치했고, 보정 없는
+`n * page_size` 는 어긋났습니다.
+
+```
+(page.num + 1) * page_size 가 실제 바이트와 일치: 76 / 불일치 0
+대조군 page.num * page_size 일치?               False
+```
+
+**페이지 단위입니다.** ESE 레코드는 페이지 안에서 태그로 가리켜지고
+압축된 키 접두어를 공유해서, 레코드 하나의 시작 바이트를 파일 좌표로
+말하는 것이 evtx 만큼 깔끔하지 않습니다. 페이지 위치까지가 정직하게
+말할 수 있는 범위이고, 4KB 페이지와 `AutoIncId` 가 있으면 되짚어집니다.
+
+### 대조 3 — `AppId` 풀기
+
+사용량 테이블의 `AppId`·`UserId` 는 정수이고 문자열은 `SruDbIdMapTable`
+에 있습니다. 실측 `IdType` 분포는 0=실행 파일 경로 또는 의사 이름(126),
+1=서비스 이름(18), 2=패키지·서비스 식별자(114), 3=사용자 SID(107)였고,
+`IdIndex` 는 타입과 무관하게 유일했습니다(겹침 0건).
+
+NetworkUsage 76건 중 **73건이 풀렸습니다.** 남은 3건은 우리 실패가
+아닙니다 — `IdIndex` 1(앱)과 2(사용자)의 `IdBlob` 이 **DB 안에서 이미
+`None`** 입니다. 파서는 정수를 남기고 `unresolved_app_id` 로 셉니다.
+
+`IdType` 3 은 UTF-16 문자열이 아니라 **바이너리 SID** 입니다. 문자열로
+읽으면 깨진 글자가 보고서에 실립니다. `S-1-5-18`(SYSTEM)이 정상적으로
+나오는 것을 확인했습니다.
+
+### 클린 셧다운이 아니어도 열린다
+
+곁에 `SRU.log`·`SRUDB.jfm` 이 있었습니다 — 로그가 반영되지 않은 상태
+입니다. `dissect.esedb` 가 그대로 열었고 423건이 나왔습니다. 로그를
+재생하지 않으므로 **가장 최근 기록 일부가 빠져 있을 수 있습니다**
+(`docs/limitations.md`).
+
+### 곁가지 — 앱 경로가 장치 이름이다
+
+`IdType` 0 의 값은 `\Device\HarddiskVolume4\Windows\System32\smss.exe`
+형태입니다. 프리패치와 같은 부류인데 **바꿀 근거가 없습니다** — SRUM 에는
+볼륨 표가 없어 `HarddiskVolume4` 가 분석 중인 볼륨인지 알 수 없습니다.
+그대로 둡니다(프리패치 파서와 같은 판단). 대가는 06단계입니다.
+
+### 재현
+
+```bash
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
+  --in <srum 을 선별한 03_selection.json> --out /tmp/srum/ \
+  --evidence evidence/0824test.001 --volume 1
+```
+
+시각 두 인코딩이 서로를 지지하는지는 `tests/test_srum_parser.py` 의
+`test_the_real_srudb_parses_and_the_two_time_encodings_agree` 가 실물이
+있을 때 자동으로 봅니다. 오프셋 공식과 `AppId` 풀기는 같은 파일의
+가짜 객체 테스트가 고정합니다.

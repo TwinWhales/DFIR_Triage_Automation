@@ -26,6 +26,15 @@ artifacts:
       event_ids: [1, 11]
     rationale: 스테이징을 수행한 프로세스와 파일 생성
 
+  # SRUM 앱 자원 사용량. 스테이징은 **디스크에 많이 쓰는 일**이라
+  # ForegroundBytesWritten/BackgroundBytesWritten 이 그 자체로 신호가 된다.
+  # 경로를 못 맞혀 $MFT 가 0건을 낼 때도 "무언가가 그 시각에 대량으로
+  # 썼다"는 사실은 남는다 — 이 기법의 최대 약점을 메우는 자리다.
+  - name: srum:AppResourceUsage
+    tier: 2
+    trigger: Tier1 $MFT가 스테이징 경로에서 아무것도 찾지 못한 경우
+    rationale: 앱별 디스크 쓰기량과 시각. 경로를 모르는 상태의 스테이징 흔적
+
   - name: $UsnJrnl
     tier: 2
     trigger: Tier1 $MFT에서 스테이징 경로를 특정하지 못했거나 deleted 플래그가 발견된 경우
