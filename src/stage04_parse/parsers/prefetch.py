@@ -54,8 +54,22 @@
 카피 안의 파일은 살아 있는 볼륨의 그 경로가 아닙니다. 실측
 ``evidence/[root]`` 73건 중 17건이 섀도 카피를 함께 참조합니다.
 
-원본 경로는 ``fields.loaded_files``에 **손대지 않은 채로** 남습니다.
-바꾼 것은 ``path`` 하나뿐이고, 그것이 파생값임은 이 문서가 근거입니다.
+``path``와 ``fields.loaded_files``에 **같은 규칙을 겁니다.** 둘 다
+파생값이고, 그것이 파생값임은 이 문서가 근거입니다.
+
+한때는 ``path`` 하나만 바꾸고 목록은 원본 그대로 뒀습니다. 바꾼 이유는
+**경로 기준 비교가 목록에서만 성립하지 않았기** 때문입니다. 03단계의
+``path_prefix``도, 05단계가 프롬프트에 실을 항목을 고르는 기준도
+(``allocation.for_prompt``) ``C:\\...`` 형태를 봅니다. 실측
+(``win10_sysmon_testimage``, 적재 경로 10,109건)에서 "Windows 폴더 밖"이
+**100%**로 나왔는데, 그건 사실이 아니라 접두어가 안 맞은 것이었습니다.
+사이드로딩(T1574)의 가장 강한 신호 둘이 여기서 죽었습니다.
+
+바뀐 항목 수는 ``stats["loaded_paths_converted"]``에 셉니다. 레코드는
+나오는데 이 수가 0이면 **접두어를 못 알아본 것**입니다 — 위의 100%가
+정확히 그 증상이었고, 조용히 지나가면 다시 못 찾습니다.
+
+``loaded_file_count``는 원본 개수 그대로입니다. 개수는 변환과 무관합니다.
 
 ## 실행 파일 경로는 목록에서 찾는다
 
@@ -157,6 +171,7 @@ class PrefetchParser:
             "duplicate_refs": 0,
             "hash_mismatch": 0,
             "path_unresolved": 0,
+            "loaded_paths_converted": 0,
             "out_of_scope": 0,
         }
 
@@ -227,8 +242,12 @@ class PrefetchParser:
 
         live = device_prefixes(volumes)
         executable_path = self._executable_path(header.executable, loaded, live)
+        loaded_paths = [self._to_drive(path, live) for path in loaded]
+        self.stats["loaded_paths_converted"] += sum(
+            1 for before, after in zip(loaded, loaded_paths) if before != after
+        )
 
-        if not self._in_scope(scope, executable_path, loaded, live):
+        if not self._in_scope(scope, executable_path, loaded, loaded_paths):
             self.stats["out_of_scope"] += 1
             return None
 
@@ -260,7 +279,7 @@ class PrefetchParser:
                 "run_count": info.run_count,
                 "run_times": [_iso(m) for m in info.run_times if m is not None],
                 "loaded_file_count": len(loaded),
-                "loaded_files": loaded,
+                "loaded_files": loaded_paths,
                 "volumes": [_volume_field(volume) for volume in volumes],
             },
         }
@@ -348,7 +367,7 @@ class PrefetchParser:
         scope: Scope,
         executable_path: "str | None",
         loaded: list[str],
-        live: "str | None",
+        loaded_paths: list[str],
     ) -> bool:
         """범위 안인가.
 
@@ -357,14 +376,17 @@ class PrefetchParser:
         둘 다 봐야 할 신호이고, 선별 실패로 증거를 놓치는 것이 이
         프로젝트의 최대 리스크입니다.
 
+        **원본과 변환본을 둘 다 봅니다.** 레코드에 싣는 것은 변환본
+        하나뿐이지만, 매핑이 장치 경로로 범위를 적었을 때 걸러지지 않게
+        합니다 — 여기서 놓치면 아티팩트가 통째로 사라집니다.
+
         시간 범위는 여기서 보지 않습니다. ``flagging``이
         ``outside_time_range``를 붙입니다(``parsers/base.py``).
         """
         if not scope.path_prefix and not scope.extensions:
             return True
 
-        candidates = list(loaded)
-        candidates.extend(self._to_drive(path, live) for path in loaded)
+        candidates = loaded + loaded_paths
         if executable_path is not None:
             candidates.append(executable_path)
         return any(scope.matches_path(path) for path in candidates)

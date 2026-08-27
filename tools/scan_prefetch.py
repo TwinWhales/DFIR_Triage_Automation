@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import struct
 import sys
 from pathlib import Path
@@ -107,6 +108,31 @@ def scan_directory(directory: Path) -> tuple[list[dict], list[str]]:
     return scanned, failed
 
 
+#: 경로 앞에 붙는 볼륨 조각. 파서의 ``DEVICE_VOLUME`` 을 가져다 쓰지 않고
+#: **여기서 따로 씁니다** — 대조의 요점이 다른 길로 읽는 것이라, 파서의
+#: 상수를 빌려오면 그 상수가 틀렸을 때 양쪽이 사이 좋게 틀립니다.
+_VOLUME_PREFIX = re.compile(
+    r"^(?:\\DEVICE\\HARDDISKVOLUME[^\\]*|\\VOLUME\{[^}]*\}|[A-Za-z]:)(?=\\)",
+    re.IGNORECASE,
+)
+
+
+def _strip_volume(name: str) -> str:
+    """맨 앞의 볼륨 조각을 뗀다.
+
+    파서는 살아 있는 볼륨의 접두어를 드라이브 문자로 바꿔 내보냅니다
+    (``parsers/prefetch.py`` "장치 경로를 드라이브 문자로 바꾸는 규칙").
+    스캐너는 문자열 블록을 그대로 읽으므로 장치 경로 그대로입니다. 앞
+    조각을 떼고 나머지를 비교합니다.
+
+    **이 대조가 보려는 것은 접두어가 아닙니다.** 메트릭 배열을 걷는 쪽과
+    문자열 블록을 쪼개는 쪽이 같은 개수, 같은 내용을 내는가입니다. 접두어를
+    맞추라고 요구하면 파서가 정상 동작하는데도 전량이 불일치로 나와 진짜
+    어긋남을 가립니다.
+    """
+    return _VOLUME_PREFIX.sub("", name, count=1)
+
+
 def _compare(scanned: list[dict], ours_path: Path) -> int:
     """파서 출력과 맞춰 본다. 불일치 수를 돌려준다."""
     ours = {}
@@ -123,13 +149,14 @@ def _compare(scanned: list[dict], ours_path: Path) -> int:
             mismatches += 1
             continue
 
-        theirs = record["fields"]["loaded_files"]
-        if theirs != entry["names"]:
+        theirs = [_strip_volume(name) for name in record["fields"]["loaded_files"]]
+        mine = [_strip_volume(name) for name in entry["names"]]
+        if theirs != mine:
             print(
                 f"  [적재 목록 불일치] {entry['file']}: "
                 f"파서 {len(theirs)}건 / 스캐너 {len(entry['names'])}건"
             )
-            for index, (a, b) in enumerate(zip(theirs, entry["names"])):
+            for index, (a, b) in enumerate(zip(theirs, mine)):
                 if a != b:
                     print(f"      첫 불일치 #{index}: {a!r} != {b!r}")
                     break
