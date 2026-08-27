@@ -840,3 +840,52 @@ def test_real_hive_records_pass_the_schema():
     with hive.open("rb") as stream:
         for record in flagging.apply_all(parser.parse(stream, scope), scope):
             schema.validate(record, "parsed_record")
+
+
+# ============================== AmcacheParser 대조기 (tools/compare_amcache.py)
+
+
+def test_the_installdate_notation_difference_is_not_counted_as_a_mismatch():
+    """`InstallDate` 는 FILETIME 이 아니라 하이브에 그렇게 적힌 문자열이다.
+
+    실물 하이브에서 `RegSZ` 로 `'03/20/2017 03:53:52'` 이고, 우리는 원본
+    그대로 낸다(`registry.py` 는 문자열을 생김새로 재해석하지 않는다).
+    AmcacheParser 는 파싱해 ISO 로 다시 쓴다. **표기 차이지 값 차이가
+    아니므로** 대조기가 둘을 같게 봐야 한다 — 안 그러면 78건이 통째로
+    거짓 불일치로 잡히고, 진짜 불일치가 그 속에 묻힌다.
+    """
+    from tools.compare_amcache import _date
+
+    assert _date("03/20/2017 03:53:52") == _date("2017-03-20 03:53:52")
+    assert _date("10/25/2022 00:00:00") == "2022-10-25 00:00:00"
+
+
+def test_our_iso_timestamps_are_cut_to_the_second_for_comparison():
+    """우리는 100ns 자리까지, AmcacheParser 는 기본이 초 단위다."""
+    from tools.compare_amcache import _date
+
+    assert _date("2022-10-24T15:31:17.9368910Z") == "2022-10-24 15:31:17"
+
+
+def test_a_date_that_is_neither_notation_is_left_alone():
+    """모르는 표기를 억지로 바꾸면 진짜 불일치를 지운다."""
+    from tools.compare_amcache import _date
+
+    assert _date("") == ""
+    assert _date("not a date") == "not a date"
+
+
+def test_the_container_key_itself_is_not_an_entry():
+    """``Amcache\\Root\\InventoryApplicationFile`` 자체는 항목이 아니다.
+
+    이것을 세면 우리가 AmcacheParser 보다 범주마다 +1 이 되어, 실제로는
+    일치하는데 불일치로 보고된다.
+    """
+    from tools.compare_amcache import is_leaf, subkey_of
+
+    container = {"path": "Amcache\\Root\\InventoryApplicationFile"}
+    entry = {"path": "Amcache\\Root\\InventoryApplicationFile\\0000ff17"}
+
+    assert not is_leaf(container)
+    assert is_leaf(entry)
+    assert subkey_of(entry) == "InventoryApplicationFile"

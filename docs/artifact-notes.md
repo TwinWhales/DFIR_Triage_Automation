@@ -1226,3 +1226,118 @@ NetworkUsage 76건 중 **73건이 풀렸습니다.** 남은 3건은 우리 실�
 `test_the_real_srudb_parses_and_the_two_time_encodings_agree` 가 실물이
 있을 때 자동으로 봅니다. 오프셋 공식과 `AppId` 풀기는 같은 파일의
 가짜 객체 테스트가 고정합니다.
+
+---
+
+## 2026-08-27 · Amcache · AmcacheParser 2026.5.0 대조
+
+`docs/limitations.md` 가 **"외부 도구(AmcacheParser 등) 대조는 하지
+않았습니다"** 를 아는 구멍으로 적어 둔 자리입니다. 그것을 닫습니다.
+
+### 대조 상대
+
+Eric Zimmerman 의 AmcacheParser 2026.5.0 (MIT). **저장소에 넣지
+않았습니다** — 바이너리라 `third_party/` 대상도 아닙니다. 받은 곳과 확인:
+
+```
+https://download.mikestammer.com/net9/AmcacheParser.zip   2,337,170 바이트
+sha256 d40d1e7863159dbd9aa3ae826d919edc490ca33df84bde57e86da848a583af03
+Authenticode 서명: CN=ZimTech LLC, O=ZimTech LLC, S=Indiana, C=US  (Valid)
+```
+
+배포처가 `github.com` 이 아니라 저자의 별도 호스트라는 점을 적어 둡니다.
+서명으로 출처를 확인했습니다.
+
+증거: `evidence/0824test.001` 볼륨 1 에서 꺼낸 `Amcache.hve`
+(1,572,864 바이트, Win10 15063).
+
+### 조건을 맞췄다
+
+**`--nl` 을 붙였습니다.** 없으면 AmcacheParser 가 트랜잭션 로그를
+재생하는데 우리는 재생하지 않습니다. 그대로 대조하면 파서의 정확성이
+아니라 **로그 재생 여부의 차이**를 재게 됩니다.
+
+**우리 쪽은 범위를 비우고 뽑았습니다.** 우리 파서는 선별된 범위만 내므로
+레코드 수까지 대조하려면 하이브 전체가 필요합니다 → 1,074건.
+
+### 결과 — 457건 전부 일치
+
+```
+  범주                               저쪽     우리     짝지음     불일치
+  InventoryApplicationFile         29     29      29       0
+  InventoryDriverBinary           332    332     332       0
+  InventoryDeviceContainer         14     14      14       0
+  InventoryApplication             78     78      78       0
+  InventoryDriverPackage            4      4       4       0
+
+  판정: 통과 — 짝지은 457건 전부 일치
+```
+
+**레코드 수가 다섯 범주 전부 정확히 같습니다.** 값도 짝지은 것 전부
+일치합니다 — 경로·`ProgramId`·`Size`·`BinaryType`·`BinFileVersion`·
+드라이버 이름/회사/버전/`ImageSize`/`Service`/`Inf`·키 LastWrite.
+
+대조기는 `tools/compare_amcache.py` 에 남겼습니다(`compare_mft.py` 선례).
+
+### 밟은 함정 — 컨테이너 키를 세면 범주마다 +1 이 된다
+
+우리는 키 하나를 레코드 하나로 내므로 `Amcache\Root\InventoryDevicePnp`
+같은 **컨테이너 키 자체도 레코드**입니다. 처음에 그것을 세어 모든 범주가
+저쪽보다 하나씩 많았습니다. 깊이 4 이상만 항목으로 세면 맞습니다.
+
+### `InstallDate` 는 불일치가 아니라 표기 차이였다
+
+처음 실행에서 `InventoryApplication` 78건이 전부 불일치로 잡혔습니다.
+
+```
+저쪽 '2017-03-20 03:53:52'   우리 '03/20/2017 03:53:52'
+```
+
+**우리 값이 원본입니다.** 하이브에 `RegSZ` 로 그렇게 적혀 있습니다
+(python-registry 로 직접 확인). AmcacheParser 가 파싱해 ISO 로 다시 쓰는
+것이고, 우리는 `registry.py` 의 설계대로 문자열을 생김새로 재해석하지
+않습니다.
+
+**파서를 고치지 않았습니다.** 고치면 대조를 통과시키려고 설계 원칙을
+굽히는 것이 됩니다. 대조기가 두 표기를 같게 보도록 했고, 하류에 남는
+위험은 `docs/limitations.md` 에 적었습니다.
+
+### 곁가지 1 — 로그 재생 차이가 0이었다
+
+`Amcache.hve.LOG1`(0바이트)·`LOG2`(131,072바이트)를 함께 꺼내 `--nl` 없이
+다시 돌렸습니다. 다섯 CSV 전부 **행 하나도 다르지 않았습니다.**
+
+이 이미지에서는 우리의 "로그를 재생하지 않는다"가 아무것도 못 보게 하지
+않았다는 뜻입니다. **일반화되지 않습니다** — 이미지 하나의 관측입니다.
+
+### 곁가지 2 — 하이브 길이 너머를 우리도 안 읽는다
+
+AmcacheParser 가 경고했습니다:
+
+```
+Extra, non-zero data found beyond hive length! Check ... starting at 0x14B000!
+```
+
+헤더 `0x28` 의 선언된 하이브 길이가 `0x14A000` 이라 데이터 끝이
+`0x14B000` 인데 파일은 `0x180000` 입니다. **우리 레코드 1,074건 중
+`0x14B000` 이후에서 나온 것은 0건입니다** — 선언된 경계를 지킵니다.
+
+### 곁가지 3 — `Root\File` 361건은 저쪽이 안 읽는다
+
+AmcacheParser 는 이 하이브를 "new format" 으로 보고
+`Root\InventoryApplicationFile` 만 읽습니다. 우리는 **둘 다** 읽습니다.
+불일치가 아니라 **범위 결정의 차이**라 채점하지 않았습니다.
+
+그리고 이것이 2026-08-27 앞 절(숫자 값 이름 대응)을 **뒤에서 받쳐
+줍니다.** 그 대응은 `Root\File` 을 `InventoryApplicationFile` 29건에
+조인해 얻은 것인데, 그 29건이 이제 외부 도구로 값까지 확인됐습니다.
+정답지로 쓴 쪽이 검증된 셈입니다.
+
+### 재현
+
+```bash
+AmcacheParser.exe -f Amcache.hve -i --nl --csv out
+
+.venv/Scripts/python.exe tools/compare_amcache.py \
+  --ours <범위를 비우고 뽑은 registry_amcache.jsonl> --amcache out
+```
