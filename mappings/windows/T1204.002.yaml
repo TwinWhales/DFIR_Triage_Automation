@@ -48,5 +48,6 @@ artifacts:
 
   - name: $UsnJrnl
     tier: 2
-    trigger: Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시
-    rationale: 실행 파일의 생성·삭제 이력
+    priority: 2
+    trigger: Tier1에서 악성 실행 파일의 생성·삭제·이동 이력을 추가로 확인해야 하는 경우
+    rationale: 실행 파일의 생성·삭제·이동 이력

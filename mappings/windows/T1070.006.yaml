@@ -8,10 +8,12 @@ artifacts:
   # 선별은 시간 범위로만 좁힌다.
   - name: $MFT
     tier: 1
+    priority: 1
     scope_template: {}
     rationale: $SI와 $FN 타임스탬프 불일치
 
   - name: $UsnJrnl
     tier: 2
+    priority: 2
     trigger: Tier1 $MFT에서 timestamp_mismatch 플래그 발견 시
     rationale: 조작 대상 파일의 실제 변경 시각

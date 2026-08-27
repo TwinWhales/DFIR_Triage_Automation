@@ -16,5 +16,6 @@ artifacts:
 
   - name: registry:SYSTEM
     tier: 2
+    priority: 2
     trigger: Tier1에서 계정 변경이 확인되어 그 계정의 서비스 등록 여부를 확인해야 하는 경우
     rationale: 변경된 계정으로 등록된 서비스

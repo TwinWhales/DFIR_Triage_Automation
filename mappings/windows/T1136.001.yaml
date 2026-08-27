@@ -1,19 +1,17 @@
-technique: T1136.001
+﻿technique: T1136.001
 name: "Create Account: Local Account"
 os: windows
-
 artifacts:
   - name: evtx:Security
     tier: 1
+    priority: 2
     scope_template:
-      # 4720 계정 생성 / 4728 전역 그룹 추가 / 4732 로컬 그룹 추가
       event_ids: [4720, 4728, 4732]
     rationale: 계정 생성 및 권한 그룹 추가
-
+    
   - name: $MFT
     tier: 2
+    priority: 2
     trigger: Tier1에서 생성된 계정의 프로필 디렉터리 확인이 필요한 경우
     rationale: 신규 계정 프로필 디렉터리 생성 시각
-
-defaults:
-  users_root: 'C:\Users'
+# defaults: users_root — 안 쓰는 orphan이라 제거

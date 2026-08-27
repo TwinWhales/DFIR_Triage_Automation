@@ -2,7 +2,7 @@ technique: T1074.001
 name: "Data Staged: Local Data Staging"
 os: windows
 
-# K-001 Stage 5 — 반출용 데이터를 한 곳에 모은다.
+# K-001 Stage 6 — 반출용 데이터를 한 곳에 모은다.
 #
 # 스테이징 경로는 공격자가 정한다. 관례적으로 쓰이는 자리 몇 곳을
 # defaults 에 두되, 시나리오가 경로를 말하면 {staging_root} 가 그것으로
@@ -28,6 +28,7 @@ artifacts:
 
   - name: $UsnJrnl
     tier: 2
+    priority: 2
     trigger: Tier1 $MFT에서 스테이징 경로를 특정하지 못했거나 deleted 플래그가 발견된 경우
     rationale: 경로를 모르는 상태에서의 파일 생성·삭제 이력
 

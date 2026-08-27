@@ -59,6 +59,7 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1546.008": "Event Triggered Execution: Accessibility Features",
     "T1078.003": "Valid Accounts: Local Accounts",
     "T1112": "Modify Registry",
+    "T1552": "Unsecured Credentials",
     "T1562.001": "Impair Defenses: Disable or Modify Tools",
     "T1562.004": "Impair Defenses: Disable or Modify System Firewall",
     "T1197": "BITS Jobs",
