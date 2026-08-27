@@ -52,6 +52,8 @@ __all__ = [
     "mappings_dir",
     "load_vocabulary",
     "privileged_groups",
+    "KeepPaths",
+    "prompt_keep_paths",
     "apply",
     "apply_all",
 ]
@@ -580,6 +582,67 @@ def privileged_groups(directory: str | None = None) -> frozenset[str]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     names = data.get("privileged_groups") or []
     return frozenset(str(n).strip().lower() for n in names) or DEFAULT_PRIVILEGED_GROUPS
+
+
+@dataclass(frozen=True)
+class KeepPaths:
+    """긴 목록에서 먼저 남길 항목의 기준. ``prompt_keep_paths`` 참조."""
+
+    max_items: int
+    contains: tuple[str, ...]
+
+    def matches(self, value: str) -> bool:
+        """이 값이 눈여겨볼 자리인가. 대소문자는 무시한다."""
+        lowered = value.lower()
+        return any(needle in lowered for needle in self.contains)
+
+
+#: ``prompt_keep_paths`` 가 없을 때. 지금까지와 같은 동작이다 — 앞에서부터.
+NO_KEEP_PATHS = KeepPaths(max_items=0, contains=())
+
+
+@functools.lru_cache(maxsize=None)
+def prompt_keep_paths(directory: str | None = None) -> KeepPaths:
+    """05단계가 긴 목록을 자를 때 먼저 남길 항목의 기준.
+
+    **플래그가 아니라 배분의 문제인데 이 파일에서 읽습니다.** 판단의
+    성격이 같기 때문입니다 — "이 경로는 눈여겨볼 자리인가"를 코드가
+    아니라 어휘로 정해 둡니다. ``allocation.for_prompt``가 씁니다.
+
+    **키가 없으면 기능이 꺼집니다**(``NO_KEEP_PATHS``). 그때의 동작은
+    이 기능이 생기기 전과 같아서 — 목록을 앞에서부터 자릅니다 — 조용히
+    틀리는 자리가 아닙니다.
+
+    **모양이 틀렸으면 멈춥니다.** ``max_items``가 숫자가 아니거나
+    ``contains``가 목록이 아니면 ``VocabularyError``입니다. 슬쩍 무시하면
+    "왜 그 DLL 이 프롬프트에 없지"를 되짚을 방법이 없습니다.
+    """
+    path = Path(directory or mappings_dir()) / "_flags.yaml"
+    if not path.is_file():
+        return NO_KEEP_PATHS
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    spec = data.get("prompt_keep_paths")
+    if spec is None:
+        return NO_KEEP_PATHS
+    if not isinstance(spec, dict):
+        raise VocabularyError(f"{path}: prompt_keep_paths 가 매핑이 아님")
+
+    max_items = spec.get("max_items", 0)
+    if isinstance(max_items, bool) or not isinstance(max_items, int) or max_items < 0:
+        raise VocabularyError(
+            f"{path}: prompt_keep_paths.max_items 는 0 이상의 정수여야 함 "
+            f"(현재 {max_items!r})"
+        )
+
+    contains = spec.get("contains") or []
+    if not isinstance(contains, list) or any(not isinstance(c, str) for c in contains):
+        raise VocabularyError(f"{path}: prompt_keep_paths.contains 는 문자열 목록이어야 함")
+
+    return KeepPaths(
+        max_items=int(max_items),
+        contains=tuple(c.lower() for c in contains),
+    )
 
 
 #: 고정 어휘. ``mappings/_flags.yaml`` 이 원본이고, 스키마 enum 은

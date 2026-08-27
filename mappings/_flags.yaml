@@ -588,3 +588,49 @@ privileged_groups:
   - Enterprise Admins
   - Backup Operators
   - Remote Desktop Users
+
+# 05단계가 프롬프트에 실을 때 fields 안의 긴 목록을 상한까지 자르는데
+# (allocation.MAX_LIST_ITEMS), 그 상한 안에 **먼저 넣을** 항목의 기준이다.
+# allocation.for_prompt 가 읽는다.
+#
+# **flags 룰이 아니다.** 여기 이름을 적는다고 플래그가 붙지는 않는다.
+# 그런데도 이 파일에 있는 이유는 판단의 성격이 같아서다 — "이 경로는
+# 눈여겨볼 자리인가"를 코드가 아니라 어휘로 정해 두는 것.
+#
+# **execution_from_unusual_path 의 values 를 빌려 쓰지 않는다.** 저 룰은
+# Sysmon 사정으로 고쳐질 수 있고(ProgramData 를 뺀 것이 그런 경우다),
+# 그때 프리패치 자르기가 조용히 함께 바뀌면 원인을 못 찾는다. 겹치는
+# 항목이 있는 것은 같은 사실을 두 곳이 각자 보고 있기 때문이다.
+prompt_keep_paths:
+  # keep 목록도 상한을 받는다. 안 받으면 적중이 많은 레코드가 자리를
+  # 통째로 먹어 목록 앞머리가 사라진다 — 실행 파일 자신이 대개 첫
+  # 항목이라 그 자리는 남겨야 한다.
+  #
+  # **12 는 실측에서 고른 값이다**(win10_sysmon_testimage, 적재 경로
+  # 10,109건 / 레코드 127건, 2026-08-27):
+  #
+  #   아래 어휘 적중       992건 (9.81%)   적중 레코드 47/127, 중앙값 5
+  #   상한 12 를 넘는 레코드  16건
+  #   상한 20 을 넘는 레코드  11건
+  #
+  # 20(= MAX_LIST_ITEMS) 중 12 를 주면 앞머리 몫 8자리가 남는다. 적중이
+  # 0인 레코드 80건은 지금까지와 똑같이 앞에서부터 20개다.
+  max_items: 12
+
+  # 부분 문자열로 본다. 앞뒤 역슬래시는 부분 일치가 헐거워서 붙였다 —
+  # `\users\` 가 아니라 `users` 로 쓰면 `C:\Program Files\UsersHelper\`
+  # 가 걸린다(execution_from_unusual_path 와 같은 이유).
+  #
+  # **부정으로 쓰지 않는다.** "Windows 폴더 밖" 이 사이드로딩 신호로는
+  # 더 강하지만, 04단계의 장치 경로 변환이 실패하면 부정 조건은 전량을
+  # 잡아 keep 목록이 조용히 무의미해진다. 열거하면 그때 0건이 되고,
+  # 0건은 stats["loaded_paths_converted"] 로 드러난다.
+  contains:
+    - '\appdata\local\temp\'
+    - '\appdata\roaming\'
+    - '\windows\temp\'
+    - '\users\'
+    - '\$recycle.bin\'
+    - '\perflogs\'
+    - '\programdata\'
+    - '\downloads\'

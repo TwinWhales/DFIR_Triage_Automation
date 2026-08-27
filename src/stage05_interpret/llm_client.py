@@ -61,12 +61,18 @@ class InterpretClient:
         말하지 않으면 모델이 "적재 파일은 20개였다"고 쓸 수 있고, 그것은
         우리가 **유발한** 환각이다. 전체 개수는 레코드의 ``*_count`` 필드에
         원본 그대로 실려 있다(프리패치의 ``loaded_file_count`` 등).
+
+        **"앞에서"라고 말하지 않는다.** ``allocation.for_prompt``가
+        눈여겨볼 자리를 먼저 골라 넣으므로 실린 것이 앞머리가 아닐 수
+        있다(``mappings/_flags.yaml`` 의 ``prompt_keep_paths``). 앞에서
+        잘랐다고 말해 두면 모델이 "그 뒤는 못 봤다"를 잘못된 근거로 쓴다.
         """
         if self.max_list_items is None:
             return ""
         return (
-            f". fields 안의 목록은 앞에서 {self.max_list_items}개까지만 실려 있으니 "
-            "전체 개수는 함께 있는 개수 필드를 보고 말하십시오"
+            f". fields 안의 목록은 {self.max_list_items}개까지만 실려 있고 "
+            "원래 순서를 지킨 부분집합이니, 전체 개수는 함께 있는 개수 필드를 "
+            "보고 말하십시오"
         )
 
     def user_prompt(
