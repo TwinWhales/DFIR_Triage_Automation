@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.stage03_select.mapping_loader import DEFAULT_PRIORITY
+from src.stage04_parse import flagging
 from src.stage05_interpret import allocation, record_filter
 
 INCIDENT = datetime(2026, 8, 20, 9, 17, 3, tzinfo=timezone.utc)
@@ -586,6 +587,79 @@ def test_the_prompt_says_the_lists_were_cut():
 
     whole = InterpretClient(llm.StubBackend.__new__(llm.StubBackend), max_list_items=None)
     assert "까지만" not in whole.user_prompt(scenario, [_fat(1, 100)])
+
+
+# ================================================ 무엇을 남길 것인가 (keep)
+
+
+KEEP = flagging.KeepPaths(max_items=3, contains=("\\users\\", "\\windows\\temp\\"))
+
+
+def _listed(paths):
+    return {"ref": "PF#1", "artifact": "prefetch", "fields": {"loaded_files": list(paths)}}
+
+
+def test_a_hit_at_the_tail_still_makes_it_in():
+    # 이 작업의 논지다. 앞에서만 자르면 뒤쪽의 드롭 자리 DLL 이 통째로
+    # 사라진다 — 사이드로딩은 거기서 보인다.
+    paths = [f"C:\\Windows\\System32\\{i}.dll" for i in range(30)]
+    paths[27] = "C:\\Users\\kisec\\AppData\\Local\\Temp\\evil.dll"
+
+    trimmed = allocation.for_prompt(_listed(paths), 5, KEEP)["fields"]["loaded_files"]
+
+    assert "C:\\Users\\kisec\\AppData\\Local\\Temp\\evil.dll" in trimmed
+    assert len(trimmed) == 5
+
+
+def test_the_order_of_the_original_list_is_kept():
+    # 부분집합이지 재정렬이 아니다. 순서를 흔들면 적재 순서가 담고 있는
+    # 정보(실행 파일이 대개 첫 항목)가 사라진다.
+    paths = [f"C:\\Windows\\System32\\{i}.dll" for i in range(10)]
+    paths[8] = "C:\\Users\\kisec\\a.dll"
+
+    trimmed = allocation.for_prompt(_listed(paths), 4, KEEP)["fields"]["loaded_files"]
+
+    assert trimmed == [paths[0], paths[1], paths[2], paths[8]]
+
+
+def test_the_keep_list_cannot_take_every_seat():
+    # 상한이 없으면 적중이 많은 레코드가 앞머리 몫을 통째로 먹는다.
+    # 실측에서 한 레코드가 143건 적중했다.
+    paths = ["C:\\Users\\kisec\\%d.dll" % i for i in range(20)]
+    paths[0] = "C:\\Windows\\System32\\ntdll.dll"
+
+    trimmed = allocation.for_prompt(_listed(paths), 5, KEEP)["fields"]["loaded_files"]
+
+    # keep 상한 3 + 앞에서 채운 2. 첫 항목이 살아 있다.
+    assert trimmed[0] == "C:\\Windows\\System32\\ntdll.dll"
+    assert len(trimmed) == 5
+
+
+def test_without_a_keep_list_it_is_the_head_as_before():
+    paths = [f"C:\\Windows\\System32\\{i}.dll" for i in range(30)]
+    paths[27] = "C:\\Users\\kisec\\AppData\\Local\\Temp\\evil.dll"
+
+    trimmed = allocation.for_prompt(_listed(paths), 5, flagging.NO_KEEP_PATHS)
+
+    assert trimmed["fields"]["loaded_files"] == paths[:5]
+
+
+def test_a_list_of_non_strings_is_still_the_head():
+    # keep 어휘는 경로용이다. 숫자 목록에서는 아무것도 걸리지 않는다.
+    record = {"ref": "X#1", "artifact": "prefetch", "fields": {"n": list(range(30))}}
+
+    trimmed = allocation.for_prompt(record, 4, KEEP)
+
+    assert trimmed["fields"]["n"] == [0, 1, 2, 3]
+
+
+def test_the_shipped_vocabulary_is_actually_loaded():
+    """어휘가 조용히 비면 이 기능이 있으나 마나가 된다."""
+    keep = flagging.prompt_keep_paths()
+
+    assert keep.max_items > 0
+    assert keep.matches("C:\\Users\\kisec\\AppData\\Local\\Temp\\a.dll")
+    assert not keep.matches("C:\\Windows\\System32\\ntdll.dll")
 
 
 def test_trimming_lets_more_records_through_the_same_budget():

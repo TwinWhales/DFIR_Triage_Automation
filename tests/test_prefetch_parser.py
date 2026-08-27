@@ -265,13 +265,31 @@ def test_a_missing_run_time_drops_the_key(parser):
     schema.validate(flagging.apply(record, EMPTY), "parsed_record")
 
 
-def test_loaded_files_keep_the_device_path_verbatim(parser):
+def test_loaded_files_get_the_drive_letter_too(parser):
+    # path 와 같은 규칙을 건다. 목록만 장치 경로로 남으면 경로 기준 비교가
+    # 거기서만 성립하지 않는다 — 실측에서 "Windows 폴더 밖"이 100% 로
+    # 나온 것이 그 증상이었다.
     loaded = [f"{DEVICE}\\WINDOWS\\SYSTEM32\\CMD.EXE", f"{DEVICE}\\WINDOWS\\SYSTEM32\\NTDLL.DLL"]
     record = run(parser, build_pf(loaded=loaded), EMPTY)[0]
 
-    # 원본을 손대지 않는다. 바꾼 값은 path 하나뿐이다.
-    assert record["fields"]["loaded_files"] == loaded
+    assert record["fields"]["loaded_files"] == [
+        "C:\\WINDOWS\\SYSTEM32\\CMD.EXE",
+        "C:\\WINDOWS\\SYSTEM32\\NTDLL.DLL",
+    ]
+    # 개수는 변환과 무관하다. 원본 개수 그대로다.
     assert record["fields"]["loaded_file_count"] == 2
+    assert parser.stats["loaded_paths_converted"] == 2
+
+
+def test_nothing_converted_is_visible_in_the_stats(parser):
+    # 레코드는 나오는데 이 수가 0이면 접두어를 못 알아본 것이다. 조용히
+    # 지나가면 프롬프트에 실을 항목 고르기가 통째로 죽는다.
+    volumes = [(GUID_VOLUME, 1, 0), (DEVICE, 2, 0)]  # 둘이라 변환하지 않는다
+    loaded = [f"{GUID_VOLUME}\\WINDOWS\\SYSTEM32\\CMD.EXE"]
+    record = run(parser, build_pf(loaded=loaded, volumes=volumes), EMPTY)[0]
+
+    assert record["fields"]["loaded_files"] == loaded
+    assert parser.stats["loaded_paths_converted"] == 0
 
 
 # ================================================ 장치 경로 → 드라이브 문자
@@ -299,6 +317,27 @@ def test_a_shadow_copy_is_not_the_live_volume(parser):
     record = run(parser, build_pf(loaded=loaded, volumes=volumes), EMPTY)[0]
 
     assert record["path"] == f"{SHADOW}\\WINDOWS\\SYSTEM32\\CMD.EXE"
+    # 목록도 같은 규칙이다. 접두어가 안 맞으므로 그대로 남는다 —
+    # 섀도 카피 안의 파일은 살아 있는 볼륨의 그 경로가 아니다.
+    assert record["fields"]["loaded_files"] == loaded
+    assert parser.stats["loaded_paths_converted"] == 0
+
+
+def test_a_shadow_copy_entry_survives_next_to_a_converted_one(parser):
+    # 한 레코드가 둘을 함께 참조하는 경우다(실측 evidence/[root] 73건 중
+    # 17건). 살아 있는 볼륨 것만 바뀌고 섀도 것은 남는다.
+    volumes = [(DEVICE, 1, 0), (SHADOW, 2, 0)]
+    loaded = [
+        f"{DEVICE}\\WINDOWS\\SYSTEM32\\CMD.EXE",
+        f"{SHADOW}\\WINDOWS\\SYSTEM32\\CMD.EXE",
+    ]
+    record = run(parser, build_pf(loaded=loaded, volumes=volumes), EMPTY)[0]
+
+    assert record["fields"]["loaded_files"] == [
+        "C:\\WINDOWS\\SYSTEM32\\CMD.EXE",
+        f"{SHADOW}\\WINDOWS\\SYSTEM32\\CMD.EXE",
+    ]
+    assert parser.stats["loaded_paths_converted"] == 1
 
 
 def test_a_guid_volume_name_becomes_a_drive_letter(parser):
@@ -546,7 +585,7 @@ def test_every_known_version_round_trips(parser, version, info_size):
     assert record["timestamp"] == "2019-01-10T08:45:16.0000000Z"
     # 적재 목록이 메트릭 원소를 거쳐 나온다. 원소 크기를 잘못 잡으면
     # 여기가 빈 목록이 되거나 쓰레기 문자열이 된다.
-    assert record["fields"]["loaded_files"] == [f"{DEVICE}\\WINDOWS\\SYSTEM32\\CMD.EXE"]
+    assert record["fields"]["loaded_files"] == ["C:\\WINDOWS\\SYSTEM32\\CMD.EXE"]
     # 볼륨 원소 크기가 어긋나면 장치 경로가 깨져 드라이브 문자를 못 만든다.
     assert record["fields"]["volumes"][0]["device_path"] == DEVICE
     assert record["path"] == "C:\\WINDOWS\\SYSTEM32\\CMD.EXE"
