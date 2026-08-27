@@ -328,6 +328,20 @@ FILE_LAYOUT: dict[str, ArtifactLocation] = {
         directory_paths=("Windows/Prefetch", "Prefetch"),
         directory_suffix=".pf",
     ),
+    # SRUM 셋은 **같은 파일**을 읽는다. 아티팩트가 나뉜 것은 그 안의
+    # 공급자 테이블이 다르기 때문이고(ref 유일성, parsers/srum.py), 파일
+    # 위치는 하나다. 04단계는 아티팩트마다 스트림을 따로 열어 파서에
+    # 넘기므로 같은 경로를 셋이 나눠 갖는 것에 문제가 없다.
+    #
+    # 곁에 SRU.log·SRUDB.jfm 이 함께 있는 것이 정상이다(실측). 그 둘은
+    # 읽지 않는다 — 클린 셧다운이 아닌 DB 여도 dissect.esedb 가 연다.
+    **{
+        _srum: ArtifactLocation(
+            relative_paths=("Windows/System32/sru/SRUDB.dat",),
+            filenames=("SRUDB.dat",),
+        )
+        for _srum in ("srum:NetworkUsage", "srum:AppResourceUsage", "srum:NetworkConnectivity")
+    },
 }
 
 #: ``VolumeSource``에서만 쓰는 대체 경로. ``FILE_LAYOUT.relative_paths``는

@@ -453,7 +453,174 @@ def test_records_match_the_parsed_record_schema():
         schema.validate(record, "parsed_record")
 
 
-# ============================================================ 경로 재구성
+# ================================================== Amcache 숫자 값 이름
+
+_AMCACHE_FILE_KEY = "Amcache\\Root\\File\\{f1472678-0000}\\10000b539"
+
+
+def _amcache_fields(path: str, values: list) -> dict:
+    """Amcache 파서로 키 하나를 만들고 ``fields`` 만 돌려준다."""
+    parser = _parser("registry:Amcache")
+    record = parser._build(FakeKey("10000b539", 0x3000, values=values), path, 0x3000)
+    return record["fields"]
+
+
+def test_amcache_numeric_value_names_become_the_inventory_vocabulary():
+    """대응은 같은 이미지 안에서 FileId 로 조인해 얻었다 — 상수의 docstring."""
+    fields = _amcache_fields(
+        _AMCACHE_FILE_KEY,
+        [
+            FakeValue("15", "C:\\WINDOWS\\SYSTEM32\\sppsvc.exe"),
+            FakeValue("101", "00009b5b7c08"),
+            FakeValue("100", "0000e2ce9887"),
+            FakeValue("6", 382680),
+        ],
+    )
+
+    assert fields == {
+        "LowerCaseLongPath": "C:\\WINDOWS\\SYSTEM32\\sppsvc.exe",
+        "FileId": "00009b5b7c08",
+        "ProgramId": "0000e2ce9887",
+        "Size": 382680,
+    }
+
+
+def test_amcache_names_we_could_not_confirm_stay_numeric():
+    """모르는 것은 모르는 채로 나가야 한다.
+
+    ``8``(PEHeaderHash)·``9``·``106`` 은 공개 출처에 이름이 있지만 이
+    이미지에서 생김새조차 못 봐 표에 넣지 않았다. 뜻 없는 이름으로 바꾸면
+    숫자로 두는 것보다 나을 게 없고 "우리가 안다"는 인상만 준다.
+    """
+    fields = _amcache_fields(
+        _AMCACHE_FILE_KEY,
+        [FakeValue("8", "0101cc5ffcc5"), FakeValue("106", 1)],
+    )
+
+    assert fields == {"8": "0101cc5ffcc5", "106": 1}
+
+
+def test_the_public_sources_filled_the_rest_of_the_file_table():
+    """이미지로 확인한 넷 말고도 공개 출처 둘이 일치한 것들을 채웠다.
+
+    ``17`` 은 그중에서도 ``$MFT`` 로 확인했다 — 같은 경로의 MFT 레코드와
+    맞춰 보면 335건 중 329건이 ``si_mtime`` 과 2초 이내다.
+    """
+    fields = _amcache_fields(
+        _AMCACHE_FILE_KEY,
+        [FakeValue("17", 131343442490135143), FakeValue("16", 1), FakeValue("10", 9)],
+    )
+
+    assert fields == {
+        "LastModifiedStore": 131343442490135143,
+        "IsLocal": 1,
+        "BinaryType": 9,
+    }
+
+
+def test_every_mapped_file_name_records_where_it_came_from():
+    """근거 없이 이름만 늘리면 '어디까지 믿을 수 있나'가 사라진다.
+
+    모듈이 임포트 시점에 이미 막지만, 그 방어가 살아 있는지 여기서도 본다.
+    """
+    assert set(registry.AMCACHE_FILE_VALUE_PROVENANCE) == set(
+        registry.AMCACHE_FILE_VALUE_NAMES
+    )
+    assert set(registry.AMCACHE_FILE_VALUE_PROVENANCE.values()) <= {"image", "shape", "docs"}
+
+
+def test_the_programs_subkey_uses_its_own_table():
+    """같은 숫자가 다른 뜻이다 — ``6`` 이 File 에선 크기, Programs 에선 설치 출처.
+
+    한 표로 묶으면 8건이 통째로 잘못된 이름을 단다.
+    """
+    fields = _amcache_fields(
+        "Amcache\\Root\\Programs\\0000f427c2a2",
+        [FakeValue("0", "Microsoft OneDrive"), FakeValue("6", "AddRemoveProgram")],
+    )
+
+    assert fields == {"ProgramName": "Microsoft OneDrive", "InstallSource": "AddRemoveProgram"}
+
+
+def test_the_two_tables_disagree_on_purpose():
+    """섞이면 조용히 틀리므로, 실제로 다르다는 것을 못 박는다."""
+    same_name = set(registry.AMCACHE_FILE_VALUE_NAMES) & set(
+        registry.AMCACHE_PROGRAMS_VALUE_NAMES
+    )
+
+    assert same_name, "겹치는 이름이 없다면 이 테스트가 지키는 것이 없다"
+    assert any(
+        registry.AMCACHE_FILE_VALUE_NAMES[n] != registry.AMCACHE_PROGRAMS_VALUE_NAMES[n]
+        for n in same_name
+    )
+
+
+def test_names_amcacheparser_itself_does_not_know_are_left_numeric():
+    """AmcacheParser 코드에서도 ``Dword5``·``UnknownBytes`` 같은 자리 표시다."""
+    fields = _amcache_fields(
+        "Amcache\\Root\\Programs\\0000f427c2a2",
+        [FakeValue("5", 1), FakeValue("13", 0), FakeValue("18", 0)],
+    )
+
+    assert fields == {"5": 1, "13": 0, "18": 0}
+
+
+def test_the_inventory_subtree_is_left_alone():
+    """저쪽은 이미 이름이 있다. 넓게 걸면 다른 서브키의 15 까지 경로로 둔갑한다."""
+    fields = _amcache_fields(
+        "Amcache\\Root\\InventoryApplicationFile\\0000ff17",
+        [FakeValue("LowerCaseLongPath", "c:\\windows\\system32\\sppsvc.exe"), FakeValue("15", 3)],
+    )
+
+    assert fields == {"LowerCaseLongPath": "c:\\windows\\system32\\sppsvc.exe", "15": 3}
+
+
+def test_other_registry_artifacts_never_get_renamed():
+    """SYSTEM 하이브에도 15 라는 이름의 값이 있을 수 있다."""
+    parser = _parser("registry:SYSTEM")
+    record = parser._build(
+        FakeKey("Params", 0x1000, values=[FakeValue("15", "C:\\x.exe")]),
+        "SYSTEM\\CurrentControlSet\\Services\\Params",
+        0x1000,
+    )
+
+    assert record["fields"] == {"15": "C:\\x.exe"}
+
+
+def test_an_existing_target_name_is_not_overwritten():
+    """두 어휘가 한 키에 섞이면 어느 쪽이 원본이었는지 사라지면 안 된다."""
+    fields = _amcache_fields(
+        _AMCACHE_FILE_KEY,
+        [FakeValue("15", "C:\\a.exe"), FakeValue("LowerCaseLongPath", "c:\\b.exe")],
+    )
+
+    assert fields == {"15": "C:\\a.exe", "LowerCaseLongPath": "c:\\b.exe"}
+
+
+def test_the_rename_is_counted_so_a_silent_miss_is_visible():
+    """0 이면 그 서브트리를 못 만난 것 — 매핑이 안 걸린 것과 구별된다."""
+    parser = _parser("registry:Amcache")
+    parser._build(
+        FakeKey("10000b539", 0x3000, values=[FakeValue("15", "C:\\x.exe"), FakeValue("8", 1)]),
+        _AMCACHE_FILE_KEY,
+        0x3000,
+    )
+
+    assert parser.stats["amcache_values_renamed"] == 1
+
+
+def test_the_renamed_path_is_a_path_field_for_stage_six():
+    """04 가 이름을 바꿔도 06 이 그 이름을 안 받으면 아무것도 안 풀린다.
+
+    Amcache 값은 소문자로 저장되고 모델은 대문자로 쓴다. 두 단계가 함께
+    맞아야 정상 문장이 통과한다 — 이 사슬을 여기서 한 번에 못 박는다.
+    """
+    from src.stage06_verify import comparators
+
+    fields = _amcache_fields(_AMCACHE_FILE_KEY, [FakeValue("15", "c:\\windows\\x.exe")])
+    (name,) = fields
+
+    assert comparators.is_path_field("fields." + name)
 
 
 def test_the_internal_root_name_is_replaced_by_the_hive_name():
@@ -739,3 +906,52 @@ def test_real_hive_records_pass_the_schema():
     with hive.open("rb") as stream:
         for record in flagging.apply_all(parser.parse(stream, scope), scope):
             schema.validate(record, "parsed_record")
+
+
+# ============================== AmcacheParser 대조기 (tools/compare_amcache.py)
+
+
+def test_the_installdate_notation_difference_is_not_counted_as_a_mismatch():
+    """`InstallDate` 는 FILETIME 이 아니라 하이브에 그렇게 적힌 문자열이다.
+
+    실물 하이브에서 `RegSZ` 로 `'03/20/2017 03:53:52'` 이고, 우리는 원본
+    그대로 낸다(`registry.py` 는 문자열을 생김새로 재해석하지 않는다).
+    AmcacheParser 는 파싱해 ISO 로 다시 쓴다. **표기 차이지 값 차이가
+    아니므로** 대조기가 둘을 같게 봐야 한다 — 안 그러면 78건이 통째로
+    거짓 불일치로 잡히고, 진짜 불일치가 그 속에 묻힌다.
+    """
+    from tools.compare_amcache import _date
+
+    assert _date("03/20/2017 03:53:52") == _date("2017-03-20 03:53:52")
+    assert _date("10/25/2022 00:00:00") == "2022-10-25 00:00:00"
+
+
+def test_our_iso_timestamps_are_cut_to_the_second_for_comparison():
+    """우리는 100ns 자리까지, AmcacheParser 는 기본이 초 단위다."""
+    from tools.compare_amcache import _date
+
+    assert _date("2022-10-24T15:31:17.9368910Z") == "2022-10-24 15:31:17"
+
+
+def test_a_date_that_is_neither_notation_is_left_alone():
+    """모르는 표기를 억지로 바꾸면 진짜 불일치를 지운다."""
+    from tools.compare_amcache import _date
+
+    assert _date("") == ""
+    assert _date("not a date") == "not a date"
+
+
+def test_the_container_key_itself_is_not_an_entry():
+    """``Amcache\\Root\\InventoryApplicationFile`` 자체는 항목이 아니다.
+
+    이것을 세면 우리가 AmcacheParser 보다 범주마다 +1 이 되어, 실제로는
+    일치하는데 불일치로 보고된다.
+    """
+    from tools.compare_amcache import is_leaf, subkey_of
+
+    container = {"path": "Amcache\\Root\\InventoryApplicationFile"}
+    entry = {"path": "Amcache\\Root\\InventoryApplicationFile\\0000ff17"}
+
+    assert not is_leaf(container)
+    assert is_leaf(entry)
+    assert subkey_of(entry) == "InventoryApplicationFile"

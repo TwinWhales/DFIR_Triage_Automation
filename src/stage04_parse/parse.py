@@ -96,6 +96,12 @@ OUTPUT_FILENAMES: dict[str, str] = {
     "registry:Amcache": "registry_amcache.jsonl",
     "recentfilecache": "recentfilecache.jsonl",
     "prefetch": "prefetch.jsonl",
+    # SRUM 은 공급자 테이블마다 아티팩트가 하나다. 셋이 같은 SRUDB.dat 를
+    # 읽지만 파일은 따로 낸다 — ref 접두어가 다르고, 06단계가 파일별로
+    # 대조하기 때문이다.
+    "srum:NetworkUsage": "srum_networkusage.jsonl",
+    "srum:AppResourceUsage": "srum_appresourceusage.jsonl",
+    "srum:NetworkConnectivity": "srum_networkconnectivity.jsonl",
 }
 
 #: 합집합으로 넓히는 범위 키. 여기 없는 키는 첫 값을 쓴다.

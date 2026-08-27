@@ -1043,3 +1043,400 @@ for rec in MftParser(volume_letter="C:").parse(src.open("$MFT"), Scope()):
 print(f"{aligned}/{n}")
 EOF
 ```
+
+---
+
+## 2026-08-27 · Amcache 숫자 값 이름 — 같은 이미지 안에서 대조했다
+
+`registry:Amcache` 의 `Root\File` 서브키는 값 이름이 숫자 문자열이라
+(`"15"` 가 전체 경로) 이름으로는 그것이 무엇인지 알 수 없었습니다.
+`docs/limitations.md` 의 "Amcache 숫자 값 이름"이 그 기록입니다.
+
+**외부 도구(AmcacheParser) 대신 이미지 자신을 대조 상대로 썼습니다.**
+
+### 왜 그게 되나
+
+Amcache 는 같은 사실을 **두 레이아웃으로 적습니다.**
+
+| 서브키 | 건수 | 값 이름 |
+|---|---|---|
+| `Root\File\{GUID}\{hash}` | 360 | `15`·`17`·`100`·`101`·`6`·`10`·`b`·`16` |
+| `Root\InventoryApplicationFile\{hash}` | 29 | `LowerCaseLongPath`·`FileId`·`ProgramId`·`Size`·`BinFileVersion`·`BinaryType`·`LongPathHash` |
+
+work.md 는 "이 이미지의 레이아웃은 `Root\File` 이고
+`InventoryApplicationFile` 이 아니다"라고 적어 두었는데, **둘이 함께
+있었습니다.** 그래서 한쪽을 다른 쪽의 정답지로 쓸 수 있습니다.
+
+### 대조 방법과 결과
+
+증거: `evidence/0824test.001` 볼륨 1 (Windows 10 Pro, 빌드 15063).
+`registry:Amcache` 392건.
+
+`101` 을 `FileId` 로 보고 두 집합을 **1:1 로 조인**했습니다. 29건 전부가
+맞물렸고(즉 `101` = `FileId` 가 그 자체로 확인됨), 맞물린 29건에서:
+
+```
+15  == LowerCaseLongPath   29 / 29   (대소문자 무시)
+6   == Size (16진수 → 정수) 29 / 29
+100 == ProgramId           28 / 29
+```
+
+- 판정: **통과** (`15`·`6`·`101`), **부분 통과** (`100`)
+
+**원인 / 조치**
+
+- `100` 의 한 건은 두 저장소가 같은 파일을 다른 `ProgramId` 에
+  귀속시킨 것으로 보이나 **확인하지 못했습니다.** 28/29 를 근거로
+  매핑에 넣었고, 이 한 건은 아는 오차로 남깁니다.
+- **`17`·`b`·`10`·`16` 은 매핑하지 않았습니다.** 이 이미지 안에 대조할
+  상대가 없습니다. 공개 자료에 대응표가 있으나 그것으로 채우면 틀렸을 때
+  조용히 틀립니다. `17` 은 FILETIME 이고 360건 전부에 있어 값이 커
+  보이는데, **$MFT 의 같은 경로 타임스탬프와 대조하면 이 이미지 안에서
+  확정할 수 있습니다** — 아직 하지 않았습니다.
+- 키 이름은 `LongPathHash` 가 **아닙니다** (0/29). 조인 키로 쓰지
+  마십시오.
+- `10` 은 `BinaryType` 이 아닙니다 (0/29). `10` 은 정수 `9` 이고
+  `BinaryType` 은 `"PE64_AMD64"` 문자열입니다.
+
+### 곁가지 — 대소문자가 두 레이아웃에서 다르다
+
+`InventoryApplicationFile` 의 `LowerCaseLongPath` 는 이름 그대로 전부
+소문자인데, `Root\File` 의 `15` 는 **대소문자가 살아 있습니다**
+(`C:\Program Files\VMware\...`). 위 29/29 는 대소문자를 무시한 비교입니다.
+그래도 04단계는 `15` 를 `LowerCaseLongPath` 로 내보냅니다 — 근거는
+`parsers/registry.AMCACHE_FILE_VALUE_NAMES` 에 있습니다.
+
+### 곁가지 — 이 대조가 06단계의 구멍을 하나 더 드러냈다
+
+`PATH_FIELDS` 에 `lowercaselongpath` 가 없었습니다. 즉 **이름이 원래부터
+있던 `InventoryApplicationFile` 29건도** 경로 필드로 인식되지 않아, 소문자
+저장값과 모델이 쓰는 `C:\Program Files\...` 가 정확 문자열 비교로 갈렸습니다.
+V36 이 가리키던 것은 `Root\File` 하나였지만 구멍은 Amcache 전체였습니다.
+
+### 재현
+
+```bash
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
+  --in cases/K-USB-001/03_selection.json --out /tmp/am/ \
+  --evidence evidence/0824test.001 --volume 1
+```
+
+산출물 `registry_amcache.jsonl` 에서 `LowerCaseLongPath` 를 가진 레코드를
+`FileId` 로 묶으면 위 표가 나옵니다. 조인 스크립트는 일회용이라 남기지
+않았습니다 — 대응표 자체는 `AMCACHE_FILE_VALUE_NAMES` 가 들고 있고,
+회귀는 `tests/test_registry_parser.py` 의 "Amcache 숫자 값 이름" 절이
+봅니다.
+
+---
+
+## 2026-08-27 · SRUM(`SRUDB.dat`) · dissect.esedb 어댑터 (최초)
+
+증거: `evidence/0824test.001` 볼륨 1 (Windows 10 Pro, 빌드 15063).
+`Windows\System32\sru\SRUDB.dat` 640KB.
+
+- 공급자 테이블 3종 423건 (NetworkUsage 76 / AppResourceUsage 341 /
+  NetworkConnectivity 6)
+- 스키마 위반 0건
+- 판정: **통과**
+
+**외부 도구 대조는 하지 않았습니다.** 아래 셋은 그 대신 **파일 자신이
+들고 있는 값**과 맞춰 본 것입니다 — 프리패치에서 헤더 해시와 .pf 파일명을
+맞춰 본 것과 같은 방식입니다.
+
+### 대조 1 — 시각 인코딩이 서로를 지지한다
+
+`TimeStamp` 는 FILETIME 이 **아닙니다.** ESE 의 `JET_coltyp.DateTime`,
+즉 OLE Automation date 입니다. FILETIME 으로 읽으면 `OverflowError` 입니다.
+
+같은 DB 의 `ConnectStartTime` 은 **진짜 FILETIME** 입니다. 둘은 인코딩이
+독립인데 같은 시각대를 가리킵니다:
+
+```
+TimeStamp        4676398138920708779  →(OLE)      2022-10-24 15:30:00.000000+00:00
+ConnectStartTime  133110989883930110  →(FILETIME) 2022-10-24 15:29:48.393011+00:00
+                                                          차이 12초
+```
+
+우리 해석이 틀렸다면 두 값이 같은 12초 안에 떨어질 이유가 없습니다.
+
+**밟은 함정** — `dissect.esedb` 는 `DateTime` 컬럼을 **원시 int64 로**
+돌려줍니다. `float(값)` 을 씌우면 같은 크기의 실수가 될 뿐이고, 그
+8바이트를 **IEEE 754 double 로 다시 읽어야** 44858.6458... 이 나옵니다.
+처음에 이것을 놓쳐 **76건 전부가 `timestamp` 없이** 나갔습니다. 조용한
+실패였습니다 — 파싱은 성공했다고 보고되는데 레코드가 타임라인에 못 놓입니다.
+
+### 대조 2 — 페이지 → 파일 오프셋 공식
+
+라이브러리를 써도 `offset` 을 포기하지 않았습니다(`parsers/base.py` 의
+세 가지 중 둘째). ESE 의 논리 페이지 `n` 은 파일의 `(n + 1) * page_size`
+에 있습니다 — 앞의 두 페이지가 DB 헤더와 그 그림자이기 때문입니다.
+
+**추측하지 않고 확인했습니다.** 76건 전부에서 그 위치의 파일 바이트가
+라이브러리가 들고 있는 페이지 버퍼와 정확히 일치했고, 보정 없는
+`n * page_size` 는 어긋났습니다.
+
+```
+(page.num + 1) * page_size 가 실제 바이트와 일치: 76 / 불일치 0
+대조군 page.num * page_size 일치?               False
+```
+
+**페이지 단위입니다.** ESE 레코드는 페이지 안에서 태그로 가리켜지고
+압축된 키 접두어를 공유해서, 레코드 하나의 시작 바이트를 파일 좌표로
+말하는 것이 evtx 만큼 깔끔하지 않습니다. 페이지 위치까지가 정직하게
+말할 수 있는 범위이고, 4KB 페이지와 `AutoIncId` 가 있으면 되짚어집니다.
+
+### 대조 3 — `AppId` 풀기
+
+사용량 테이블의 `AppId`·`UserId` 는 정수이고 문자열은 `SruDbIdMapTable`
+에 있습니다. 실측 `IdType` 분포는 0=실행 파일 경로 또는 의사 이름(126),
+1=서비스 이름(18), 2=패키지·서비스 식별자(114), 3=사용자 SID(107)였고,
+`IdIndex` 는 타입과 무관하게 유일했습니다(겹침 0건).
+
+NetworkUsage 76건 중 **73건이 풀렸습니다.** 남은 3건은 우리 실패가
+아닙니다 — `IdIndex` 1(앱)과 2(사용자)의 `IdBlob` 이 **DB 안에서 이미
+`None`** 입니다. 파서는 정수를 남기고 `unresolved_app_id` 로 셉니다.
+
+`IdType` 3 은 UTF-16 문자열이 아니라 **바이너리 SID** 입니다. 문자열로
+읽으면 깨진 글자가 보고서에 실립니다. `S-1-5-18`(SYSTEM)이 정상적으로
+나오는 것을 확인했습니다.
+
+### 클린 셧다운이 아니어도 열린다
+
+곁에 `SRU.log`·`SRUDB.jfm` 이 있었습니다 — 로그가 반영되지 않은 상태
+입니다. `dissect.esedb` 가 그대로 열었고 423건이 나왔습니다. 로그를
+재생하지 않으므로 **가장 최근 기록 일부가 빠져 있을 수 있습니다**
+(`docs/limitations.md`).
+
+### 곁가지 — 앱 경로가 장치 이름이다
+
+`IdType` 0 의 값은 `\Device\HarddiskVolume4\Windows\System32\smss.exe`
+형태입니다. 프리패치와 같은 부류인데 **바꿀 근거가 없습니다** — SRUM 에는
+볼륨 표가 없어 `HarddiskVolume4` 가 분석 중인 볼륨인지 알 수 없습니다.
+그대로 둡니다(프리패치 파서와 같은 판단). 대가는 06단계입니다.
+
+### 재현
+
+```bash
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
+  --in <srum 을 선별한 03_selection.json> --out /tmp/srum/ \
+  --evidence evidence/0824test.001 --volume 1
+```
+
+시각 두 인코딩이 서로를 지지하는지는 `tests/test_srum_parser.py` 의
+`test_the_real_srudb_parses_and_the_two_time_encodings_agree` 가 실물이
+있을 때 자동으로 봅니다. 오프셋 공식과 `AppId` 풀기는 같은 파일의
+가짜 객체 테스트가 고정합니다.
+
+---
+
+## 2026-08-27 · Amcache · AmcacheParser 2026.5.0 대조
+
+`docs/limitations.md` 가 **"외부 도구(AmcacheParser 등) 대조는 하지
+않았습니다"** 를 아는 구멍으로 적어 둔 자리입니다. 그것을 닫습니다.
+
+### 대조 상대
+
+Eric Zimmerman 의 AmcacheParser 2026.5.0 (MIT). **저장소에 넣지
+않았습니다** — 바이너리라 `third_party/` 대상도 아닙니다. 받은 곳과 확인:
+
+```
+https://download.mikestammer.com/net9/AmcacheParser.zip   2,337,170 바이트
+sha256 d40d1e7863159dbd9aa3ae826d919edc490ca33df84bde57e86da848a583af03
+Authenticode 서명: CN=ZimTech LLC, O=ZimTech LLC, S=Indiana, C=US  (Valid)
+```
+
+배포처가 `github.com` 이 아니라 저자의 별도 호스트라는 점을 적어 둡니다.
+서명으로 출처를 확인했습니다.
+
+증거: `evidence/0824test.001` 볼륨 1 에서 꺼낸 `Amcache.hve`
+(1,572,864 바이트, Win10 15063).
+
+### 조건을 맞췄다
+
+**`--nl` 을 붙였습니다.** 없으면 AmcacheParser 가 트랜잭션 로그를
+재생하는데 우리는 재생하지 않습니다. 그대로 대조하면 파서의 정확성이
+아니라 **로그 재생 여부의 차이**를 재게 됩니다.
+
+**우리 쪽은 범위를 비우고 뽑았습니다.** 우리 파서는 선별된 범위만 내므로
+레코드 수까지 대조하려면 하이브 전체가 필요합니다 → 1,074건.
+
+### 결과 — 457건 전부 일치
+
+```
+  범주                               저쪽     우리     짝지음     불일치
+  InventoryApplicationFile         29     29      29       0
+  InventoryDriverBinary           332    332     332       0
+  InventoryDeviceContainer         14     14      14       0
+  InventoryApplication             78     78      78       0
+  InventoryDriverPackage            4      4       4       0
+
+  판정: 통과 — 짝지은 457건 전부 일치
+```
+
+**레코드 수가 다섯 범주 전부 정확히 같습니다.** 값도 짝지은 것 전부
+일치합니다 — 경로·`ProgramId`·`Size`·`BinaryType`·`BinFileVersion`·
+드라이버 이름/회사/버전/`ImageSize`/`Service`/`Inf`·키 LastWrite.
+
+대조기는 `tools/compare_amcache.py` 에 남겼습니다(`compare_mft.py` 선례).
+
+### 밟은 함정 — 컨테이너 키를 세면 범주마다 +1 이 된다
+
+우리는 키 하나를 레코드 하나로 내므로 `Amcache\Root\InventoryDevicePnp`
+같은 **컨테이너 키 자체도 레코드**입니다. 처음에 그것을 세어 모든 범주가
+저쪽보다 하나씩 많았습니다. 깊이 4 이상만 항목으로 세면 맞습니다.
+
+### `InstallDate` 는 불일치가 아니라 표기 차이였다
+
+처음 실행에서 `InventoryApplication` 78건이 전부 불일치로 잡혔습니다.
+
+```
+저쪽 '2017-03-20 03:53:52'   우리 '03/20/2017 03:53:52'
+```
+
+**우리 값이 원본입니다.** 하이브에 `RegSZ` 로 그렇게 적혀 있습니다
+(python-registry 로 직접 확인). AmcacheParser 가 파싱해 ISO 로 다시 쓰는
+것이고, 우리는 `registry.py` 의 설계대로 문자열을 생김새로 재해석하지
+않습니다.
+
+**파서를 고치지 않았습니다.** 고치면 대조를 통과시키려고 설계 원칙을
+굽히는 것이 됩니다. 대조기가 두 표기를 같게 보도록 했고, 하류에 남는
+위험은 `docs/limitations.md` 에 적었습니다.
+
+### 곁가지 1 — 로그 재생 차이가 0이었다
+
+`Amcache.hve.LOG1`(0바이트)·`LOG2`(131,072바이트)를 함께 꺼내 `--nl` 없이
+다시 돌렸습니다. 다섯 CSV 전부 **행 하나도 다르지 않았습니다.**
+
+이 이미지에서는 우리의 "로그를 재생하지 않는다"가 아무것도 못 보게 하지
+않았다는 뜻입니다. **일반화되지 않습니다** — 이미지 하나의 관측입니다.
+
+### 곁가지 2 — 하이브 길이 너머를 우리도 안 읽는다
+
+AmcacheParser 가 경고했습니다:
+
+```
+Extra, non-zero data found beyond hive length! Check ... starting at 0x14B000!
+```
+
+헤더 `0x28` 의 선언된 하이브 길이가 `0x14A000` 이라 데이터 끝이
+`0x14B000` 인데 파일은 `0x180000` 입니다. **우리 레코드 1,074건 중
+`0x14B000` 이후에서 나온 것은 0건입니다** — 선언된 경계를 지킵니다.
+
+### 곁가지 3 — `Root\File` 361건은 저쪽이 안 읽는다
+
+AmcacheParser 는 이 하이브를 "new format" 으로 보고
+`Root\InventoryApplicationFile` 만 읽습니다. 우리는 **둘 다** 읽습니다.
+불일치가 아니라 **범위 결정의 차이**라 채점하지 않았습니다.
+
+그리고 이것이 2026-08-27 앞 절(숫자 값 이름 대응)을 **뒤에서 받쳐
+줍니다.** 그 대응은 `Root\File` 을 `InventoryApplicationFile` 29건에
+조인해 얻은 것인데, 그 29건이 이제 외부 도구로 값까지 확인됐습니다.
+정답지로 쓴 쪽이 검증된 셈입니다.
+
+### 재현
+
+```bash
+AmcacheParser.exe -f Amcache.hve -i --nl --csv out
+
+.venv/Scripts/python.exe tools/compare_amcache.py \
+  --ours <범위를 비우고 뽑은 registry_amcache.jsonl> --amcache out
+```
+
+---
+
+## 2026-08-27 · Amcache 숫자 값 이름 — 공개 출처 둘로 마저 채웠다
+
+앞 절에서 이미지 안의 조인으로 넷(`15`·`6`·`100`·`101`)만 확정하고
+나머지를 숫자로 남겼습니다. 그러면 **360건 전부에 있는 타임스탬프(`17`)를
+못 씁니다.** 공개 출처를 찾아 채웠습니다.
+
+### 출처 둘 — 계보가 다르다
+
+| 출처 | 형태 | 자리 |
+|---|---|---|
+| AmcacheParser (Eric Zimmerman, MIT, C#) | 소스 | `Amcache/AmcacheOld.cs` 의 `private const int` 목록 |
+| Plaso / log2timeline (Python) | 소스 | `plaso/parsers/winreg_plugins/amcache.py` |
+
+**겹치는 항목에서 둘이 어긋나는 곳이 하나도 없었습니다.** 그리고 우리가
+이미지 안에서 독립적으로 확인한 넷이 양쪽과 전부 일치합니다 — 서로를
+지지하는 세 번째 축입니다.
+
+값 이름은 **16진수**입니다(`int.Parse(name, NumberStyles.HexNumber)`).
+`a`·`b`·`f` 가 그래서 나옵니다.
+
+### `17` 을 `$MFT` 로 확인했다
+
+공개 출처만 믿지 않고 이미지 안에서 한 번 더 걸렀습니다. `15`(전체 경로)로
+`$MFT` 레코드와 짝을 짓고, `17` 을 FILETIME 으로 읽어 타임스탬프 넷과
+비교했습니다.
+
+```
+경로로 짝지은 것 335 / 360
+
+  17 이 si_mtime 과 2초 이내   329 / 335  (98%)
+  17 이 si_btime 과 2초 이내   328 / 335  (98%)
+  17 이 si_ctime 과 2초 이내   154 / 335  (46%)
+  17 이 fn_mtime 과 2초 이내   154 / 335  (46%)
+
+표본:
+  ...vmware vgauth\ssleay32.dll  17=2020-03-30 06:28:34  si_mtime=2020-03-30T06:28:34
+```
+
+- 판정: **`17` 은 파일의 타임스탬프다** (레지스트리 쪽 시각이 아니다)
+
+**`si_mtime` 과 `si_btime` 은 가르지 못했습니다.** 이 이미지의 해당
+파일들이 설치 시각과 수정 시각이 같아 둘 다 98% 입니다. 그래서 이름을
+새로 짓지 않고 공개 출처의 `LastModifiedStore` 를 그대로 씁니다 — 우리
+측정으로 확실한 것은 "파일 타임스탬프"까지입니다.
+
+### 생김새로 뒷받침된 것들
+
+```
+16  값이 0/1 두 가지뿐 (26건)          → IsLocal 과 맞다
+10  작은 열거값 5종 (6·9·15·12)        → BinaryType 과 맞다. 불리언이 아니다
+11  FILETIME 으로 읽으면 2022-10-24    → 사고 시간창과 맞다
+12  FILETIME 으로 읽으면 2022-10-24    → 같음
+b   서로 다른 값 67종의 큰 정수        → 묶인 버전 번호와 맞다
+```
+
+`f`(LinkDate)를 POSIX 초로 읽으면 **2042년**이 나옵니다. 틀렸다는 뜻은
+아닙니다 — PE 링크 시각은 원래 엉뚱한 값이 흔합니다. 다만 뒷받침이 안 되어
+근거를 `docs` 로 둡니다.
+
+### `Root\Programs` 는 표가 따로다
+
+**같은 숫자가 다른 뜻입니다.**
+
+```
+이름   Root\File          Root\Programs
+0      ProductName        ProgramName
+1      CompanyName        ProgramVersion
+6      FileSize           InstallSource
+17     LastModifiedStore  (정체 불명의 Qword)
+```
+
+한 표로 묶으면 8건이 통째로 잘못된 이름을 답니다. 표도 접두어도 따로
+뒀습니다. 실측 8건의 값이 뒷받침합니다 — `0`='Microsoft OneDrive',
+`2`='Microsoft Corporation', `6`='AddRemoveProgram',
+`7`=`['HKEY_USERS\...\Uninstall']`, `d`=`['c:\users\...\onedrive\']`.
+
+**Plaso 는 이 서브키를 다루지 않아 교차 확인이 없습니다.**
+
+### 결과
+
+```
+Root\File 의 값 인스턴스 2,486개
+  이름 붙음   1,415 (56.9%)  →  2,480 (99.8%)
+  숫자로 남음 1,071 (43.1%)  →      6 ( 0.2%)
+
+숫자 이름이 하나도 안 남은 레코드  0 → 359 / 360
+```
+
+AmcacheParser 대조(457건)와 `validator_check`(40/40)는 그대로입니다.
+
+### 근거를 이름마다 기록했다
+
+`AMCACHE_FILE_VALUE_PROVENANCE` 가 `image`/`shape`/`docs` 셋으로
+가릅니다. **채웠다고 다 같은 강도가 아닙니다** — 대응이 틀린 것으로
+드러났을 때 어느 것부터 의심할지 알기 위한 표입니다. 현재 분포는
+image 5, shape 5, docs 7 입니다.

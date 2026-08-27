@@ -313,6 +313,23 @@ AVAILABILITY: dict[str, Availability] = {
             "Amcache.hve가 대체했습니다."
         ),
     ),
+    # SRUM 셋. 같은 파일이므로 조건도 같다.
+    #
+    # **"구조적으로 존재할 수 없는 것만" 적는다는 규칙을 지켰다.** SRUM 은
+    # Windows 8 에서 도입됐으므로 Win7 에 없는 것은 수집 누락이 아니다.
+    # 반대로 "Server 에서는 비활성인 경우가 많다" 같은 것은 여기 적지
+    # 않는다 — 그것은 artifact_not_found 가 이미 담당하는 일이고, 잘못
+    # 적으면 있는 증거를 안 읽는다.
+    **{
+        _srum: Availability(
+            min_build=9200,
+            note=(
+                "SRUM(SRUDB.dat)은 Windows 8부터 있습니다. Windows 7에는 "
+                "System Resource Usage Monitor 자체가 없습니다."
+            ),
+        )
+        for _srum in ("srum:NetworkUsage", "srum:AppResourceUsage", "srum:NetworkConnectivity")
+    },
 }
 
 
