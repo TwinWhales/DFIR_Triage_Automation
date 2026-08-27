@@ -1341,3 +1341,102 @@ AmcacheParser.exe -f Amcache.hve -i --nl --csv out
 .venv/Scripts/python.exe tools/compare_amcache.py \
   --ours <범위를 비우고 뽑은 registry_amcache.jsonl> --amcache out
 ```
+
+---
+
+## 2026-08-27 · Amcache 숫자 값 이름 — 공개 출처 둘로 마저 채웠다
+
+앞 절에서 이미지 안의 조인으로 넷(`15`·`6`·`100`·`101`)만 확정하고
+나머지를 숫자로 남겼습니다. 그러면 **360건 전부에 있는 타임스탬프(`17`)를
+못 씁니다.** 공개 출처를 찾아 채웠습니다.
+
+### 출처 둘 — 계보가 다르다
+
+| 출처 | 형태 | 자리 |
+|---|---|---|
+| AmcacheParser (Eric Zimmerman, MIT, C#) | 소스 | `Amcache/AmcacheOld.cs` 의 `private const int` 목록 |
+| Plaso / log2timeline (Python) | 소스 | `plaso/parsers/winreg_plugins/amcache.py` |
+
+**겹치는 항목에서 둘이 어긋나는 곳이 하나도 없었습니다.** 그리고 우리가
+이미지 안에서 독립적으로 확인한 넷이 양쪽과 전부 일치합니다 — 서로를
+지지하는 세 번째 축입니다.
+
+값 이름은 **16진수**입니다(`int.Parse(name, NumberStyles.HexNumber)`).
+`a`·`b`·`f` 가 그래서 나옵니다.
+
+### `17` 을 `$MFT` 로 확인했다
+
+공개 출처만 믿지 않고 이미지 안에서 한 번 더 걸렀습니다. `15`(전체 경로)로
+`$MFT` 레코드와 짝을 짓고, `17` 을 FILETIME 으로 읽어 타임스탬프 넷과
+비교했습니다.
+
+```
+경로로 짝지은 것 335 / 360
+
+  17 이 si_mtime 과 2초 이내   329 / 335  (98%)
+  17 이 si_btime 과 2초 이내   328 / 335  (98%)
+  17 이 si_ctime 과 2초 이내   154 / 335  (46%)
+  17 이 fn_mtime 과 2초 이내   154 / 335  (46%)
+
+표본:
+  ...vmware vgauth\ssleay32.dll  17=2020-03-30 06:28:34  si_mtime=2020-03-30T06:28:34
+```
+
+- 판정: **`17` 은 파일의 타임스탬프다** (레지스트리 쪽 시각이 아니다)
+
+**`si_mtime` 과 `si_btime` 은 가르지 못했습니다.** 이 이미지의 해당
+파일들이 설치 시각과 수정 시각이 같아 둘 다 98% 입니다. 그래서 이름을
+새로 짓지 않고 공개 출처의 `LastModifiedStore` 를 그대로 씁니다 — 우리
+측정으로 확실한 것은 "파일 타임스탬프"까지입니다.
+
+### 생김새로 뒷받침된 것들
+
+```
+16  값이 0/1 두 가지뿐 (26건)          → IsLocal 과 맞다
+10  작은 열거값 5종 (6·9·15·12)        → BinaryType 과 맞다. 불리언이 아니다
+11  FILETIME 으로 읽으면 2022-10-24    → 사고 시간창과 맞다
+12  FILETIME 으로 읽으면 2022-10-24    → 같음
+b   서로 다른 값 67종의 큰 정수        → 묶인 버전 번호와 맞다
+```
+
+`f`(LinkDate)를 POSIX 초로 읽으면 **2042년**이 나옵니다. 틀렸다는 뜻은
+아닙니다 — PE 링크 시각은 원래 엉뚱한 값이 흔합니다. 다만 뒷받침이 안 되어
+근거를 `docs` 로 둡니다.
+
+### `Root\Programs` 는 표가 따로다
+
+**같은 숫자가 다른 뜻입니다.**
+
+```
+이름   Root\File          Root\Programs
+0      ProductName        ProgramName
+1      CompanyName        ProgramVersion
+6      FileSize           InstallSource
+17     LastModifiedStore  (정체 불명의 Qword)
+```
+
+한 표로 묶으면 8건이 통째로 잘못된 이름을 답니다. 표도 접두어도 따로
+뒀습니다. 실측 8건의 값이 뒷받침합니다 — `0`='Microsoft OneDrive',
+`2`='Microsoft Corporation', `6`='AddRemoveProgram',
+`7`=`['HKEY_USERS\...\Uninstall']`, `d`=`['c:\users\...\onedrive\']`.
+
+**Plaso 는 이 서브키를 다루지 않아 교차 확인이 없습니다.**
+
+### 결과
+
+```
+Root\File 의 값 인스턴스 2,486개
+  이름 붙음   1,415 (56.9%)  →  2,480 (99.8%)
+  숫자로 남음 1,071 (43.1%)  →      6 ( 0.2%)
+
+숫자 이름이 하나도 안 남은 레코드  0 → 359 / 360
+```
+
+AmcacheParser 대조(457건)와 `validator_check`(40/40)는 그대로입니다.
+
+### 근거를 이름마다 기록했다
+
+`AMCACHE_FILE_VALUE_PROVENANCE` 가 `image`/`shape`/`docs` 셋으로
+가릅니다. **채웠다고 다 같은 강도가 아닙니다** — 대응이 틀린 것으로
+드러났을 때 어느 것부터 의심할지 알기 위한 표입니다. 현재 분포는
+image 5, shape 5, docs 7 입니다.

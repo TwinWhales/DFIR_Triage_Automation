@@ -488,15 +488,81 @@ def test_amcache_numeric_value_names_become_the_inventory_vocabulary():
 def test_amcache_names_we_could_not_confirm_stay_numeric():
     """모르는 것은 모르는 채로 나가야 한다.
 
-    ``17``·``16`` 은 이 이미지 안에 대조할 상대가 없었다. 공개 자료로
-    채우면 틀렸을 때 조용히 틀리고, 숫자로 남으면 최소한 드러난다.
+    ``8``(PEHeaderHash)·``9``·``106`` 은 공개 출처에 이름이 있지만 이
+    이미지에서 생김새조차 못 봐 표에 넣지 않았다. 뜻 없는 이름으로 바꾸면
+    숫자로 두는 것보다 나을 게 없고 "우리가 안다"는 인상만 준다.
     """
     fields = _amcache_fields(
         _AMCACHE_FILE_KEY,
-        [FakeValue("17", 131343442490135143), FakeValue("16", 1)],
+        [FakeValue("8", "0101cc5ffcc5"), FakeValue("106", 1)],
     )
 
-    assert fields == {"17": 131343442490135143, "16": 1}
+    assert fields == {"8": "0101cc5ffcc5", "106": 1}
+
+
+def test_the_public_sources_filled_the_rest_of_the_file_table():
+    """이미지로 확인한 넷 말고도 공개 출처 둘이 일치한 것들을 채웠다.
+
+    ``17`` 은 그중에서도 ``$MFT`` 로 확인했다 — 같은 경로의 MFT 레코드와
+    맞춰 보면 335건 중 329건이 ``si_mtime`` 과 2초 이내다.
+    """
+    fields = _amcache_fields(
+        _AMCACHE_FILE_KEY,
+        [FakeValue("17", 131343442490135143), FakeValue("16", 1), FakeValue("10", 9)],
+    )
+
+    assert fields == {
+        "LastModifiedStore": 131343442490135143,
+        "IsLocal": 1,
+        "BinaryType": 9,
+    }
+
+
+def test_every_mapped_file_name_records_where_it_came_from():
+    """근거 없이 이름만 늘리면 '어디까지 믿을 수 있나'가 사라진다.
+
+    모듈이 임포트 시점에 이미 막지만, 그 방어가 살아 있는지 여기서도 본다.
+    """
+    assert set(registry.AMCACHE_FILE_VALUE_PROVENANCE) == set(
+        registry.AMCACHE_FILE_VALUE_NAMES
+    )
+    assert set(registry.AMCACHE_FILE_VALUE_PROVENANCE.values()) <= {"image", "shape", "docs"}
+
+
+def test_the_programs_subkey_uses_its_own_table():
+    """같은 숫자가 다른 뜻이다 — ``6`` 이 File 에선 크기, Programs 에선 설치 출처.
+
+    한 표로 묶으면 8건이 통째로 잘못된 이름을 단다.
+    """
+    fields = _amcache_fields(
+        "Amcache\\Root\\Programs\\0000f427c2a2",
+        [FakeValue("0", "Microsoft OneDrive"), FakeValue("6", "AddRemoveProgram")],
+    )
+
+    assert fields == {"ProgramName": "Microsoft OneDrive", "InstallSource": "AddRemoveProgram"}
+
+
+def test_the_two_tables_disagree_on_purpose():
+    """섞이면 조용히 틀리므로, 실제로 다르다는 것을 못 박는다."""
+    same_name = set(registry.AMCACHE_FILE_VALUE_NAMES) & set(
+        registry.AMCACHE_PROGRAMS_VALUE_NAMES
+    )
+
+    assert same_name, "겹치는 이름이 없다면 이 테스트가 지키는 것이 없다"
+    assert any(
+        registry.AMCACHE_FILE_VALUE_NAMES[n] != registry.AMCACHE_PROGRAMS_VALUE_NAMES[n]
+        for n in same_name
+    )
+
+
+def test_names_amcacheparser_itself_does_not_know_are_left_numeric():
+    """AmcacheParser 코드에서도 ``Dword5``·``UnknownBytes`` 같은 자리 표시다."""
+    fields = _amcache_fields(
+        "Amcache\\Root\\Programs\\0000f427c2a2",
+        [FakeValue("5", 1), FakeValue("13", 0), FakeValue("18", 0)],
+    )
+
+    assert fields == {"5": 1, "13": 0, "18": 0}
 
 
 def test_the_inventory_subtree_is_left_alone():
@@ -535,7 +601,7 @@ def test_the_rename_is_counted_so_a_silent_miss_is_visible():
     """0 이면 그 서브트리를 못 만난 것 — 매핑이 안 걸린 것과 구별된다."""
     parser = _parser("registry:Amcache")
     parser._build(
-        FakeKey("10000b539", 0x3000, values=[FakeValue("15", "C:\\x.exe"), FakeValue("17", 1)]),
+        FakeKey("10000b539", 0x3000, values=[FakeValue("15", "C:\\x.exe"), FakeValue("8", 1)]),
         _AMCACHE_FILE_KEY,
         0x3000,
     )
