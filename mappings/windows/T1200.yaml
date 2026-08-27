@@ -13,6 +13,7 @@ artifacts:
   # 그래서 여기서는 아티팩트를 나눠 적는다.
   - name: evtx:System
     tier: 1
+    priority: 2
     scope_template:
       event_ids: [20001, 10000]
     rationale: 신규 장치 드라이버 설치·장치 구성 이벤트(PnP)
@@ -22,6 +23,7 @@ artifacts:
   # 겹치는지가 판단 근거다.
   - name: evtx:NetworkProfile
     tier: 2
+    priority: 2
     trigger: Tier1에서 신규 장치가 확인되어 그 장치가 네트워크를 끌어왔는지 확인해야 하는 경우
     rationale: 장치 추가 시각 전후의 네트워크 연결·해제(10000/10001)
 
@@ -60,5 +62,6 @@ artifacts:
   # 없다 — docs/limitations.md "SAM·SECURITY·NTUSER를 읽지 않는다".
   - name: registry:SOFTWARE
     tier: 2
+    priority: 2
     trigger: Tier1에서 신규 장치가 확인되어 장치명·연결 시각을 보강해야 하는 경우
     rationale: Portable Devices 에 등록된 장치명과 연결 시각

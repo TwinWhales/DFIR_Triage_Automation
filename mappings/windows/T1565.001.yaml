@@ -25,6 +25,7 @@ artifacts:
 
   - name: $UsnJrnl
     tier: 2
+    priority: 2
     trigger: Tier1 $MFT에서 거래 DB 파일의 timestamp_mismatch 또는 deleted 플래그 발견 시
     rationale: DB 파일의 변경·삭제 이력
 

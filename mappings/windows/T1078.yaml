@@ -19,6 +19,7 @@ artifacts:
 
   - name: evtx:RDPConnection
     tier: 2
+    priority: 2
     trigger: Tier1에서 로그온 타입 10(RemoteInteractive)이 확인된 경우
     rationale: 원격 연결의 출처와 인증 시각
 

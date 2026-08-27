@@ -22,7 +22,7 @@ artifacts:
 
   - name: evtx:AssignedAccess
     tier: 1
-    priority: 1
+    priority: 2
     scope_template: {}
     rationale: 키오스크 제한 환경의 동작과 이탈 시도
 
@@ -49,5 +49,6 @@ artifacts:
 
   - name: prefetch
     tier: 2
+    priority: 2
     trigger: Tier1에서 셸 프로세스 생성이 확인되어 실행 이력을 확인해야 하는 경우
     rationale: 셸·시스템 유틸리티의 실행 횟수와 최근 실행 시각

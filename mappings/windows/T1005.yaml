@@ -2,7 +2,7 @@ technique: T1005
 name: "Data from Local System"
 os: windows
 
-# K-001 Stage 6 — 합성 거래 데이터 접근.
+# K-001 Stage 9 — 관리서버 전체 결제정보 접근.
 #
 # **접근 자체는 흔적이 얇다.** NTFS 는 기본적으로 최근 접근 시각 갱신을
 # 꺼 두므로($MFT si_atime 이 0인 레코드가 실물에서 다수 나온다) "열었다"를
@@ -24,16 +24,16 @@ artifacts:
 
   - name: $UsnJrnl
     tier: 2
-    trigger: Tier1에서 데이터 파일의 변경이 의심되는 경우
-    rationale: 데이터 파일의 변경 이력
+    priority: 2
+    trigger: Tier1에서 데이터 파일의 복사·반출 정황이 의심되는 경우
+    rationale: 데이터 파일의 복사·생성 이력
 
 defaults:
-  # **아직 정해지지 않은 값이다.** K-001 의 Mock POS 앱이 개발되지 않아
-  # 거래 데이터가 어디 놓일지 모른다(설계서 §9 D1 의 열린 결정). 관례적인
-  # 자리를 임시로 넣어 둔 것이고, 랩이 구축되면 실제 경로로 바꿔야 한다.
+  # **아직 정해지지 않은 값이다.** 최종 시나리오상 T1005는 Stage 9(관리서버
+  # 정산 결제정보)이므로 POS 가 아니라 정산 데이터 경로여야 한다. 랩이
+  # 구축되면 실제 경로로 바꾼다(설계서 §9 D1 의 열린 결정).
   #
-  # {data_root} 는 시나리오 entities 에서 채워지는 다섯 변수에 없으므로
-  # **항상 이 기본값이 쓰인다.** 틀리면 이 기법의 Tier 1 $MFT 요청이
-  # 0건을 내는데, 경로를 잘못 짚은 것인지 흔적이 없는 것인지 산출물만
-  # 보고는 구별되지 않는다 — docs/limitations.md.
-  data_root: 'C:\ProgramData\POS'
+  # {data_root} 는 시나리오 entities 의 다섯 변수에 없으므로 **항상 이
+  # 기본값이 쓰인다.** 틀리면 Tier 1 $MFT 요청이 0건을 내는데, 경로를
+  # 잘못 짚은 것인지 흔적이 없는 것인지 산출물만 보고는 구별되지 않는다.
+  data_root: 'C:\Settlement\data'

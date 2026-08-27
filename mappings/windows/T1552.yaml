@@ -1,0 +1,50 @@
+technique: T1552
+name: "Unsecured Credentials"
+os: windows
+
+# K-001 Stage 8 — POS 에 저장된 관리서버(정산 동기화) 접속 자격증명을
+# 공격자가 발견한다. 이 단계가 POS→관리서버 이동(T1078/T1021.001)의 전제다.
+#
+# **저장소의 "존재"가 이 기법의 판정이다.** 자격증명이 설정파일·서비스
+# 계정·예약작업에 평문으로 놓여 있었다는 사실 자체가 T1552 다. 그 저장소는
+# 경로로 특정되므로(registry 는 signal_source: scope) path_prefix 가
+# 판정을 끝낸다. "그것을 읽었다"는 프로세스 흔적이 보강한다.
+artifacts:
+  # 서비스 계정(ObjectName)에 저장된 자격증명. 경로가 곧 신호다.
+  - name: registry:SYSTEM
+    tier: 1
+    priority: 1
+    scope_template:
+      path_prefix:
+        - 'SYSTEM\CurrentControlSet\Services'
+    rationale: 서비스 계정에 저장된 정산 동기화 자격증명
+
+  # 설정파일에 평문으로 놓인 접속 정보. 파일의 존재·수정 시각.
+  - name: $MFT
+    tier: 1
+    priority: 1
+    scope_template:
+      path_prefix: ['{pos_config_root}']
+      extensions: ['.ini', '.xml', '.config', '.json', '.txt']
+    rationale: 관리서버 접속 정보가 담긴 POS 설정·구성 파일의 존재·수정 시각
+
+  # 그 저장소를 읽은 프로세스. 읽기 자체는 파일시스템에 잘 안 남으므로
+  # (NTFS atime 기본 꺼짐) 보강 근거로 둔다.
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 2
+    scope_template:
+      event_ids: [1, 11]
+    rationale: 자격증명 저장소를 읽은 프로세스의 실행 시각과 명령행
+
+  # 예약작업에 하드코딩된 동기화 계정. 설정·서비스 쪽이 먼저이고 예약작업
+  # 경유는 그다음이라 Tier 2 다.
+  - name: registry:SOFTWARE
+    tier: 2
+    trigger: Tier1에서 설정·서비스에 자격증명이 없고 예약작업 경유가 의심되는 경우
+    rationale: 예약작업(정산 동기화)에 등록된 실행 계정
+
+defaults:
+  # POS 설정파일 위치. 아직 랩 미구축이라 관례 경로 임시값이다(설계서 §9
+  # D1 "정산 자격증명 저장 위치"의 열린 결정). 랩이 정하면 교체.
+  pos_config_root: 'C:\ProgramData\POS'
