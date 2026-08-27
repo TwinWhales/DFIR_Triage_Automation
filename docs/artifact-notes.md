@@ -1043,3 +1043,86 @@ for rec in MftParser(volume_letter="C:").parse(src.open("$MFT"), Scope()):
 print(f"{aligned}/{n}")
 EOF
 ```
+
+---
+
+## 2026-08-27 · Amcache 숫자 값 이름 — 같은 이미지 안에서 대조했다
+
+`registry:Amcache` 의 `Root\File` 서브키는 값 이름이 숫자 문자열이라
+(`"15"` 가 전체 경로) 이름으로는 그것이 무엇인지 알 수 없었습니다.
+`docs/limitations.md` 의 "Amcache 숫자 값 이름"이 그 기록입니다.
+
+**외부 도구(AmcacheParser) 대신 이미지 자신을 대조 상대로 썼습니다.**
+
+### 왜 그게 되나
+
+Amcache 는 같은 사실을 **두 레이아웃으로 적습니다.**
+
+| 서브키 | 건수 | 값 이름 |
+|---|---|---|
+| `Root\File\{GUID}\{hash}` | 360 | `15`·`17`·`100`·`101`·`6`·`10`·`b`·`16` |
+| `Root\InventoryApplicationFile\{hash}` | 29 | `LowerCaseLongPath`·`FileId`·`ProgramId`·`Size`·`BinFileVersion`·`BinaryType`·`LongPathHash` |
+
+work.md 는 "이 이미지의 레이아웃은 `Root\File` 이고
+`InventoryApplicationFile` 이 아니다"라고 적어 두었는데, **둘이 함께
+있었습니다.** 그래서 한쪽을 다른 쪽의 정답지로 쓸 수 있습니다.
+
+### 대조 방법과 결과
+
+증거: `evidence/0824test.001` 볼륨 1 (Windows 10 Pro, 빌드 15063).
+`registry:Amcache` 392건.
+
+`101` 을 `FileId` 로 보고 두 집합을 **1:1 로 조인**했습니다. 29건 전부가
+맞물렸고(즉 `101` = `FileId` 가 그 자체로 확인됨), 맞물린 29건에서:
+
+```
+15  == LowerCaseLongPath   29 / 29   (대소문자 무시)
+6   == Size (16진수 → 정수) 29 / 29
+100 == ProgramId           28 / 29
+```
+
+- 판정: **통과** (`15`·`6`·`101`), **부분 통과** (`100`)
+
+**원인 / 조치**
+
+- `100` 의 한 건은 두 저장소가 같은 파일을 다른 `ProgramId` 에
+  귀속시킨 것으로 보이나 **확인하지 못했습니다.** 28/29 를 근거로
+  매핑에 넣었고, 이 한 건은 아는 오차로 남깁니다.
+- **`17`·`b`·`10`·`16` 은 매핑하지 않았습니다.** 이 이미지 안에 대조할
+  상대가 없습니다. 공개 자료에 대응표가 있으나 그것으로 채우면 틀렸을 때
+  조용히 틀립니다. `17` 은 FILETIME 이고 360건 전부에 있어 값이 커
+  보이는데, **$MFT 의 같은 경로 타임스탬프와 대조하면 이 이미지 안에서
+  확정할 수 있습니다** — 아직 하지 않았습니다.
+- 키 이름은 `LongPathHash` 가 **아닙니다** (0/29). 조인 키로 쓰지
+  마십시오.
+- `10` 은 `BinaryType` 이 아닙니다 (0/29). `10` 은 정수 `9` 이고
+  `BinaryType` 은 `"PE64_AMD64"` 문자열입니다.
+
+### 곁가지 — 대소문자가 두 레이아웃에서 다르다
+
+`InventoryApplicationFile` 의 `LowerCaseLongPath` 는 이름 그대로 전부
+소문자인데, `Root\File` 의 `15` 는 **대소문자가 살아 있습니다**
+(`C:\Program Files\VMware\...`). 위 29/29 는 대소문자를 무시한 비교입니다.
+그래도 04단계는 `15` 를 `LowerCaseLongPath` 로 내보냅니다 — 근거는
+`parsers/registry.AMCACHE_FILE_VALUE_NAMES` 에 있습니다.
+
+### 곁가지 — 이 대조가 06단계의 구멍을 하나 더 드러냈다
+
+`PATH_FIELDS` 에 `lowercaselongpath` 가 없었습니다. 즉 **이름이 원래부터
+있던 `InventoryApplicationFile` 29건도** 경로 필드로 인식되지 않아, 소문자
+저장값과 모델이 쓰는 `C:\Program Files\...` 가 정확 문자열 비교로 갈렸습니다.
+V36 이 가리키던 것은 `Root\File` 하나였지만 구멍은 Amcache 전체였습니다.
+
+### 재현
+
+```bash
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
+  --in cases/K-USB-001/03_selection.json --out /tmp/am/ \
+  --evidence evidence/0824test.001 --volume 1
+```
+
+산출물 `registry_amcache.jsonl` 에서 `LowerCaseLongPath` 를 가진 레코드를
+`FileId` 로 묶으면 위 표가 나옵니다. 조인 스크립트는 일회용이라 남기지
+않았습니다 — 대응표 자체는 `AMCACHE_FILE_VALUE_NAMES` 가 들고 있고,
+회귀는 `tests/test_registry_parser.py` 의 "Amcache 숫자 값 이름" 절이
+봅니다.

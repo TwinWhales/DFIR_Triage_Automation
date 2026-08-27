@@ -621,7 +621,7 @@ FINDINGS_BODY_FIELDS = ("findings", "timeline")   # input_refs 없음
 | 실제 모델로 02가 스키마를 통과 | `--llm ollama` 실행 후 `02_scenario.json` 생성 |
 | 실제 모델로 05가 스키마를 통과 | 04 파서 완성 후 |
 | 관통 실행이 스텁 없이 완료 | `run_pipeline.sh C-001 <evidence>` (3번째 인자 없이) |
-| 회귀 없음 | `.venv/Scripts/python.exe -m pytest` → 588 passed |
+| 회귀 없음 | `.venv/Scripts/python.exe -m pytest` → 873개 수집, 실패 0 (evidence/ 유무로 skip 수가 갈린다) |
 
 ### 10-2. 측정해서 보고할 것
 

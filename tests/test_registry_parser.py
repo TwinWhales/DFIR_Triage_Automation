@@ -453,7 +453,108 @@ def test_records_match_the_parsed_record_schema():
         schema.validate(record, "parsed_record")
 
 
-# ============================================================ 경로 재구성
+# ================================================== Amcache 숫자 값 이름
+
+_AMCACHE_FILE_KEY = "Amcache\\Root\\File\\{f1472678-0000}\\10000b539"
+
+
+def _amcache_fields(path: str, values: list) -> dict:
+    """Amcache 파서로 키 하나를 만들고 ``fields`` 만 돌려준다."""
+    parser = _parser("registry:Amcache")
+    record = parser._build(FakeKey("10000b539", 0x3000, values=values), path, 0x3000)
+    return record["fields"]
+
+
+def test_amcache_numeric_value_names_become_the_inventory_vocabulary():
+    """대응은 같은 이미지 안에서 FileId 로 조인해 얻었다 — 상수의 docstring."""
+    fields = _amcache_fields(
+        _AMCACHE_FILE_KEY,
+        [
+            FakeValue("15", "C:\\WINDOWS\\SYSTEM32\\sppsvc.exe"),
+            FakeValue("101", "00009b5b7c08"),
+            FakeValue("100", "0000e2ce9887"),
+            FakeValue("6", 382680),
+        ],
+    )
+
+    assert fields == {
+        "LowerCaseLongPath": "C:\\WINDOWS\\SYSTEM32\\sppsvc.exe",
+        "FileId": "00009b5b7c08",
+        "ProgramId": "0000e2ce9887",
+        "Size": 382680,
+    }
+
+
+def test_amcache_names_we_could_not_confirm_stay_numeric():
+    """모르는 것은 모르는 채로 나가야 한다.
+
+    ``17``·``16`` 은 이 이미지 안에 대조할 상대가 없었다. 공개 자료로
+    채우면 틀렸을 때 조용히 틀리고, 숫자로 남으면 최소한 드러난다.
+    """
+    fields = _amcache_fields(
+        _AMCACHE_FILE_KEY,
+        [FakeValue("17", 131343442490135143), FakeValue("16", 1)],
+    )
+
+    assert fields == {"17": 131343442490135143, "16": 1}
+
+
+def test_the_inventory_subtree_is_left_alone():
+    """저쪽은 이미 이름이 있다. 넓게 걸면 다른 서브키의 15 까지 경로로 둔갑한다."""
+    fields = _amcache_fields(
+        "Amcache\\Root\\InventoryApplicationFile\\0000ff17",
+        [FakeValue("LowerCaseLongPath", "c:\\windows\\system32\\sppsvc.exe"), FakeValue("15", 3)],
+    )
+
+    assert fields == {"LowerCaseLongPath": "c:\\windows\\system32\\sppsvc.exe", "15": 3}
+
+
+def test_other_registry_artifacts_never_get_renamed():
+    """SYSTEM 하이브에도 15 라는 이름의 값이 있을 수 있다."""
+    parser = _parser("registry:SYSTEM")
+    record = parser._build(
+        FakeKey("Params", 0x1000, values=[FakeValue("15", "C:\\x.exe")]),
+        "SYSTEM\\CurrentControlSet\\Services\\Params",
+        0x1000,
+    )
+
+    assert record["fields"] == {"15": "C:\\x.exe"}
+
+
+def test_an_existing_target_name_is_not_overwritten():
+    """두 어휘가 한 키에 섞이면 어느 쪽이 원본이었는지 사라지면 안 된다."""
+    fields = _amcache_fields(
+        _AMCACHE_FILE_KEY,
+        [FakeValue("15", "C:\\a.exe"), FakeValue("LowerCaseLongPath", "c:\\b.exe")],
+    )
+
+    assert fields == {"15": "C:\\a.exe", "LowerCaseLongPath": "c:\\b.exe"}
+
+
+def test_the_rename_is_counted_so_a_silent_miss_is_visible():
+    """0 이면 그 서브트리를 못 만난 것 — 매핑이 안 걸린 것과 구별된다."""
+    parser = _parser("registry:Amcache")
+    parser._build(
+        FakeKey("10000b539", 0x3000, values=[FakeValue("15", "C:\\x.exe"), FakeValue("17", 1)]),
+        _AMCACHE_FILE_KEY,
+        0x3000,
+    )
+
+    assert parser.stats["amcache_values_renamed"] == 1
+
+
+def test_the_renamed_path_is_a_path_field_for_stage_six():
+    """04 가 이름을 바꿔도 06 이 그 이름을 안 받으면 아무것도 안 풀린다.
+
+    Amcache 값은 소문자로 저장되고 모델은 대문자로 쓴다. 두 단계가 함께
+    맞아야 정상 문장이 통과한다 — 이 사슬을 여기서 한 번에 못 박는다.
+    """
+    from src.stage06_verify import comparators
+
+    fields = _amcache_fields(_AMCACHE_FILE_KEY, [FakeValue("15", "c:\\windows\\x.exe")])
+    (name,) = fields
+
+    assert comparators.is_path_field("fields." + name)
 
 
 def test_the_internal_root_name_is_replaced_by_the_hive_name():

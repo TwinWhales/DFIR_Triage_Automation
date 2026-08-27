@@ -94,6 +94,7 @@ __all__ = [
     "RegistryParser",
     "HiveBuffer",
     "HIVE_OF",
+    "AMCACHE_FILE_VALUE_NAMES",
     "DEFAULT_VALUE_NAME",
     "STRING_TYPES",
     "MULTI_STRING_TYPE",
@@ -126,6 +127,63 @@ HIVE_OF: dict[str, str] = {
 #: 이름이 실제로 이 문자열인 값과 충돌할 수 있으나, 실측 하이브
 #: 20,512개 키에서 0건이었습니다.
 DEFAULT_VALUE_NAME = "(default)"
+
+#: Amcache ``Root\File\{GUID}\`` 아래의 **숫자 값 이름** → 뜻이 있는 이름.
+#:
+#: Amcache 는 같은 사실을 두 레이아웃으로 적습니다. ``Root\File`` 은 값
+#: 이름이 ``"15"`` 처럼 숫자뿐이고, ``Root\InventoryApplicationFile`` 은
+#: ``LowerCaseLongPath`` 처럼 이름이 붙어 있습니다. **같은 이미지에 둘이
+#: 함께 있습니다** — 실측(``0824test.001``, Win10 15063)에서 File 360건,
+#: InventoryApplicationFile 29건이었습니다.
+#:
+#: 숫자 이름을 그대로 내보내면 06단계가 경로인 줄 몰라 정확 문자열 비교로
+#: 떨어지고, 대소문자 하나로 정상 문장이 기각됩니다
+#: (``comparators.is_path_field`` 는 **이름으로** 판단합니다).
+#:
+#: **이 표는 공개 자료가 아니라 같은 이미지 안의 대조로 얻었습니다.**
+#: ``101`` 을 ``FileId`` 로 보고 두 레이아웃을 1:1 로 조인하면 29건이 맞물
+#: 리고, 그 29건에서:
+#:
+#: .. code-block:: text
+#:
+#:     15  == LowerCaseLongPath   29 / 29
+#:     6   == Size (16진수)       29 / 29
+#:     100 == ProgramId           28 / 29   ← 한 건이 어긋난다
+#:
+#: ``100`` 의 한 건은 두 저장소가 같은 파일을 다른 프로그램에 귀속시킨
+#: 것으로 보이나 확인하지 못했습니다 — ``docs/artifact-notes.md``.
+#:
+#: **이름이 한 군데서 사실과 어긋납니다.** ``LowerCaseLongPath`` 는
+#: Microsoft 가 ``InventoryApplicationFile`` 에 붙인 이름이고 그쪽 값은
+#: 실제로 전부 소문자인데, ``File`` 의 ``15`` 는 대소문자가 살아 있습니다
+#: (``C:\Program Files\...``). 위 29/29 는 대소문자를 무시한 비교입니다.
+#:
+#: 그래도 같은 이름을 씁니다. 어휘가 갈라지면 ``PATH_FIELDS`` 항목도
+#: 매핑도 둘씩 되는데, **경로 비교는 어차피 대소문자를 무시하므로**
+#: (``comparators`` 가 04단계와 같은 ``normalize_path`` 를 씁니다) 이
+#: 차이는 비교 결과를 바꾸지 않습니다. 새 이름을 지어내면 어휘가 셋이
+#: 됩니다.
+#:
+#: **확인하지 못한 이름은 넣지 않았습니다.** ``17``(FILETIME, 360건)·
+#: ``b``·``10``·``16`` 은 이 이미지 안에 대조할 상대가 없습니다. 공개
+#: 자료에는 대응표가 있지만 추정으로 채우면 틀렸을 때 조용히 틀립니다 —
+#: 숫자 이름 그대로 나가면 최소한 "우리가 모른다"가 보입니다
+#: (``docs/limitations.md``).
+AMCACHE_FILE_VALUE_NAMES: dict[str, str] = {
+    "15": "LowerCaseLongPath",
+    "101": "FileId",
+    "100": "ProgramId",
+    "6": "Size",
+}
+
+#: ``AMCACHE_FILE_VALUE_NAMES`` 를 적용할 키 경로. ``normalize_path`` 를
+#: 거친 형태라 구분자가 슬래시입니다.
+#:
+#: ``Root\InventoryApplicationFile`` 은 이미 이름이 있으므로 건드리지
+#: 않습니다. **좁게 거는 것이 요점입니다** — 넓게 걸면 다른 서브키의
+#: ``15`` 까지 경로로 둔갑하고, 그것이 06단계가 ``PATH_FIELDS`` 를 값의
+#: 생김새가 아니라 이름으로 판단하는 이유입니다.
+_AMCACHE_FILE_PREFIX = "amcache/root/file/"
 
 #: 우리가 직접 디코딩할 문자열 타입. 라이브러리에 맡기면 한글이 잘린다.
 STRING_TYPES = frozenset({"RegSZ", "RegExpandSZ"})
@@ -343,6 +401,10 @@ class RegistryParser:
             "value_errors": 0,
             "pruned_subtrees": 0,
             "dirty_hive": 0,
+            # Amcache Root\File 에서 숫자 이름을 바꾼 값의 수. 0 이면
+            # 그 서브트리를 한 건도 안 만났다는 뜻이라, 매핑이 안 걸린
+            # 것인지 하이브에 없는 것인지 가르는 자리가 된다.
+            "amcache_values_renamed": 0,
         }
 
     # ------------------------------------------------------------ 진입점
@@ -594,7 +656,33 @@ class RegistryParser:
                 self.stats["value_errors"] += 1
                 self.stats["parse_errors"] += 1
                 _log.warning("%s: %s 의 값 하나를 읽지 못했습니다 — %s", self.artifact, path, e)
-        return out
+        return self._rename_amcache_values(out, path)
+
+    def _rename_amcache_values(self, out: dict[str, Any], path: str) -> dict[str, Any]:
+        """Amcache ``Root\\File`` 의 숫자 값 이름을 뜻 있는 이름으로.
+
+        근거와 대조 결과는 ``AMCACHE_FILE_VALUE_NAMES`` 에 있습니다.
+        **이 아티팩트의 이 서브트리에서만** 바꿉니다.
+
+        원래 이름이 이미 있으면 덮지 않고 숫자 이름을 그대로 둡니다. 두
+        레이아웃이 한 키에 섞이는 것은 본 적 없지만, 덮으면 어느 쪽이
+        원본이었는지 사라집니다. 표에 없는 이름도 그대로 둡니다 — 모르는
+        것은 모르는 채로 나가야 합니다.
+        """
+        if self.artifact != "registry:Amcache":
+            return out
+        if not normalize_path(path).startswith(_AMCACHE_FILE_PREFIX):
+            return out
+
+        renamed: dict[str, Any] = {}
+        for name, value in out.items():
+            target = AMCACHE_FILE_VALUE_NAMES.get(name)
+            if target is None or target in out:
+                renamed[name] = value
+                continue
+            renamed[target] = value
+            self.stats["amcache_values_renamed"] += 1
+        return renamed
 
 
 class HiveBuffer:
