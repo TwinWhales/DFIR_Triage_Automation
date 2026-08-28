@@ -39,6 +39,7 @@ __all__ = [
     "write_jsonl",
     "append_jsonl",
     "count_jsonl",
+    "JsonlEncodeError",
     "DuplicateRefError",
     "read_parsed_records",
     "configure_console",
@@ -237,20 +238,105 @@ def read_jsonl(path: str | os.PathLike[str]) -> Iterator[dict[str, Any]]:
                 raise ValueError(f"{p}:{lineno}: JSONL 파싱 실패: {e.msg}") from None
 
 
+class JsonlEncodeError(ValueError):
+    """JSONL 한 줄을 UTF-8로 쓸 수 없다. **어느 레코드인지 함께 든다.**
+
+    맨 ``UnicodeEncodeError``는 "position 112" 같은 말만 해서, 수십만 건
+    중 어느 레코드가 원인인지 알 수 없다. 게다가 ``write_jsonl``이
+    임시 파일을 지우므로 산출물이 통째로 사라져 되짚을 것도 남지 않는다.
+
+    **여기 담는 값은 전부 ASCII로 안전하게 만든다.** 원인이 인코딩할 수
+    없는 문자열인데 그것을 그대로 담으면, 이 오류를 ``errors.jsonl``에
+    기록하는 ``append_jsonl``이 같은 이유로 또 터진다.
+    """
+
+    def __init__(self, *, path: Path, index: int, ref: Any, field: str, reason: str) -> None:
+        self.path = path
+        #: 0부터 센 레코드 순번. 파일이 안 남으므로 줄 번호로는 못 찾는다.
+        self.index = index
+        self.ref = ref
+        #: 인코딩할 수 없는 값이 있던 자리. 못 찾으면 ``"<record>"``.
+        self.field = field
+        self.reason = reason
+        super().__init__(
+            f"{path.name}: {index}번째 레코드(ref={ref})의 {field} 를 UTF-8로 쓸 수 없습니다 — {reason}"
+        )
+
+    def as_detail(self) -> dict[str, Any]:
+        """``ErrorLog.record(detail=...)`` 에 그대로 넘길 수 있는 형태."""
+        return {
+            "field": self.field,
+            "value": {"ref": self.ref, "record_index": self.index, "file": self.path.name},
+            "message": self.reason,
+        }
+
+
+def _unencodable_field(record: dict[str, Any]) -> "tuple[str, str]":
+    """인코딩할 수 없는 값이 어느 키에 있는지 찾는다.
+
+    오류 경로에서만 부른다. 한 단계 아래(``fields`` 안)까지 본다 — 파서가
+    자유 형식으로 싣는 자리가 거기라 실제로 자주 걸리는 곳이다.
+
+    돌려주는 것은 **키 이름과 ASCII로 안전한 표현**이다. 원본 문자열을
+    그대로 돌려주면 이것을 기록하다 다시 터진다.
+    """
+    def probe(value: Any) -> "str | None":
+        if not isinstance(value, str):
+            return None
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            # ascii(...) 는 서로게이트도 \udcff 형태로 escape 해 준다.
+            return ascii(value)
+        return None
+
+    for key, value in record.items():
+        found = probe(value)
+        if found is not None:
+            return key, found
+        if isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                found = probe(sub_value)
+                if found is not None:
+                    return f"{key}.{sub_key}", found
+    return "<record>", "(어느 키인지 찾지 못했습니다)"
+
+
 def write_jsonl(path: str | os.PathLike[str], records: Iterable[dict[str, Any]]) -> int:
     """JSONL을 원자적으로 쓰고 기록한 레코드 수를 돌려준다.
 
     한 줄씩 흘려 쓴다. ``$MFT``는 레코드가 수십만 건이라 전부 문자열로
     모으면 수백 MB가 된다. 원자성은 임시 파일 + rename으로 유지한다.
+
+    **바이너리로 열고 줄마다 직접 인코딩한다.** 텍스트 모드로 열면
+    인코딩이 버퍼 안쪽에서 일어나, 실패가 어느 레코드에서 났는지 알 수
+    없고 flush 시점까지 미뤄질 수도 있다. 여기서 직접 하면 실패한 레코드를
+    정확히 짚어 ``JsonlEncodeError``로 올릴 수 있다. 인코딩 횟수는 그대로다.
+
+    UTF-8로 쓸 수 없는 문자열이 오는 경로는 실재한다 — NTFS 이름은 짝 없는
+    서로게이트를 허용한다(``parsers/usnjrnl.py``). 파서가 걸러 내는 것이
+    1차이고 이것은 2차 방어다. **삼키지 않는다.**
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp")
     written = 0
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+        with os.fdopen(fd, "wb") as fh:
             for record in records:
-                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                line = json.dumps(record, ensure_ascii=False) + "\n"
+                try:
+                    payload = line.encode("utf-8")
+                except UnicodeEncodeError as e:
+                    field, shown = _unencodable_field(record)
+                    raise JsonlEncodeError(
+                        path=target,
+                        index=written,
+                        ref=record.get("ref"),
+                        field=field,
+                        reason=f"{e.reason} — 값 {shown}",
+                    ) from e
+                fh.write(payload)
                 written += 1
         os.replace(tmp, target)
     except BaseException:
