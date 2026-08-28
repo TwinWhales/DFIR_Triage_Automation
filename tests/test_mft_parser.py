@@ -290,3 +290,44 @@ def test_vendored_code_keeps_its_licence():
     assert "MIT" in licence
     assert "Copyright" in licence
     assert (root / "NOTICE.md").is_file()
+
+
+# ==================================================== 건너뛴 레코드를 센다
+
+
+def test_records_skipped_for_a_broken_fixup_are_counted(parser):
+    """**조용히 건너뛰면 "$MFT: 0건" 이 이유 없이 나온다.**
+
+    섹터 크기를 512로 고정하던 시절 4Kn 디스크가 정확히 이 모양이었다.
+    레코드마다 FixupError 가 나고 호출부가 그것을 삼켜, 손상도 아니고
+    미지원도 아닌 "아무것도 없음"이 산출물로 나왔다.
+    """
+    good = build_record(record_number=9, name="ok.txt", parent_record=5)
+    broken = bytearray(build_record(record_number=10, name="bad.txt", parent_record=5))
+    # 섹터 끝의 USN 을 흐트러뜨린다. 되돌릴 수 없는 레코드가 된다.
+    broken[512 - 2 : 512] = b"\xde\xad"
+
+    blob = bytes(RECORD_SIZE) * 9 + good + bytes(broken)
+    records = parse(parser, blob)
+
+    assert [r["record_num"] for r in records] == [9]
+    assert parser.stats["fixup_errors"] == 1
+    assert parser.stats["parse_errors"] == 1
+
+
+def test_the_counts_are_not_doubled_by_the_two_passes(parser):
+    """경로 재구성 때문에 같은 스트림을 두 번 돈다. 그대로 두면 두 배가 된다."""
+    broken = bytearray(build_record(record_number=9, name="bad.txt", parent_record=5))
+    broken[512 - 2 : 512] = b"\xde\xad"
+
+    parse(parser, bytes(RECORD_SIZE) * 9 + bytes(broken))
+
+    assert parser.stats["fixup_errors"] == 1
+
+
+def test_a_clean_volume_counts_nothing(parser):
+    """남발하면 매니페스트를 읽는 사람이 손상으로 오해한다."""
+    parse(parser, build_mft(WEBSHELL_TREE))
+
+    assert parser.stats["parse_errors"] == 0
+    assert parser.stats["fixup_errors"] == 0

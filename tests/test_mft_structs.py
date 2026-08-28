@@ -466,3 +466,39 @@ def test_summary_is_pasteable_into_notes(tmp_path):
     ).summary()
     assert "판정: 통과" in summary
     assert summary.startswith("- ")
+
+
+# ==================================================== 섹터 크기
+
+
+def test_the_sector_size_comes_from_the_record_not_a_constant():
+    """업데이트 시퀀스 배열은 항목이 ``섹터 수 + 1``개다. 나누면 나온다."""
+    assert m.sector_size_of(b"\x00" * 1024, usa_count=3) == 512
+    assert m.sector_size_of(b"\x00" * 4096, usa_count=2) == 4096
+    assert m.sector_size_of(b"\x00" * 4096, usa_count=9) == 512
+
+
+def test_a_4kn_record_is_read_without_being_told_the_sector_size():
+    """**512로 고정하면 4Kn 이미지의 레코드가 전부 FixupError 가 된다.**
+
+    그리고 호출부가 그것을 건너뛰므로 나오는 것은 오류가 아니라
+    ``$MFT: 0건`` 이다. 부트섹터를 읽지 않고 레코드에서 유도한다 —
+    추출된 ``$MFT`` 만 받는 경우에는 부트섹터가 아예 없다.
+    """
+    raw = build_record(total_size=4096, sector_size=4096, record_number=777)
+    header = m.RecordHeader.unpack(m.apply_fixups(raw))
+
+    assert header.record_number == 777
+
+
+def test_an_array_that_does_not_divide_the_record_is_refused():
+    """추측해서 넘어가면 뒤의 USN 대조가 엉뚱한 자리를 본다."""
+    # 섹터 3개로는 1024를 나눌 수 없다. 배열이 깨진 것이다.
+    with pytest.raises(m.FixupError, match="맞지 않음"):
+        m.sector_size_of(b"\x00" * 1024, usa_count=4)
+
+
+def test_an_explicit_sector_size_still_wins():
+    """아는 값이 따로 있으면 그것을 쓴다."""
+    raw = build_record(total_size=1024, sector_size=512)
+    assert m.RecordHeader.unpack(m.apply_fixups(raw, sector_size=512)).record_number == 12345
