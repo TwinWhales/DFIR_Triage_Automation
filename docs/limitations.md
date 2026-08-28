@@ -1884,11 +1884,14 @@ cases/<id>/05_interpret_raw_attempt1.txt
 | 아티팩트 | 대조 상대 | 상태 |
 |---|---|---|
 | `$MFT` | MFTECmd | **미실시** — 추출 파일 크기 대조로 대신함 |
+| `$MFT` | `dissect.ntfs` | **실시**(2026-08-28) — 두 이미지에서 설명 안 되는 차이 0건. `tools/compare_mft_dissect.py`. 계보가 달라 공통 오해는 안 생기지만 DFIR 표준 도구는 아니다 |
 | `$UsnJrnl` | MFTECmd (`-f $J`) | **미실시** — 독립 순회 코드로 대신함 |
-| `evtx` | `wevtutil` | **실시** — 8,257건 전량 일치 |
+| `evtx` | `wevtutil` | **실시** — 8,257건 전량 일치. s4a-challenge4 에서 4채널 2,144건 재실시, 레코드 ID 집합까지 일치(2026-08-28) |
 | `registry` (커버리지) | 원시 셀 스캔 | **실시** — SYSTEM 34,855 / SOFTWARE 156,716건 일치 |
 | `registry` (값) | 독립 `nk`/`vk` 디코더 | **실시** — 46,147키 중 46,142건 일치 (나머지는 대조 도구의 big data 미구현) |
+| `registry:Amcache` | AmcacheParser 2026.5.0 | **실시** — 457건 전량 일치. 단 `Root\File` 361건은 저쪽이 안 읽어 대조가 없다 |
 | `registry` (값) | `reg load` | **미실시** |
+| `prefetch` · `srum` | 외부 도구 | **미실시** — 자체 독립 대조와 내부 정합성뿐 |
 
 레지스트리는 대조를 둘로 나눴습니다. 위험의 성격이 `$MFT`와 다르기
 때문입니다 — 값을 틀리게 읽는 것이 아니라 **서브트리를 통째로 못 보고
