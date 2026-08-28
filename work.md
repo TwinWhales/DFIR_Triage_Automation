@@ -25,6 +25,16 @@
 함께 드러나 닫혔다. `validator_check.py` 가 40/40, 아는 구멍 0건.
 기록은 `docs/artifact-notes.md` 2026-08-27 절과 `docs/limitations.md`.
 
+**2026-08-28 처리됨** — SRUM 파서(옛 2-1)와 **04단계 성능**. SRUM 은
+`dissect.esedb` 어댑터로 붙었고 세 공급자를 읽는다(PR #25). 성능은 세
+군데였다 — flagging 이 레코드마다 걸릴 리 없는 룰 26개를 다 돌던 것,
+`analyzeMFT` 의 `WindowsTime` 이 만들고 우리가 버리던 시각 문자열,
+허프만 심볼 하나에 비트를 15번 읽던 것. **두 이미지 모두 18.7% 줄었고
+산출물 646,879건이 바이트 단위로 같다**(PR #27). `$MFT` 를 처음으로 다른
+구현(`dissect.ntfs`)과 맞춰 본 것도 함께 들어갔다 —
+`tools/compare_mft_dissect.py`. 기록은 `docs/artifact-notes.md`
+2026-08-27·28 절과 `docs/limitations.md`.
+
 ---
 
 ## 먼저 — 이 큐가 어디서 나왔나
@@ -113,7 +123,7 @@ USB·RDP** 다. 침해하지 않아도 된다 — 정상 상태로 충분하다.
 
 ---
 
-## 2. 파서 넷 — SRUM · 저널링 둘 · SQLite
+## 2. 파서 셋 — 저널링 둘 · SQLite
 
 2026-08-27 에 잡은 트랙이다. 절차는 `.claude/skills/add-parser/SKILL.md`
 하나가 권위다 — **등록 지점이 다섯이고 그중 셋은 빠뜨려도 조용하다.**
@@ -121,26 +131,7 @@ USB·RDP** 다. 침해하지 않아도 된다 — 정상 상태로 충분하다.
 방침은 `work-guide.md` 3.1 이 이미 정해 놨다 — *"파일시스템 계층은 직접
 구현해 오프셋을 보존하고, 로그 계층은 검증된 라이브러리를 사용했다."*
 아래 셋이 그 선을 각각 어느 쪽에 두는지가 난이도를 가른다.
-
-### 2-1. SRUM (`SRUDB.dat`) — 로그 계층, 라이브러리
-
-`Windows\System32\sru\SRUDB.dat`. **`0824test.001` 에 실제로 있다**
-(`SRU.log`·`SRUDB.jfm` 동반 = 클린 셧다운이 아닌 상태라, 파서가 dirty DB
-를 견디는지 확인해야 한다).
-
-ESE 데이터베이스라 직접 구현은 B-tree·long value·다중 페이지 레코드를 전부
-짜는 일이다. 위 방침대로 **라이브러리로 간다.** `dissect.esedb` 는 아직
-설치돼 있지 않은데, `dissect.target` 이 이미 `requirements.txt` 에 있어
-**새 벤더를 들이는 것이 아니다** — evtx 에 python-evtx 를 쓴 것과 같은 자리.
-
-**K-001 에서 값이 큰 이유** — `Network Data Usage` 테이블이 **앱별 송수신
-바이트**를 들고 있다. 이미 매핑이 있는 T1041·T1048(유출)에 지금 우리가
-가진 것 중 가장 직접적인 증거다.
-
-정할 것 — `signal_source` 를 `flags` 로 할지 `scope` 로 할지. SRUM 은
-`path_prefix` 로 걸러지지 않으므로 레지스트리·프리패치와 사정이 다르다.
-**틀리면 조용히 실패한다**(파싱은 되는데 05단계에 한 건도 안 간다,
-`limitations.md` 6-7).
+**SRUM(옛 2-1)은 닫혔다** — 로그 계층이라 라이브러리로 갔다.
 
 ### 2-2. 저널링 — `$UsnJrnl` 보강 + `$LogFile` 신규
 
