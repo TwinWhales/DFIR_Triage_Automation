@@ -549,6 +549,15 @@ def main(argv: "list[str] | None" = None) -> int:
             # 선별은 요청했는데 증거에 없다. 수집 누락이다.
             note_skip(artifact, "artifact_not_found", str(e), "증거 없음")
             continue
+        except io.JsonlEncodeError as e:
+            # 산출물을 UTF-8 로 쓸 수 없다. 아래 ValueError 절이 삼키면
+            # "어느 레코드인가"가 사라지므로 **앞에** 둔다.
+            #
+            # 파서가 이런 값을 내보내지 않는 것이 1차이고(예:
+            # parsers/usnjrnl.py 의 _encodable_name), 여기까지 왔다는 것은
+            # 아직 안 걸러진 경로가 있다는 뜻이다. 조용히 넘기면 아티팩트가
+            # 통째로 사라진 채 이유가 안 남는다.
+            log.abort(STAGE, "malformed_output", {"artifact": artifact, **e.as_detail()})
         except (OSError, ValueError) as e:
             log.abort(STAGE, "parse_error", {"value": artifact, "message": str(e)})
 

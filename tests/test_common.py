@@ -329,3 +329,71 @@ def test_unmapped_finds_techniques_without_a_mapping_table():
     result = attack.unmapped(["T1505.003", "T1486"], REPO_ROOT / "mappings")
     # T1486(랜섬웨어)은 카탈로그에는 있으나 매핑 파일이 아직 없다.
     assert result == ["T1486"]
+
+
+# ==================================================== UTF-8로 쓸 수 없는 값
+
+
+def test_an_unencodable_record_names_itself_instead_of_a_bare_position(tmp_path):
+    """맨 ``UnicodeEncodeError``는 "position 112"만 말한다.
+
+    수십만 건 중 어느 레코드인지 못 찾고, 임시 파일까지 지워져 되짚을
+    것도 안 남는다. **어느 레코드의 어느 키인지**가 남아야 한다.
+    """
+    p = tmp_path / "r.jsonl"
+    records = [
+        {"ref": "USN#0", "name": "fine.txt"},
+        {"ref": "USN#1", "name": "bad\udcffname.txt"},
+    ]
+    with pytest.raises(io.JsonlEncodeError) as excinfo:
+        io.write_jsonl(p, records)
+
+    err = excinfo.value
+    assert err.ref == "USN#1"
+    assert err.index == 1
+    assert err.field == "name"
+
+
+def test_the_unencodable_value_is_found_inside_fields(tmp_path):
+    """파서가 자유 형식으로 싣는 자리라 실제로 자주 걸린다."""
+    p = tmp_path / "r.jsonl"
+    with pytest.raises(io.JsonlEncodeError) as excinfo:
+        io.write_jsonl(p, [{"ref": "EVTX-SEC#1", "fields": {"Data": "x\udc00"}}])
+
+    assert excinfo.value.field == "fields.Data"
+
+
+def test_nothing_is_left_behind_when_the_write_fails(tmp_path):
+    """원자성은 그대로다. 반쯤 쓰인 파일도 임시 파일도 남으면 안 된다."""
+    p = tmp_path / "r.jsonl"
+    with pytest.raises(io.JsonlEncodeError):
+        io.write_jsonl(p, [{"ref": "USN#0", "name": "bad\udcff"}])
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_detail_can_itself_be_written_to_errors_jsonl(tmp_path):
+    """**이것이 이 설계의 핵심이다.**
+
+    원인이 인코딩할 수 없는 문자열인데 그것을 그대로 detail 에 담으면,
+    오류를 기록하는 ``append_jsonl`` 이 같은 이유로 또 터진다. 그러면
+    중단은 하는데 사유가 아무 데도 안 남는다.
+    """
+    log = errors.ErrorLog(tmp_path / "errors.jsonl")
+    try:
+        io.write_jsonl(tmp_path / "r.jsonl", [{"ref": "USN#7", "name": "bad\udcff"}])
+    except io.JsonlEncodeError as e:
+        log.record("04_parse", "malformed_output", e.as_detail(), action="abort")
+
+    entries = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    assert len(entries) == 1
+    assert entries[0]["detail"]["value"]["ref"] == "USN#7"
+    assert entries[0]["type"] == "malformed_output"
+
+
+def test_a_normal_record_with_korean_still_writes_as_is(tmp_path):
+    """``ensure_ascii=False`` 를 유지한다 — 한글이 escape 되면 눈으로 못 읽는다."""
+    p = tmp_path / "r.jsonl"
+    io.write_jsonl(p, [{"ref": "MFT#1", "path": "C:\사용자\문서.txt"}])
+
+    assert "사용자" in p.read_text(encoding="utf-8")

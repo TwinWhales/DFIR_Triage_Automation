@@ -135,6 +135,9 @@ class UsnJrnlParser:
             "unreadable_bytes": 0,
             "unsupported_version": 0,
             "zero_bytes_skipped": 0,
+            #: 이름에 짝 없는 서로게이트가 있어 원본 바이트를 따로 실은 레코드.
+            #: 0 이 아니면 그 레코드들의 ``name`` 은 U+FFFD 로 바뀐 것이다.
+            "name_unencodable": 0,
         }
 
     # ------------------------------------------------------------ 공개
@@ -319,12 +322,13 @@ class UsnJrnlParser:
         도구가 스파스 구간을 잘라냈다면 ``record_num``과 어긋나는데,
         그 차이 자체가 "이 파일은 원본 스트림이 아니다"라는 신호입니다.
         """
+        name, name_raw = self._encodable_name(record.name)
         out: dict[str, Any] = {
             "ref": refs.make_ref(self.artifact, record.usn),
             "artifact": self.artifact,
             "record_num": record.usn,
             "offset": "0x{:X}".format(offset),
-            "name": record.name,
+            "name": name,
             "reason": record.reason_names,
             "source": record.source_names,
             "file_entry": record.file_reference.entry,
@@ -337,4 +341,48 @@ class UsnJrnlParser:
         # 레코드를 버리면 이상함 자체가 증거인 경우를 놓친다.
         if record.timestamp is not None:
             out["timestamp"] = record.timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f0Z")
+        if name_raw is not None:
+            # 최상위에 새 키를 만들지 않는다 — 스키마가 동결이고
+            # ``additionalProperties: false`` 다. ``fields`` 는 자유 형식으로
+            # 선언된 자리라 여기 싣는 것이 스키마 변경이 아니다.
+            out["fields"] = {"name_raw_utf16le": name_raw}
         return out
+
+    def _encodable_name(self, name: str) -> "tuple[str, str | None]":
+        """UTF-8 로 쓸 수 있는 이름과, 못 쓰면 원본 바이트의 hex.
+
+        **NTFS 이름은 짝 없는 서로게이트를 허용하는데 UTF-8 은 아닙니다.**
+        구조 계층은 ``errors="surrogatepass"`` 로 읽습니다(``usn_record.py``)
+        — strict 로 읽으면 그런 이름을 가진 레코드만 조용히 사라지기
+        때문입니다. 그런데 그 문자열을 그대로 내보내면 ``io.write_jsonl``
+        이 ``ensure_ascii=False`` 로 dump 한 뒤 UTF-8 로 쓰다 터집니다.
+
+        **터지면 레코드 하나가 아니라 아티팩트 전체가 사라집니다.**
+        ``write_jsonl`` 은 임시 파일에 쓰다 예외가 나면 그것을 지우므로
+        ``usnjrnl.jsonl`` 이 아예 생기지 않습니다(실측 148,409건).
+
+        그래서 여기서 가른다 — ``name`` 은 U+FFFD 로 바꿔 쓸 수 있게 하고,
+        **원본은 hex 로 함께 싣습니다.** 바이트를 버리지 않으므로
+        ``bytes.fromhex(...).decode("utf-16-le", "surrogatepass")`` 로 원래
+        문자열을 정확히 되돌릴 수 있습니다.
+
+        다른 파서들은 처음부터 ``errors="replace"`` 라 이 자리가 없습니다.
+        USN 만 ``surrogatepass`` 이고, 그 판단 자체는 옳습니다 — 이상한
+        이름이 붙은 레코드가 사라지는 편이 더 나쁩니다.
+        """
+        try:
+            name.encode("utf-8")
+        except UnicodeEncodeError:
+            pass
+        else:
+            return name, None
+
+        raw = name.encode("utf-16-le", "surrogatepass")
+        self.stats["name_unencodable"] += 1
+        _log.warning(
+            "%s: 이름에 짝 없는 서로게이트가 있어 U+FFFD 로 바꿉니다 "
+            "(원본은 fields.name_raw_utf16le 에 hex 로 남습니다) — %s",
+            self.artifact,
+            raw.hex(),
+        )
+        return raw.decode("utf-16-le", "replace"), raw.hex()
