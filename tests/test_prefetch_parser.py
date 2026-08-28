@@ -716,3 +716,57 @@ def test_every_real_prefetch_file_parses():
         schema.validate(flagging.apply(record, EMPTY), "parsed_record")
         # 헤더 해시와 .pf 파일명 뒤 8자리가 같아야 정상이다.
         assert record["fields"]["path_hash"] in record["fields"]["prefetch_file"].upper()
+
+
+# ============================================ 볼륨을 못 정했을 때의 범위 판정
+
+#: 살아 있는 두 번째 볼륨. 이것이 함께 있으면 드라이브 문자를 정할 수 없다.
+_SECOND_DEVICE = "\\DEVICE\\HARDDISKVOLUME3"
+
+
+def _two_volumes() -> "list[tuple[str, int, int]]":
+    stamp = to_filetime(dt.datetime(2019, 1, 10, tzinfo=UTC))
+    return [(DEVICE, 0x2EC87543, stamp), (_SECOND_DEVICE, 0x11112222, stamp)]
+
+
+def test_a_record_is_kept_when_the_volume_letter_cannot_be_decided(parser):
+    """**못 좁히면 넓게 낸다.**
+
+    ``device_prefixes`` 가 살아 있는 볼륨 둘을 보고 ``None`` 을 내는 것은
+    옳다 — D: 의 실행 파일을 C: 로 보고하지 않으려는 것이다. 그런데 그
+    보수성이 표기가 아니라 **필터**로 넘어오면 뒤집힌다. ``C:\\...`` 로
+    적힌 매핑에서 프리패치가 통째로 빠진다.
+
+    선별 실패로 증거를 놓치는 것이 이 프로젝트의 최대 리스크다.
+    """
+    loaded = [
+        f"{DEVICE}\\INETPUB\\WWWROOT\\SHELL.ASPX",
+        f"{_SECOND_DEVICE}\\DATA\\X.DLL",
+    ]
+    scope = Scope(path_prefix=("c:/inetpub/wwwroot",))
+    records = run(parser, build_pf(loaded=loaded, volumes=_two_volumes()), scope)
+
+    assert records != []
+    assert parser.stats["scope_undecidable"] == 1
+    assert parser.stats["out_of_scope"] == 0
+
+
+def test_the_extension_filter_still_applies_when_the_volume_is_undecided(parser):
+    """접두어만 못 보는 것이지 판정을 통째로 포기하는 것이 아니다.
+
+    확장자는 장치 경로에서도 그대로 판정할 수 있다.
+    """
+    loaded = [f"{DEVICE}\\WINDOWS\\SYSTEM32\\CMD.EXE"]
+    scope = Scope(path_prefix=("c:/inetpub/wwwroot",), extensions=(".aspx",))
+    records = run(parser, build_pf(loaded=loaded, volumes=_two_volumes()), scope)
+
+    assert records == []
+    assert parser.stats["out_of_scope"] == 1
+
+
+def test_a_single_volume_still_filters_normally(parser):
+    """문자를 정할 수 있으면 예전 그대로다. 넓게 내는 것은 못 정할 때뿐이다."""
+    scope = Scope(path_prefix=("c:/inetpub/wwwroot",))
+    assert run(parser, build_pf(), scope) == []
+    assert parser.stats["out_of_scope"] == 1
+    assert parser.stats["scope_undecidable"] == 0

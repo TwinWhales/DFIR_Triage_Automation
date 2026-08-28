@@ -173,6 +173,10 @@ class PrefetchParser:
             "path_unresolved": 0,
             "loaded_paths_converted": 0,
             "out_of_scope": 0,
+            #: 볼륨 문자를 정하지 못해 ``path_prefix`` 로 판정할 수 없었던
+            #: 파일. 거르지 않고 넘겼다는 뜻이므로, 이 값이 크면 프리패치가
+            #: 사실상 범위 없이 05단계로 간 것이다.
+            "scope_undecidable": 0,
         }
 
     def begin_artifact(self) -> None:
@@ -247,7 +251,9 @@ class PrefetchParser:
             1 for before, after in zip(loaded, loaded_paths) if before != after
         )
 
-        if not self._in_scope(scope, executable_path, loaded, loaded_paths):
+        if not self._in_scope(
+            scope, executable_path, loaded, loaded_paths, volume_resolved=live is not None
+        ):
             self.stats["out_of_scope"] += 1
             return None
 
@@ -368,6 +374,8 @@ class PrefetchParser:
         executable_path: "str | None",
         loaded: list[str],
         loaded_paths: list[str],
+        *,
+        volume_resolved: bool = True,
     ) -> bool:
         """범위 안인가.
 
@@ -380,6 +388,18 @@ class PrefetchParser:
         하나뿐이지만, 매핑이 장치 경로로 범위를 적었을 때 걸러지지 않게
         합니다 — 여기서 놓치면 아티팩트가 통째로 사라집니다.
 
+        **볼륨 문자를 못 정했으면 접두어로 판정하지 않습니다.**
+        ``device_prefixes``는 살아 있는 볼륨이 둘 이상이면 ``None``을 냅니다
+        — D:의 실행 파일을 C:로 보고하지 않으려는 옳은 보수성입니다. 그런데
+        그 보수성이 **표기**가 아니라 **필터**로 넘어오면 뒤집힙니다:
+        "문자를 모르겠다"가 "제외한다"가 되어, ``C:\\...``로 적힌 매핑에서
+        프리패치가 통째로 빠집니다. 위에 적은 원칙과 정반대입니다.
+
+        그래서 그때는 넓게 냅니다. 확장자는 장치 경로에서도 그대로 판정할
+        수 있으므로 계속 봅니다. 조용히 넘기지 않도록
+        ``scope_undecidable``로 셉니다 — 이 값이 크면 프리패치가 사실상
+        범위 없이 05단계로 간 것입니다.
+
         시간 범위는 여기서 보지 않습니다. ``flagging``이
         ``outside_time_range``를 붙입니다(``parsers/base.py``).
         """
@@ -389,7 +409,13 @@ class PrefetchParser:
         candidates = loaded + loaded_paths
         if executable_path is not None:
             candidates.append(executable_path)
-        return any(scope.matches_path(path) for path in candidates)
+        if any(scope.matches_path(path) for path in candidates):
+            return True
+
+        if scope.path_prefix and not volume_resolved:
+            self.stats["scope_undecidable"] += 1
+            return any(scope.matches_extension(path) for path in candidates)
+        return False
 
 
 def _volume_field(volume: pf.Volume) -> dict[str, Any]:
