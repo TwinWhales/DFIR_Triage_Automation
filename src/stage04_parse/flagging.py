@@ -27,7 +27,7 @@
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
@@ -157,6 +157,21 @@ class FlagRule:
             return False
         return True
 
+    def applies_to(self, artifact: str) -> bool:
+        """이 룰이 **이 아티팩트에 걸릴 가능성이 있는가.**
+
+        ``matches`` 와 달리 레코드를 보지 않습니다. 아티팩트 이름만으로
+        걸러지는 룰을 레코드마다 다시 확인하지 않으려는 것입니다
+        (``Vocabulary.for_artifact``).
+
+        **절이 없으면 항상 참입니다.** 그때는 ``handler`` 혼자 판정하므로
+        아티팩트로 좁힐 근거가 없습니다 — 여기서 거짓을 내면 플래그가
+        조용히 사라집니다.
+        """
+        if not self.clauses:
+            return True
+        return any(_artifact_matches(artifact, clause.artifact) for clause in self.clauses)
+
 
 @dataclass(frozen=True)
 class Vocabulary:
@@ -164,6 +179,33 @@ class Vocabulary:
 
     names: tuple[str, ...]
     rules: tuple[FlagRule, ...]
+    #: ``for_artifact`` 의 메모. 어휘는 실행 중 안 바뀌므로 한 번 채우면 끝이다.
+    #:
+    #: ``frozen=True`` 는 **속성 대입**을 막을 뿐 dict 내용 변경은 막지
+    #: 않습니다. ``compare=False`` 로 둔 것은 이것이 계산 결과이지 어휘의
+    #: 일부가 아니기 때문입니다 — 두 어휘가 같은지 볼 때 메모까지 보면
+    #: 어느 쪽을 먼저 썼느냐로 답이 달라집니다.
+    _by_artifact: dict[str, tuple[FlagRule, ...]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+
+    def for_artifact(self, artifact: str) -> tuple[FlagRule, ...]:
+        """이 아티팩트에 걸릴 수 있는 룰만.
+
+        **레코드마다 룰 26개를 다 도는 것이 04단계의 큰 비용이었습니다.**
+        아티팩트 이름은 파싱 한 번 동안 고정인데 ``_artifact_matches`` 가
+        레코드마다 같은 답을 다시 냈습니다. 실측(2026-08-28)에서 레지스트리
+        223,569건이 룰 26개 × 절 34개를 전부 돌아 플래그 0건을 냈습니다.
+
+        걸러지는 폭이 아티팩트마다 다릅니다 —
+        ``registry``·``prefetch``·``srum`` 은 26 → 1, ``$MFT`` 는 26 → 5,
+        ``evtx:Security`` 는 26 → 8 입니다.
+        """
+        cached = self._by_artifact.get(artifact)
+        if cached is None:
+            cached = tuple(rule for rule in self.rules if rule.applies_to(artifact))
+            self._by_artifact[artifact] = cached
+        return cached
 
 
 @dataclass(frozen=True)
@@ -670,7 +712,10 @@ def apply(
     ctx = Context(groups=privileged_groups() if groups is None else groups, scope=scope)
     vocabulary = load_vocabulary()
 
-    found = [rule.name for rule in vocabulary.rules if rule.matches(record, ctx)]
+    artifact = str(record.get("artifact", ""))
+    found = [
+        rule.name for rule in vocabulary.for_artifact(artifact) if rule.matches(record, ctx)
+    ]
 
     # 파서가 이미 붙인 것이 있으면 합친다. 순서는 어휘 정의 순서로 고정해
     # 같은 레코드가 항상 같은 JSON을 내게 한다.

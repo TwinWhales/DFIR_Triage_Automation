@@ -1507,3 +1507,170 @@ Windows 폴더 밖             10,109건 100.00%  ← 접두어가 안 맞았을
 .venv/Scripts/python.exe tools/scan_prefetch.py \
   --dir <꺼낸 Prefetch 폴더> --ours <prefetch.jsonl>
 ```
+
+---
+
+## 2026-08-28 · s4a-challenge4 · 새 이미지 전 구간 대조
+
+`evidence/s4a-challenge4` (25GB, Ali Hadi 시리즈)로 04단계를 전량
+관통시켰습니다. **8종 산출 140,971건 / 35.8초 / 종료 코드 0 / 파싱 예외
+0건.**
+
+**이 이미지가 새로운 이유는 버전과 레이아웃입니다.** 지금까지 대조에 쓴
+것은 Win7(7601)과 Win10(15063) 둘뿐이었는데, 이것은 **Windows Server
+2008 빌드 6001** 입니다. `osinfo.FAMILIES` 의 하한(7600)보다 **낮아** 어느
+구간에도 안 들어갑니다. NTFS 도 하나뿐이라 `--volume` 이 필요 없습니다
+(다른 두 이미지는 둘씩이라 필수였습니다).
+
+그 자리에서 **"모르면 거르지 않는다"가 설계대로 발화했습니다** — 가용성
+판정을 통째로 건너뛰고, Amcache·SRUM·RecentFileCache 를 "버전 미해당"이
+아니라 `artifact_not_found` 로 남겼습니다. 프리패치도 없습니다(Server
+2008 은 기본 비활성). 부재 16종 전부 `errors.jsonl` 에 있습니다.
+
+### 대조 1 — evtx × `wevtutil`, 4채널 전량 일치
+
+| 채널 | 우리 | wevtutil | 레코드 ID 집합 | EventID | 타임스탬프 |
+|---|---|---|---|---|---|
+| Security | 636 | 636 | 일치 | 일치 | 일치 |
+| System | 1,268 | 1,268 | 일치 | 일치 | 일치 |
+| Application | 233 | 233 | 일치 | 일치 | 일치 |
+| BITS | 7 | 7 | 일치 | 일치 | 일치 |
+
+**개수만 세지 않았습니다.** `EventRecordID` 집합까지 맞췄습니다 — 개수만
+보면 "같은 수, 다른 레코드"를 못 잡습니다. `EventID` 와 타임스탬프도
+레코드별로 대조했고 불일치 0건입니다.
+
+`wevtutil` 을 고른 이유는 2026-08-19 절과 같습니다 — 모든 Windows 에
+들어 있고 마이크로소프트 자신의 구현이라 공통 오해가 생기지 않습니다.
+
+**세는 방법에 함정이 하나 있습니다.** `wevtutil qe /f:xml` 은 이벤트를
+줄바꿈으로 나누지 않습니다. 줄 수를 세면 System 이 1,268 이 아니라 **5**
+로 나옵니다. `<Event xmlns` 출현 횟수로 세야 합니다.
+
+### 대조 2 — 더티 로그의 청크 복구가 실물로 확인됐다
+
+System.evtx 에서 파서가 경고를 냈습니다.
+
+```
+evtx:System: 선언(chunk_count=9) 밖 청크 9 @0x91000 를 복구했습니다
+```
+
+python-evtx 의 `records()` 를 그대로 쓰면 **1,238건**이 나옵니다. 우리는
+**1,268건**이고, 차이 30건이 저 청크입니다. 그리고 **wevtutil 도
+1,268건**입니다 — 마이크로소프트 구현도 선언 밖 청크를 읽습니다.
+
+같은 대조가 양쪽을 한 번에 말합니다. 복구가 없었으면 30건을 잃었을
+것이고, 반대로 가짜 레코드를 지어낸 것도 아닙니다. **지금까지 합성
+테스트로만 있던 경로입니다**(모듈 docstring "chunk_count를 믿지 않는다").
+
+### 대조 3 — 레지스트리 커버리지, 정확히 일치
+
+```
+SYSTEM  : hbin 2,298 / 할당된 nk 17,879 / 미할당 nk 245 / 끊긴 체인 0
+          → 우리 17,879건. 일치
+SOFTWARE: hbin 2,797 / 할당된 nk 46,256 / 미할당 nk   0 / 끊긴 체인 0
+          → 우리 46,256건. 일치
+```
+
+놓친 서브트리 0건입니다. **DEVPROP 경고가 0건**인 것도 이 이미지의
+특징입니다 — Server 2008 의 `DeviceClasses` 에는 그 속성 블롭이 없습니다.
+Win10 이미지에서 2,951건 나오던 자리입니다(`limitations.md`).
+
+### 대조 4 — `$MFT` × `dissect.ntfs` (최초)
+
+**`$MFT` 는 산출량이 두 번째로 많은데 외부 대조가 가장 약한 파서였습니다**
+— MFTECmd 는 미실시로 남아 있고 그 자리를 추출 파일 크기 57건이 대신하고
+있었습니다(`limitations.md` "외부 도구 대조가 부분적이다").
+
+MFTECmd 는 여전히 없지만 **`dissect.ntfs` 는 이미 설치돼 있습니다**
+(`dissect.target` 과 함께 옵니다). 우리 파서는 `third_party/analyzeMFT`
+계열이라 **계보가 다릅니다** — 같은 사람이 짠 두 구현이 아니므로 공통
+오해가 생기지 않습니다. `tools/compare_mft_dissect.py` 로 만들었습니다.
+
+| | s4a-challenge4 | 0824test.001 (볼륨 1) |
+|---|---|---|
+| dissect 순회 / IN_USE | 62,331 / 62,302 | 98,160 / 97,843 |
+| 우리 파서 | 62,322 | 98,151 |
+| 교집합 | 62,293 | 97,834 |
+| dissect 에만 — `$FN` 없음 | 9 | 9 |
+| 우리에게만 — `deleted` | 29 | 317 |
+| **설명 안 되는 차이** | **0** | **0** |
+
+**두 도구는 원래 다른 집합을 냅니다.** 그것을 아는 것이 이 대조의
+전부입니다.
+
+- **dissect 에만 9건** — `$FILE_NAME` 이 없어 `filename()` 이 `TypeError`
+  를 냅니다. `#12`~`#15`(NTFS 예약 슬롯)와 속성 목록 확장 레코드입니다.
+  이름도 경로도 없어 우리가 거르는 것이 맞습니다. **두 이미지 모두 정확히
+  9건**입니다.
+- **우리에게만 29 / 317건** — 전부 `deleted` 입니다. dissect 의 `IN_USE`
+  판정이 **정의상** 제외하는 것이고, 삭제 파일을 보는 것이 요점이므로
+  우리가 더 보는 것이 맞습니다.
+
+그 삭제 레코드 안에 이 챌린지의 사건이 들어 있습니다.
+
+```
+C:\Users\Administrator\AppData\Local\Temp\C99(2)~1.PHP
+C:\Users\...\Content.IE5\2O90PV9T\192_168_56_102[1].htm
+C:\Users\...\Content.IE5\2O90PV9T\XSS_S_~2.HTM
+```
+
+### 곁가지 — 부모 슬롯 재사용을 처음 세어 봤다
+
+같은 삭제 레코드에서 **경로가 어긋난 것**이 나옵니다.
+
+```
+틀림: C:\Windows\SoftwareDistribution\DataStore\Logs\tmp.edb\favicon[1].ico
+틀림: C:\Windows\System32\Msdtc\Trace\dtctrace.log\LOGO_1~1.PNG
+정상: C:\Users\...\Content.IE5\2O90PV9T\login_logo[1].png
+```
+
+`tmp.edb`·`dtctrace.log`·`WmiApRpl.ini` 가 **디렉터리 자리**에 있습니다.
+삭제 레코드의 부모 참조가 가리키는 슬롯이 그 사이 다른 파일에 재할당된
+것입니다.
+
+**메커니즘의 증거는 같은 파일명이 양쪽에 한 번씩 나온다는 것입니다** —
+`favicon[1].ico`·`MAIN_1~1.CSS`·`192_168_56_102[1].htm` 이 정상 경로와
+틀린 경로에 각각 있습니다. 같은 브라우저 캐시 파일들이고, 삭제된 쪽만
+부모를 잃었습니다.
+
+| | 삭제 레코드 | 경로 어긋남 | 비율 |
+|---|---|---|---|
+| s4a-challenge4 | 29 | 19 | 66% |
+| 0824test.001 | 317 | 103 | 32% |
+
+`limitations.md` "`$MFT` 만으로는 알 수 없는 것"에 *"부모 MFT 엔트리가
+재사용됐으면 경로 재구성이 어긋남"* 한 줄로 이미 있던 것입니다. **새
+결함이 아니라, 실물에서 관측되고 비율이 붙은 것이 처음입니다.** 이 경로가
+05단계 프롬프트에 그대로 실리므로 모델이 `tmp.edb` 를 폴더로 서술할 수
+있습니다.
+
+세는 규칙은 경로 중간 성분이 **파일로 보이는가**이고, 확장자를 목록으로
+한정했습니다. 넓히면 오탐이 납니다 — `\assembly\GAC_MSIL\System.Xml\...`
+처럼 점이 든 디렉터리 이름이 실제로 있습니다. 그래서 **삭제 레코드에만**
+셉니다. 판정(종료 코드)에는 넣지 않습니다.
+
+### 재현
+
+```bash
+# 04단계 — 범위 없는 selection 으로 전량
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
+  --in cases/S4A4/03_selection.json --out cases/S4A4/04_parsed/ \
+  --evidence evidence/s4a-challenge4
+
+# $MFT × dissect.ntfs
+.venv/Scripts/python.exe tools/compare_mft_dissect.py \
+  --image evidence/s4a-challenge4 --ours cases/S4A4/04_parsed/mft.jsonl
+
+# 레지스트리 커버리지 (하이브를 꺼낸 뒤)
+.venv/Scripts/python.exe tools/scan_hive_cells.py \
+  --hive <꺼낸 SYSTEM> --ours cases/S4A4/04_parsed/registry_system.jsonl
+```
+
+evtx 는 이미지에서 꺼낸 뒤 PowerShell 로 셉니다. **줄 수가 아니라 태그
+출현 횟수**여야 합니다.
+
+```powershell
+& wevtutil.exe qe System.evtx /lf:true /f:xml | Out-File out.xml -Encoding utf8
+([regex]::Matches((Get-Content out.xml -Raw), "<Event xmlns")).Count
+```
