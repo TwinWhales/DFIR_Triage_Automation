@@ -54,7 +54,9 @@ def build_usn_record(
     ``record_length``를 직접 주면 **일부러 깨진 레코드**를 만들 수
     있습니다. 재동기화 테스트에 씁니다.
     """
-    encoded = name.encode("utf-16-le")
+    # surrogatepass — NTFS 이름은 짝 없는 서로게이트를 허용하므로 그런
+    # 이름도 만들 수 있어야 한다. 정상 이름에는 영향이 없다.
+    encoded = name.encode("utf-16-le", "surrogatepass")
     name_offset = u.V2_HEADER_SIZE
     unpadded = name_offset + len(encoded)
     padded = (unpadded + u.RECORD_ALIGNMENT - 1) // u.RECORD_ALIGNMENT * u.RECORD_ALIGNMENT
@@ -461,3 +463,79 @@ def test_an_uninteresting_reason_gets_no_signal_flag():
     record = next(flagging.apply_all(iter(parse(data)), None))
 
     assert record["flags"] == []
+
+
+# ==================================================== 짝 없는 서로게이트
+
+
+def test_a_lone_surrogate_name_does_not_break_jsonl_writing(tmp_path):
+    """**이 레코드 하나가 아티팩트 전체를 날릴 수 있었다.**
+
+    NTFS 이름은 짝 없는 서로게이트를 허용하는데 UTF-8 은 아닙니다. 구조
+    계층이 ``surrogatepass`` 로 읽는 것은 그런 이름의 레코드가 조용히
+    사라지지 않게 하려는 것인데, 그 문자열을 그대로 내보내면
+    ``io.write_jsonl`` 이 UTF-8 로 쓰다 ``UnicodeEncodeError`` 를 냅니다.
+
+    그러면 임시 파일이 지워져 ``usnjrnl.jsonl`` 이 **아예 생기지
+    않습니다** — 실측 이미지에서 148,409건이 통째로 사라지는 자리입니다.
+    """
+    from src.common import io as common_io
+
+    data = build_journal(
+        [
+            build_usn_record(usn=0, name="normal.txt"),
+            build_usn_record(usn=1, name="bad\udcffname.txt"),
+        ]
+    )
+    records = parse(data)
+
+    written = common_io.write_jsonl(tmp_path / "usnjrnl.jsonl", records)
+    assert written == 2
+    assert (tmp_path / "usnjrnl.jsonl").is_file()
+
+
+def test_the_original_bytes_survive_next_to_the_replaced_name():
+    """이름은 읽을 수 있게 바꾸되 **원본은 버리지 않는다.**
+
+    hex 를 되돌리면 원래 문자열이 정확히 나와야 합니다. 그러지 않으면
+    "원본에 충실하다"가 깨집니다.
+    """
+    original = "bad\udcffname.txt"
+    data = build_journal([build_usn_record(usn=0, name=original)])
+    record = parse(data)[0]
+
+    assert record["name"] == "bad\ufffdname.txt"
+    restored = bytes.fromhex(record["fields"]["name_raw_utf16le"])
+    assert restored.decode("utf-16-le", "surrogatepass") == original
+
+
+def test_a_normal_name_gets_no_raw_field():
+    """멀쩡한 이름에까지 붙으면 프롬프트만 커진다."""
+    data = build_journal([build_usn_record(usn=0, name="한글이름.txt")])
+    record = parse(data)[0]
+
+    assert record["name"] == "한글이름.txt"
+    assert "fields" not in record
+
+
+def test_the_unencodable_name_is_counted():
+    """조용히 바꾸지 않는다. 매니페스트를 읽는 사람이 알아야 한다."""
+    data = build_journal(
+        [
+            build_usn_record(usn=0, name="a.txt"),
+            build_usn_record(usn=1, name="x\udc00y.txt"),
+            build_usn_record(usn=2, name="z\udfffw.txt"),
+        ]
+    )
+    parser = usnjrnl.UsnJrnlParser()
+    list(parser.parse(_io.BytesIO(data), Scope()))
+
+    assert parser.stats["name_unencodable"] == 2
+
+
+def test_the_replaced_record_still_validates_against_the_schema():
+    """``fields`` 는 자유 형식이라 여기 싣는 것이 스키마 변경이 아니다."""
+    data = build_journal([build_usn_record(usn=0, name="bad\udcffname.txt")])
+    record = next(flagging.apply_all(iter(parse(data)), None))
+
+    schema.validate(record, "parsed_record")
