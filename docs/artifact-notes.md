@@ -1674,3 +1674,92 @@ evtx 는 이미지에서 꺼낸 뒤 PowerShell 로 셉니다. **줄 수가 아�
 & wevtutil.exe qe System.evtx /lf:true /f:xml | Out-File out.xml -Encoding utf8
 ([regex]::Matches((Get-Content out.xml -Raw), "<Event xmlns")).Count
 ```
+
+---
+
+## 2026-08-30 · `offset` 되짚기 — 스키마가 약속한 도구를 채웠다
+
+`parsed_record` 스키마는 2026-08-14 부터 `offset` 을 이렇게 설명해
+왔습니다 — *"`tools/hexdump_record.py` 가 이 값으로 원본을 되짚는다."*
+**그 파일은 0바이트였습니다.** 오프셋을 넣고 다니면서 그것으로 원본에
+내려가 본 적이 없었다는 뜻입니다(`docs/limitations.md` 2026-08-28).
+
+도구를 만들고 **실물 이미지에서 7종 280건을 되짚었습니다. 어긋남 0건.**
+
+`evidence/win10_sysmon_testimage.001` 볼륨 1 (Windows 10 Pro 15063).
+아티팩트마다 균등 간격으로 40건씩 골랐습니다 — 무작위가 아니라 균등
+간격인 것은 같은 산출물에서 언제 돌려도 같은 표본이 나와야 하기 때문입니다.
+
+| 아티팩트 | 표본 | ref 를 무엇으로 맞췄나 | 결과 |
+|---|---|---|---|
+| `$MFT` | 40 | 헤더 `0x2C` 의 레코드 번호 + 업데이트 시퀀스 | 40/40 |
+| `$UsnJrnl` | 40 | `0x18` 의 USN | 40/40 |
+| `evtx:System` | 40 | `0x8` 의 EventRecordID + 앞뒤 크기 일치 | 40/40 |
+| `evtx:BITS` | 40 | 같음 | 40/40 |
+| `registry:SYSTEM` | 40 | `nk` 매직 + 오프셋 자신 + 키 이름 | 40/40 |
+| `registry:Amcache` | 40 | 같음 | 40/40 |
+| `prefetch` | 40 | `.pf` 파일명 뒤 8자리 해시 | 40/40 |
+
+**대조는 우리가 해석해 넣은 값으로 하지 않습니다.** 레코드가 자기 안에
+들고 있는 식별자로 합니다 — 그 값을 쓴 것은 Windows 이지 우리가 아니라서,
+파서가 틀렸다면 어긋나야 정상입니다. 파서로 다시 파싱해 비교하면 같은
+오해가 양쪽에 들어가 아무것도 확인하지 못합니다(`tools/scan_prefetch.py`
+2026-08-25 절과 같은 이유).
+
+### `$MFT` 는 업데이트 시퀀스가 가장 강한 증거였다
+
+번호 대조만으로는 부족합니다 — 엉뚱한 자리의 4바이트가 우연히 그 번호일
+수 있습니다. NTFS 는 **각 섹터의 마지막 2바이트를 같은 USN 으로 덮어
+쓰므로**, 오프셋이 한 섹터라도 밀려 있으면 그 값들이 서로 달라집니다.
+40건 전부에서 섹터 2개(섹터 크기 512)의 끝 2바이트가 같았습니다.
+
+**되돌리지 않고 확인만 합니다.** 덤프는 fixup 전의 디스크 원본이어야
+합니다. 되돌린 바이트를 보여 주면 그것은 이미 우리가 손댄 값입니다.
+
+### `$UsnJrnl` — 오프셋과 USN 이 전건 같았다
+
+`usnjrnl.py` 는 *"추출 도구가 스파스 구간을 잘라냈다면 `record_num` 과
+어긋나는데, 그 차이 자체가 이 파일은 원본 스트림이 아니다라는 신호"* 라고
+적어 두었습니다. **이 이미지에서는 40건 전부 `offset == record_num`
+입니다** — 볼륨에서 직접 읽었으니 당연하지만, 그 당연함이 처음으로
+확인됐습니다. 추출본으로 돌렸을 때 이 값이 갈리면 그것이 진단입니다.
+
+### 프리패치 127건이 전부 MAM 압축본이었다
+
+Win10 이라 예상대로입니다. `offset` 이 항상 `0x0` 이고 헤더가 압축돼
+있어, 되짚기는 **파일명 뒤 8자리 = `record_num`** 으로만 성립합니다.
+그 값도 Windows 가 쓴 것이라 독립적인 대조입니다.
+
+### 못 잰 것 — SRUM
+
+`srum:*` 의 `offset` 은 레코드가 실린 **ESE 페이지**입니다(`parsers/srum.py`).
+도구는 페이지 경계 여부까지만 대조하고 그 한계를 출력에 싣습니다. 다만
+**이번에 실물로 재지 못했습니다** — 이 기계의 `.venv` 에 `dissect.esedb`
+가 없어(requirements.txt 에는 있습니다) 04단계가 SRUM 을 `ParseError` 로
+내고 멈췄기 때문입니다. 합성 바이트 테스트만 있습니다.
+
+### 재현
+
+```bash
+# 03_selection.json 을 손으로 만들어 04단계를 돌린 뒤(scope 없이 전량)
+.venv/Scripts/python.exe tools/hexdump_record.py --sample 40 \
+  --parsed <04_parsed> --evidence evidence/win10_sysmon_testimage.001 --volume 1
+
+# 레코드 하나를 눈으로 본다
+.venv/Scripts/python.exe tools/hexdump_record.py REG-SYS#3743476 \
+  --parsed <04_parsed> --evidence evidence/win10_sysmon_testimage.001 --volume 1 --length 96
+```
+
+```
+REG-SYS#3743476  registry:SYSTEM
+  오프셋  0x391EF4 (3,743,476) · 96바이트
+  ✓ 시그니처: b'nk'    ✓ 오프셋 = record_num    ✓ 키 이름: 'Services'
+
+  0x00391EF4  6E 6B 20 00 18 8B 4A 12  2B A0 D2 01 00 00 00 00   |nk ...J.+.......|
+  ...
+  0x00391F34  00 00 00 00 01 00 00 00  08 00 00 00 53 65 72 76   |............Serv|
+  0x00391F44  69 63 65 73 D8 FF FF FF  76 6B 0B 00 04 00 00 80   |ices....vk......|
+```
+
+**하나라도 어긋나면 종료 코드가 1입니다.** 파서를 고친 뒤 이 명령이
+0 을 내는지가 "오프셋을 깨뜨리지 않았다"의 확인입니다.
