@@ -35,7 +35,9 @@
                       대신 ``.pf`` 파일명 뒤 8자리 해시 = ``record_num``을 본다
 ``srum:*``            **페이지까지만 성립한다.** ESE 레코드는 페이지 안에서
                       태그로 가리켜져 레코드 시작 바이트를 파일 좌표로 말할
-                      수 없다(``parsers/srum.py``). 그것을 출력에 적는다
+                      수 없다(``parsers/srum.py``). 그 안에서는 조인다 —
+                      페이지 크기를 **DB 헤더에서 읽어** 배수인지 보고,
+                      예약 페이지와 파일 범위까지 본다. 한계는 출력에 적는다
 ====================  ==========================================================
 
 ## 못 하는 것
@@ -74,7 +76,7 @@ import argparse
 import struct
 import sys
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator
 
@@ -115,6 +117,16 @@ VALID_RECORD_SIZES = (512, 1024, 2048, 4096)
 #: 한 줄에 찍을 바이트 수.
 DUMP_WIDTH = 16
 
+#: ESE 데이터베이스 헤더의 매직(``0x4``)과 페이지 크기(``0xEC``).
+#: 실측으로 확인했다 — ``docs/artifact-notes.md`` 2026-08-30 절.
+ESE_MAGIC = 0x89ABCDEF
+ESE_PAGE_SIZE_AT = 0xEC
+ESE_HEADER_PROBE = ESE_PAGE_SIZE_AT + 4
+
+#: ESE 는 앞의 두 페이지를 DB 헤더와 그 그림자로 쓴다. 레코드가 실린
+#: 페이지는 그 뒤다 — ``parsers/srum.py``의 ``PAGE_NUMBER_BIAS``와 같은 사실이다.
+ESE_RESERVED_PAGES = 2
+
 
 class HexdumpError(RuntimeError):
     """되짚을 수 없다. 사유를 그대로 사람에게 보인다."""
@@ -150,6 +162,10 @@ class Window:
     method: str
     #: 파일 끝에 걸려 요청보다 적게 읽었나.
     truncated: bool = False
+    #: **창 밖에서 온 사실.** 레코드 바이트만으로는 판정할 수 없는 것을
+    #: 대조에 넘긴다 — SRUM 의 페이지 크기가 그렇다. 파일 헤더가 말하는
+    #: 값이라 우리가 추측한 것이 아니다.
+    context: "dict[str, Any]" = field(default_factory=dict)
 
 
 # =============================================================== 레코드 찾기
@@ -297,6 +313,31 @@ def natural_length(artifact: str, probe: bytes) -> int:
     return FALLBACK_LENGTH
 
 
+def _context_for(artifact: str, stream: BinaryIO, file_size: int) -> "dict[str, Any]":
+    """레코드 바이트 밖에서 와야 하는 사실을 모은다.
+
+    지금은 SRUM 하나뿐입니다. ``offset``이 레코드가 아니라 **페이지**를
+    가리키므로(``parsers/srum.py``), 그 페이지 크기를 알아야 대조가
+    성립합니다. 그런데 **추측하면 안 됩니다** — 4096의 배수인지만 보면
+    8192짜리 DB에서 엉뚱한 오프셋도 통과합니다. ESE 데이터베이스 헤더가
+    ``0xEC``에 그 값을 들고 있으니 거기서 읽습니다.
+
+    실측으로 확인했습니다 — ``SRUDB.dat``(win10_sysmon_testimage.001)의
+    ``0x4``가 ``0x89ABCDEF``, ``0xEC``가 4096이고, ``dissect.esedb``의
+    ``db.page_size``도 같은 값입니다.
+    """
+    if not artifact.startswith("srum:"):
+        return {}
+
+    header = _read_at(stream, 0, ESE_HEADER_PROBE)
+    context: dict[str, Any] = {"file_size": file_size}
+    if len(header) >= 0x8:
+        context["ese_magic"] = _u32(header, 0x4)
+    if len(header) >= ESE_HEADER_PROBE:
+        context["page_size"] = _u32(header, ESE_PAGE_SIZE_AT)
+    return context
+
+
 def read_window(
     source: evidence.EvidenceSource,
     record: dict[str, Any],
@@ -327,6 +368,7 @@ def read_window(
         # 있는 구조(nk 앞 4바이트가 셀 크기다)라도 앞으로 물러서지 않는다 —
         # 덤프의 첫 바이트가 offset 이 가리키는 자리여야 되짚기가 성립한다.
         data = _read_at(stream, offset, want)
+        context = _context_for(artifact, stream, size)
 
     located = source.locate(artifact)
     return Window(
@@ -337,6 +379,7 @@ def read_window(
         source=str(path),
         method=located.method if located is not None else "unknown",
         truncated=len(data) < want,
+        context=context,
     )
 
 
@@ -595,24 +638,65 @@ def _verify_srum(record: dict[str, Any], window: Window) -> list[Check]:
     공유해서, 레코드 하나의 시작 바이트를 파일 좌표로 말할 수 없습니다
     (``parsers/srum.py``의 ``_file_offset``). 그 사실을 감추지 않고
     출력에 싣습니다.
+
+    **그 안에서는 최대한 조입니다.** "4096의 배수인가"만 보면 8192짜리
+    DB에서 절반이 엉뚱한 오프셋도 통과합니다. 페이지 크기는 DB 헤더가
+    말하는 값을 쓰고, 앞의 두 페이지(헤더와 그림자)에는 레코드가 있을 수
+    없다는 것과 페이지가 파일 안에 있다는 것까지 봅니다.
     """
-    aligned = [size for size in (4096, 8192, 16384, 32768) if window.offset % size == 0]
-    return [
+    magic = window.context.get("ese_magic")
+    page_size = int(window.context.get("page_size") or 0)
+    file_size = int(window.context.get("file_size") or 0)
+
+    checks = [
         Check(
-            bool(aligned),
+            magic == ESE_MAGIC,
+            "ESE 데이터베이스",
+            f"0x04 = 0x{magic:08X} (기대: 0x{ESE_MAGIC:08X})"
+            if isinstance(magic, int)
+            else "파일 헤더를 읽지 못했다",
+        )
+    ]
+    if page_size <= 0 or page_size % 512:
+        checks.append(
+            Check(False, "페이지 크기", f"헤더 0x{ESE_PAGE_SIZE_AT:X} 의 값이 이상하다 ({page_size})")
+        )
+        return checks
+
+    page = window.offset // page_size
+    checks.append(
+        Check(
+            window.offset % page_size == 0,
             "페이지 경계",
-            f"0x{window.offset:X} 는 {', '.join(f'{s // 1024}KB' for s in aligned)} 페이지 경계다"
-            if aligned
-            else f"0x{window.offset:X} 가 어떤 페이지 크기의 배수도 아니다",
-        ),
+            f"0x{window.offset:X} ÷ {page_size} = {page}"
+            + ("" if window.offset % page_size == 0 else " — 나머지가 있다"),
+        )
+    )
+    checks.append(
+        Check(
+            page >= ESE_RESERVED_PAGES,
+            "예약 페이지",
+            f"{page}번 페이지 (앞 {ESE_RESERVED_PAGES}개는 DB 헤더와 그림자라 레코드가 없다)",
+        )
+    )
+    if file_size > 0:
+        checks.append(
+            Check(
+                window.offset + page_size <= file_size,
+                "파일 범위",
+                f"페이지 끝 0x{window.offset + page_size:X} ≤ 파일 크기 0x{file_size:X}",
+            )
+        )
+    checks.append(
         Check(
             True,
             "대조 한계",
             "ESE 레코드는 페이지 안에서 태그로 가리켜진다 — 이 오프셋은 "
             f"레코드가 실린 **페이지**이고, 그 안에서는 AutoIncId {record['record_num']} 로 찾는다",
             hard=False,
-        ),
-    ]
+        )
+    )
+    return checks
 
 
 def verify(record: dict[str, Any], window: Window) -> list[Check]:

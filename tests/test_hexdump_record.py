@@ -146,8 +146,23 @@ def mft_row(ref: str, number: int, offset: int, name: str) -> dict:
     }
 
 
-def window_for(artifact: str, offset: int, data: bytes, ref: str = "X#0") -> Window:
-    return Window(ref=ref, artifact=artifact, offset=offset, data=data, source="합성", method="test")
+def window_for(
+    artifact: str, offset: int, data: bytes, ref: str = "X#0", context: "dict | None" = None
+) -> Window:
+    return Window(
+        ref=ref,
+        artifact=artifact,
+        offset=offset,
+        data=data,
+        source="합성",
+        method="test",
+        context=context or {},
+    )
+
+
+#: SRUM 대조가 창 밖에서 받아야 하는 사실. 실물 ``SRUDB.dat`` 의 값이다
+#: (매직 0x89ABCDEF, 페이지 4096, 파일 0x90000) — ``artifact-notes.md`` 2026-08-30.
+ESE_CONTEXT = {"ese_magic": 0x89ABCDEF, "page_size": 4096, "file_size": 0x90000}
 
 
 def hard_failures(checks: "list[Check]") -> "list[str]":
@@ -421,16 +436,60 @@ def test_srum_admits_it_is_page_granular():
         "ref": "SRUM-NET#12",
         "artifact": "srum:NetworkUsage",
         "record_num": 12,
-        "offset": "0x8000",
+        "offset": "0x30000",
         "flags": [],
     }
-    checks = verify(row, window_for("srum:NetworkUsage", 0x8000, b"\x00" * 64))
+    checks = verify(row, window_for("srum:NetworkUsage", 0x30000, b"\x00" * 64, context=ESE_CONTEXT))
     assert not hard_failures(checks)
     assert any("페이지" in c.detail for c in checks)
 
-    row["offset"] = "0x8001"
+
+def test_srum_page_size_comes_from_the_header_not_a_guess():
+    """8KB DB에서 4KB 배수만 보면 절반이 엉뚱한 오프셋도 통과한다."""
+    row = {
+        "ref": "SRUM-NET#12",
+        "artifact": "srum:NetworkUsage",
+        "record_num": 12,
+        "offset": "0x31000",
+        "flags": [],
+    }
+    context = dict(ESE_CONTEXT, page_size=8192)
     assert "페이지 경계" in hard_failures(
-        verify(row, window_for("srum:NetworkUsage", 0x8001, b"\x00" * 64))
+        verify(row, window_for("srum:NetworkUsage", 0x31000, b"\x00" * 64, context=context))
+    )
+
+
+def test_srum_rejects_the_reserved_pages():
+    """앞의 두 페이지는 DB 헤더와 그 그림자다. 레코드가 있을 수 없다."""
+    row = {
+        "ref": "SRUM-NET#12",
+        "artifact": "srum:NetworkUsage",
+        "record_num": 12,
+        "offset": "0x1000",
+        "flags": [],
+    }
+    assert "예약 페이지" in hard_failures(
+        verify(row, window_for("srum:NetworkUsage", 0x1000, b"\x00" * 64, context=ESE_CONTEXT))
+    )
+
+
+def test_srum_rejects_a_page_past_the_end_and_a_non_ese_file():
+    """파일 밖 페이지와, 애초에 ESE 가 아닌 파일."""
+    row = {
+        "ref": "SRUM-NET#12",
+        "artifact": "srum:NetworkUsage",
+        "record_num": 12,
+        "offset": "0x90000",
+        "flags": [],
+    }
+    assert "파일 범위" in hard_failures(
+        verify(row, window_for("srum:NetworkUsage", 0x90000, b"\x00" * 64, context=ESE_CONTEXT))
+    )
+
+    row["offset"] = "0x30000"
+    context = dict(ESE_CONTEXT, ese_magic=0xDEADBEEF)
+    assert "ESE 데이터베이스" in hard_failures(
+        verify(row, window_for("srum:NetworkUsage", 0x30000, b"\x00" * 64, context=context))
     )
 
 
@@ -502,3 +561,33 @@ def test_real_offsets_lead_back_to_the_same_records():
     for record in records:
         window = read_window(source, record)
         assert not hard_failures(verify(record, window)), record["ref"]
+
+
+@pytest.mark.skipif(not REAL_IMAGE.is_file(), reason="evidence/ 없음 (gitignore)")
+def test_real_srum_offsets_land_on_real_ese_pages():
+    """SRUM 은 페이지 단위라 대조가 다르다. 그것도 실물에서 본다.
+
+    ``dissect.esedb`` 가 없으면 04단계가 `ParseError` 로 멈추므로 여기서도
+    건너뜁니다. requirements.txt 에는 있으나 설치되지 않은 기계가 실재해
+    2026-08-30 대조에서 한 번 걸렸습니다.
+    """
+    pytest.importorskip("dissect.esedb", reason="requirements.txt 의 dissect.esedb 미설치")
+
+    from src.stage04_parse import evidence, parsers
+    from src.stage04_parse.parsers.base import Scope
+    from tools.hexdump_record import ESE_MAGIC, read_window
+
+    source = evidence.open_source(REAL_IMAGE, volume=REAL_VOLUME)
+    stream = source.open("srum:NetworkUsage")
+    try:
+        records = list(parsers.PARSERS["srum:NetworkUsage"].parse(stream, Scope()))
+    finally:
+        stream.close()
+
+    assert records
+    for record in records:
+        window = read_window(source, record)
+        assert not hard_failures(verify(record, window)), record["ref"]
+        # 페이지 크기를 추측하지 않았다는 것 자체를 고정한다.
+        assert window.context["ese_magic"] == ESE_MAGIC
+        assert window.context["page_size"] > 0
