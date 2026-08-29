@@ -591,3 +591,46 @@ def test_real_srum_offsets_land_on_real_ese_pages():
         # 페이지 크기를 추측하지 않았다는 것 자체를 고정한다.
         assert window.context["ese_magic"] == ESE_MAGIC
         assert window.context["page_size"] > 0
+
+
+# =============================================================== CLI 가드
+
+
+def test_sample_and_refs_together_is_refused(tmp_path, capsys):
+    """조용히 무시하면 "골라 준 레코드를 봤다"고 오해한다."""
+    mft = build_mft_record(41, "banker.exe")
+    volume, parsed = write_case(tmp_path, [mft_row("MFT#41", 41, 0, "banker.exe")], mft)
+
+    code = main(
+        ["MFT#41", "--sample", "2", "--parsed", str(parsed), "--evidence", str(volume)]
+    )
+    assert code == 1
+    assert "같이 줄 수 없다" in capsys.readouterr().err
+
+
+def test_unknown_artifact_name_does_not_look_like_an_empty_case(tmp_path, capsys):
+    """이름 오타와 "그 아티팩트를 파싱한 적이 없다"는 조치가 다르다."""
+    mft = build_mft_record(41, "banker.exe")
+    volume, parsed = write_case(tmp_path, [mft_row("MFT#41", 41, 0, "banker.exe")], mft)
+
+    code = main(
+        ["--sample", "2", "--artifact", "evtx:없는채널", "--parsed", str(parsed),
+         "--evidence", str(volume)]
+    )
+    assert code == 1
+    assert "아는 이름이 아니다" in capsys.readouterr().err
+
+
+def test_every_parsed_artifact_has_a_verifier():
+    """04단계가 내는 아티팩트인데 대조를 모르면 그 자리는 구멍이다.
+
+    파서가 늘 때 이 테스트가 먼저 걸립니다 — 도구는 모르는 아티팩트를
+    통과시키지 않지만, 그 사실을 실행해 봐야 아는 것과 여기서 아는 것은
+    다릅니다.
+    """
+    from src.stage04_parse.parse import OUTPUT_FILENAMES
+
+    for artifact in OUTPUT_FILENAMES:
+        row = {"ref": "X#1", "artifact": artifact, "record_num": 1, "offset": "0x0", "flags": []}
+        labels = [c.label for c in verify(row, window_for(artifact, 0, b"\x00" * 64))]
+        assert labels != ["대조"], f"{artifact} 를 대조할 줄 모른다"

@@ -807,9 +807,26 @@ def main(argv: "list[str] | None" = None) -> int:
         if args.sample <= 0:
             print("--sample 은 1 이상이어야 한다", file=sys.stderr)
             return 1
+        if args.refs:
+            # 조용히 무시하면 "골라 준 것을 봤다"고 오해한다.
+            print(
+                f"--sample 과 ref 를 같이 줄 수 없다 (준 ref: {', '.join(args.refs)}). "
+                "표본을 보려면 ref 를 빼고, 그 레코드를 보려면 --sample 을 뺀다",
+                file=sys.stderr,
+            )
+            return 1
+        if args.artifact is not None and args.artifact not in OUTPUT_FILENAMES:
+            # "레코드가 없다"로 뭉뚱그리면 이름 오타와 빈 산출물이 같아 보인다.
+            print(
+                f"--artifact {args.artifact!r} 는 04단계가 아는 이름이 아니다 "
+                f"(예: {', '.join(sorted(OUTPUT_FILENAMES)[:3])} …)",
+                file=sys.stderr,
+            )
+            return 1
         targets = sample_refs(parsed_dir, args.sample, args.artifact)
         if not targets:
-            print(f"{parsed_dir} 에 고를 레코드가 없다", file=sys.stderr)
+            where = f"{parsed_dir} 의 {args.artifact}" if args.artifact else str(parsed_dir)
+            print(f"{where} 에 고를 레코드가 없다 (그 아티팩트를 파싱한 적이 없다)", file=sys.stderr)
             return 1
     else:
         targets = list(args.refs)
