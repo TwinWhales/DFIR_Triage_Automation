@@ -89,4 +89,18 @@ $PY -m src.stage07_report.report \
 echo
 echo "done: $C/07_report.md"
 [[ -f "$C/errors.jsonl" ]] && echo "errors: $C/errors.jsonl ($(wc -l < "$C/errors.jsonl") 건)"
+
+# 다음에 할 일을 여기서 알려 준다. 실행한 사람의 눈이 여기 있고, 이 둘은
+# 실제 사건에서 거치는 자리다 (README "산출물 확인").
+#
+# **자동으로 돌리지 않는다.** 이 스크립트의 계약은 01→07 을 관통하는 것이고,
+# 확인은 사람이 결과를 보고 판단하는 일이다. 여기서 대신 돌려 종료 코드를
+# 바꾸면 "파이프라인이 실패했다" 와 "산출물이 스스로와 안 맞는다" 가 같아
+# 보인다.
+echo
+echo "확인:"
+echo "  $PY tools/inspect_jsonl.py --parsed $C/04_parsed"
+echo "      04 산출물이 매니페스트·ref 유일성과 맞는지 (어긋나면 종료 코드 1)"
+echo "  $PY tools/hexdump_record.py <ref> --parsed $C/04_parsed --evidence $EVIDENCE"
+echo "      보고서의 ref 를 디스크의 원본 바이트로 되짚는다"
 exit 0
