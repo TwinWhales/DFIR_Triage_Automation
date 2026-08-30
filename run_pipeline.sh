@@ -29,6 +29,28 @@
 # 04단계는 카탈로그에 등재된 아티팩트를 파싱한다($MFT, $UsnJrnl, evtx,
 # 레지스트리). --skip-existing 이 붙어 있으므로 cases/<id>/04_parsed/ 에 산출물이
 # 미리 있으면 건너뛴다. tools/make_case.py --seed-parsed 로 채울 수 있다.
+#
+# ## 실제 모델로 돌릴 때
+#
+# replay_dir 을 빼면 02·05 가 Ollama 를 부른다. 모델과 호출 조건은 환경
+# 변수로 넘긴다:
+#
+#   MODEL=qwen2.5:14b NUM_CTX=32768 TIMEOUT=900 TEMPERATURE=0.3 \
+#   VOLUME=1 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh K-001 evidence/x.001
+#
+# **MODEL 은 필수다.** 단계에도 기본값이 있지만 여기서는 받지 않는다 —
+# 산출물의 generator 필드가 "어느 모델로 돌린 결과인가"를 들고 있어야
+# 모델별 비교가 성립하는데(io.make_generator), 기본값에 기대면 그 값이
+# 실행한 사람의 기계 사정에 좌우된다.
+#
+#   MODEL       ollama 모델명 (필수). `ollama list` 의 이름 그대로
+#   NUM_CTX     컨텍스트 창. 기본값은 단계가 정한다(32768)
+#   TIMEOUT     한 번 호출의 상한(초). 60GB 급에서 120초는 부족하다는 실측이 있다
+#   TEMPERATURE 0 이면 재시도가 같은 답을 반복한다. 실측에서 존재하지 않는
+#               하위기법을 다섯 번 연속 냈다(docs/limitations.md 5장 ⑤)
+#   LIMIT       05단계가 모델에 보낼 레코드 수의 **상한**. 토큰 예산이
+#               더 낮으면 그쪽이 이긴다
+#   OLLAMA_HOST 기본 http://localhost:11434
 
 set -euo pipefail
 
@@ -52,8 +74,32 @@ if [[ -n "$REPLAY" ]]; then
   INTERPRET_LLM=(--llm stub --replay "$REPLAY/05_findings.json")
   echo "== 스텁 모드: $REPLAY (실제 추론 없음) =="
 else
-  NORMALIZE_LLM=(--llm ollama)
-  INTERPRET_LLM=(--llm ollama)
+  if [[ -z "${MODEL:-}" ]]; then
+    echo "MODEL 이 필요하다 — 실제 모델로 돌리려면 모델명을 준다." >&2
+    echo "  MODEL=<이름> PYTHON=$PY ./run_pipeline.sh $CASE_ID $EVIDENCE" >&2
+    echo "  설치된 이름은 'ollama list' 로 본다." >&2
+    echo "  모델 없이 배선만 볼 거면 세 번째 인자로 replay 디렉터리를 준다." >&2
+    exit 2
+  fi
+
+  # 있을 때만 붙인다. 빈 값을 그대로 넘기면 인자 없는 플래그가 되어
+  # argparse 가 뒤 인자를 값으로 먹는다 — VOLUME 과 같은 이유다.
+  COMMON_LLM=(--llm ollama --model "$MODEL")
+  [[ -n "${NUM_CTX:-}" ]] && COMMON_LLM+=(--num-ctx "$NUM_CTX")
+  [[ -n "${TIMEOUT:-}" ]] && COMMON_LLM+=(--timeout "$TIMEOUT")
+  [[ -n "${TEMPERATURE:-}" ]] && COMMON_LLM+=(--temperature "$TEMPERATURE")
+  [[ -n "${OLLAMA_HOST:-}" ]] && COMMON_LLM+=(--host "$OLLAMA_HOST")
+
+  NORMALIZE_LLM=("${COMMON_LLM[@]}")
+  INTERPRET_LLM=("${COMMON_LLM[@]}")
+  # --limit 은 05단계에만 있다. 02단계에 붙이면 argparse 가 거부한다.
+  [[ -n "${LIMIT:-}" ]] && INTERPRET_LLM+=(--limit "$LIMIT")
+
+  echo "== 실제 모델: $MODEL${NUM_CTX:+ (num_ctx $NUM_CTX)} =="
+  if [[ -z "${TEMPERATURE:-}" ]]; then
+    # 조용히 0 으로 도는 것이 함정이라 여기서 말한다. 실측 근거는 위 주석에.
+    echo "   temperature 를 안 줬다 — 0 이면 재시도가 같은 답을 반복한다"
+  fi
 fi
 
 echo "== 02 정규화 =="
