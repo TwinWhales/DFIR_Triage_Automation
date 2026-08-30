@@ -135,7 +135,7 @@ dfir-triage/
     ├── decode_hive_values.py      # 하이브 값을 명세대로 직접 디코딩
     ├── scan_prefetch.py           # .pf를 파서와 다른 길로 읽어 대조
     ├── scan_recentfilecache.py    # .bcf를 길이 필드 없이 읽어 대조
-    ├── inspect_jsonl.py           # 파싱 결과 빠른 조회 (미구현)
+    ├── inspect_jsonl.py           # 04 산출물 요약·조회 + 매니페스트 대조
     └── hexdump_record.py          # ref의 원본 바이트를 되짚어 덤프하고 대조
 ```
 
@@ -172,6 +172,22 @@ EDR·SIEM 알럿은 이미 구조화되어 있으므로 LLM 없이 스키마로 
 ### `cases/`는 Git에서 제외
 
 실행 산출물은 케이스당 수백 MB가 될 수 있고 증거 데이터를 포함하므로 커밋하지 않습니다. `.gitignore`에 `cases/*`와 `benchmark/datasets/*/evidence/`를 넣습니다. 대신 발표용으로 선별한 산출물은 `docs/`에 별도 복사합니다.
+
+### `tools/inspect_jsonl.py`
+
+`04_parsed/`는 파일이 스무 개가 넘고 `$MFT`·`$UsnJrnl`은 수십 MB입니다.
+"뭐가 몇 건 나왔나", "이 경로가 걸린 레코드가 있나"를 보는 자리이고, 팀
+기계는 Windows라 `jq`가 있다고 가정할 수 없습니다.
+
+**요약은 `_manifest.json`을 그대로 옮기지 않고 파일을 세어 맞춰 봅니다.**
+매니페스트의 `record_count`는 07단계 보고서가 싣는 값인데, 실물 실행에서
+그것이 파일과 같은지 아무도 보지 않았습니다(벤치마크 데이터셋만 테스트가
+대조합니다). `ref` 유일성과 `record_num`—`ref` 일치도 함께 봅니다. 앞의
+것은 05·06단계에 가서야 터지고, 뒤의 것은 스키마가 보지 않는 불변식입니다.
+하나라도 어긋나면 종료 코드가 1입니다.
+
+원본 바이트가 필요하면 `hexdump_record.py`로 넘깁니다. 흉내 내면 진실이
+둘이 됩니다.
 
 ### `tools/hexdump_record.py`
 

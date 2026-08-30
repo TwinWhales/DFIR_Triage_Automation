@@ -21,8 +21,8 @@
 ## 자주 쓰는 명령
 
 ```bash
-# 테스트 — 전체 972개. skip 은 evidence/ 이미지가 없어 실물 대조가 빠지는
-#          것이라 기계마다 다르다 (이미지 둘 있는 기계에서 963 통과 + 9 skip)
+# 테스트 — 전체 993개. skip 은 evidence/ 이미지가 없어 실물 대조가 빠지는
+#          것이라 기계마다 다르다 (이미지 둘 있는 기계에서 984 통과 + 9 skip)
 .venv/Scripts/python.exe -m pytest -q
 
 # 관통 실행 (LLM 스텁, 세 번째 인자가 replay 디렉터리)
@@ -39,6 +39,9 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 
 # 검증기가 과엄격해지지 않았는지 확인 (하나라도 기각되면 환각률이 오염된 것)
 .venv/Scripts/python.exe benchmark/validator_check.py
+
+# 04 산출물 요약 — 매니페스트·ref 유일성까지 대조한다 (어긋나면 1)
+.venv/Scripts/python.exe tools/inspect_jsonl.py --parsed cases/<케이스>/04_parsed
 
 # 파서를 고쳤으면 offset 이 여전히 원본을 가리키는지 (어긋나면 1)
 .venv/Scripts/python.exe tools/hexdump_record.py --sample 20 \

@@ -161,6 +161,13 @@ OUTPUT_FILENAMES = { ..., "registry:SYSTEM": "registry_system.jsonl" }
 | `prefetch` | `tools/scan_prefetch.py` — 메트릭 배열을 보지 않고 문자열 블록을 쪼갠다 |
 | `recentfilecache` | `tools/scan_recentfilecache.py` — 길이 필드를 보지 않고 널로 쪼갠다 |
 | 전 아티팩트 | `tools/hexdump_record.py` — `offset` 으로 원본에 내려가 그 레코드가 맞는지 본다 |
+| 전 아티팩트 | `tools/inspect_jsonl.py` — 매니페스트·`ref` 유일성·`record_num` 대조 |
+
+**실물 한 번 돌린 뒤 `inspect_jsonl.py --parsed <04_parsed>` 를 통과시킨다.**
+새 파서가 깨뜨리기 쉬운 넷을 본다 — 매니페스트의 건수가 파일과 같은가,
+`ref` 가 다른 파서의 것과 겹치지 않는가, `record_num` 이 `ref` 의 숫자와
+같은가, 레코드의 `artifact` 가 그 파일의 것인가. 앞의 둘은 안 보면 05·06
+단계에 가서야 터진다.
 
 **새 파서는 `hexdump_record.py` 의 대조에도 자리를 만들어야 한다.** 모르는
 아티팩트가 오면 그 도구는 통과시키지 않고 "어떻게 대조하는지 모른다"고
