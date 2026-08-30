@@ -21,9 +21,14 @@
 ## 자주 쓰는 명령
 
 ```bash
-# 테스트 — 전체 993개. skip 은 evidence/ 이미지가 없어 실물 대조가 빠지는
-#          것이라 기계마다 다르다 (이미지 둘 있는 기계에서 984 통과 + 9 skip)
+# 테스트 — 전체 999개. skip 은 evidence/ 이미지와 실제 모델이 없어 빠지는
+#          것이라 기계마다 다르다 (이미지 둘 있는 기계에서 986 통과 + 13 skip)
 .venv/Scripts/python.exe -m pytest -q
+
+# 실제 모델로 02·05 를 불러 본다. 이 변수가 없으면 위 실행에서 통째로 빠진다.
+# 스텁으로는 안 나오는 부류를 잡는다 — 프롬프트가 모델에게 말이 되는지,
+# 응답이 파서를 통과하는지, 지어낸 ref 를 우리가 거르는지.
+DFIR_LIVE_MODEL=qwen2.5:14b .venv/Scripts/python.exe -m pytest tests/test_llm_live.py -v
 
 # 관통 실행 (LLM 스텁, 세 번째 인자가 replay 디렉터리)
 PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
@@ -115,5 +120,20 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 
 ## 현재 상태 한 줄
 
-01→07 전 구간이 관통한다. 남은 대체물은 **02·05의 LLM 호출이 스텁**인 것과,
-**사람이 만든 정답 데이터가 없어 수치가 자기채점**인 것 두 가지다.
+01→07 전 구간이 **실제 모델로** 관통한다 (`qwen2.5:7b`, 60GB 이미지, 5분 30초.
+`--llm stub`은 못 만든 자리가 아니라 테스트·리플레이용 백엔드다).
+
+**목표 시나리오는 키오스크다.** `C-001-webshell`은 지금 있는 유일한 벤치마크
+데이터셋일 뿐 목표가 아니다 — 매핑·flags·기법 목록을 넓히는 작업은 키오스크를
+기준으로 우선순위를 정한다.
+
+남은 것 셋:
+
+- **키오스크 축이 미검증이다.** `AssignedAccess` 3종·`DriverFrameworks`·
+  `RDPConnection` 다섯 채널이 손에 있는 이미지에 없어, 파일 경로 문자열과
+  `event_id` 추정값을 실물로 맞춰 본 적이 없다. `unexpected_parent_process`가
+  `explorer.exe`를 이상으로 보는 가정도 Assigned Access 를 켠 스냅샷이 있어야
+  잰다 (`work.md` 0번).
+- **02단계가 입력에 없는 경로를 지어낸다.** 그 값이 03단계의 선별 기준 경로가
+  되는데 아무도 검증하지 않는다 (`work.md` 7번).
+- **사람이 만든 정답 데이터가 없어 수치가 자기채점**이다.

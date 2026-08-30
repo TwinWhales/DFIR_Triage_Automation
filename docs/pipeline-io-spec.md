@@ -565,7 +565,9 @@ $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황�
 
 `type`과 `action`은 고정 어휘로 관리합니다. 발표 자료의 통계가 여기서 직접 산출되기 때문입니다.
 
-- `type`: `schema_violation` / `parse_error` / `malformed_output` / `empty_result` / `timeout`
+- `type`: `schema_violation` / `parse_error` / `malformed_output` / `empty_result` / `timeout` / `llm_error`
+
+`llm_error`는 모델 호출이 **타임아웃이 아닌 이유로** 실패한 것입니다 — 모델명 오타, 서버 미기동, 잘못된 호스트. `timeout`과 합치지 않는 이유는 조치가 다르기 때문입니다(기다릴 것인가, 설정을 고칠 것인가). **재시도하지 않고 즉시 중단합니다** — 세 번 불러도 같은 답이라 시간만 씁니다. 어휘는 `src/common/errors.py`의 `ERROR_TYPES`가 코드로 강제합니다.
 - `action`: `retry` / `skip` / `abort`
 
 예를 들어 `stage=02_normalize`이면서 `type=schema_violation`인 항목을 케이스 수로 나누면 정규화 단계 실패율이 나오고, `detail.field` 분포를 보면 어떤 필드에서 sLLM이 자주 틀리는지 드러납니다. 이것이 이후 폴백 설계의 근거 데이터가 됩니다.

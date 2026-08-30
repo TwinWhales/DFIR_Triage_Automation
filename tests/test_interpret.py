@@ -22,14 +22,19 @@ PARSED = MOCK / "04_parsed"
 
 
 class FakeBackend:
-    def __init__(self, *responses: str) -> None:
+    def __init__(self, *responses: "str | Exception") -> None:
         self.responses = list(responses)
         self.calls: list[tuple[str, str]] = []
         self.name = "fake"
 
     def complete(self, system: str, user: str) -> str:
         self.calls.append((system, user))
-        return self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
+        response = self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
+        # 예외를 그대로 두면 호출 실패가 아니라 이상한 응답이 된다
+        # (test_normalize.py 의 FakeBackend 와 같은 규약).
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 @pytest.fixture(scope="module")
@@ -163,6 +168,26 @@ def test_input_refs_come_from_us_not_from_the_model():
     body = {"findings": [], "timeline": [], "input_refs": ["MFT#99999"]}
     doc = build_findings(body, "C-001", "test", ["MFT#12345"])
     assert doc["input_refs"] == ["MFT#12345"]
+
+
+def test_a_call_failure_that_is_not_a_timeout_aborts_without_retrying(
+    records, scenario, tmp_path
+):
+    """02단계와 같은 규약이다. 두 단계가 갈리면 어느 쪽이 맞는지 알 수 없다."""
+    from src.common import llm
+
+    selected = _selected(records.values())
+    backend = FakeBackend(
+        llm.LLMError("존재하지-않는-모델:v0: HTTP 400 — invalid model name"),
+        (MOCK / "05_findings.json").read_text(encoding="utf-8"),
+    )
+    log = errlog.ErrorLog.for_case(tmp_path)
+    with pytest.raises(SystemExit):
+        interpret(scenario, selected, InterpretClient(backend), log)
+
+    logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    assert [(e["type"], e["action"]) for e in logged] == [("llm_error", "abort")]
+    assert len(backend.calls) == 1
 
 
 def test_output_matches_the_findings_schema(records, scenario, tmp_path):

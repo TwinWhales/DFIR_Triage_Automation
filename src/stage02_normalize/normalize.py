@@ -128,6 +128,16 @@ def normalize(
             log.record(STAGE, "timeout", {"message": str(e)}, action="retry", attempt=attempt)
             feedback = None
 
+        except llm.LLMError as e:
+            # 타임아웃이 아닌 호출 실패는 **재시도해도 같은 결과다** — 모델명
+            # 오타, 서버 미기동, 잘못된 호스트. 세 번 반복하며 시간만 쓴다.
+            #
+            # 예전에는 이 예외를 아무도 잡지 않아 파이썬 트레이스백이 그대로
+            # 올라왔다. 멈추기는 했지만 errors.jsonl 에 남지 않아 07단계가
+            # 볼 수 없었고, "폴백을 만들지 않는다 — 실패는 errors.jsonl 에
+            # 기록하고 사유를 출력하며 중단한다"는 규약 밖이었다.
+            log.abort(STAGE, "llm_error", {"message": str(e)})
+
         except schema.SchemaViolation as violation:
             detail = violation.as_detail()
             saved = dump_raw(log, attempt, client.last_raw)
