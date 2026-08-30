@@ -55,6 +55,13 @@ schemas/
 
 레코드 번호는 아티팩트 내부의 고유 번호(MFT 레코드 번호, EVTX RecordId 등)를 그대로 씁니다. 자체 일련번호를 새로 매기면 원본 대조가 어려워집니다.
 
+**그 대조를 실제로 하는 자리가 있습니다.** 보고서의 `ref`를 그대로 넘기면 디스크의 원본 바이트가 나오고, 거기 있는 바이트가 정말 그 레코드인지까지 봅니다.
+
+```bash
+.venv/Scripts/python.exe tools/hexdump_record.py MFT#12345 \
+  --parsed cases/<케이스>/04_parsed --evidence <증거> [--volume N]
+```
+
 ---
 
 ## 01_input.json
@@ -302,6 +309,16 @@ defaults:
   "flagged_records": 5
 }
 ```
+
+### 이 값들이 파일과 같은지 보는 방법
+
+`record_count`·`total_records`는 **07단계 보고서가 그대로 싣는 값**입니다. 매니페스트는 04단계가 자기가 셌다고 적은 수이므로, 파일과 같은지는 따로 봐야 합니다.
+
+```bash
+.venv/Scripts/python.exe tools/inspect_jsonl.py --parsed cases/<케이스>/04_parsed
+```
+
+건수 대조에 더해 `ref` 유일성(겹치면 05·06단계가 섭니다)과 `record_num` = `ref`의 숫자(스키마가 보지 않는 불변식입니다)까지 봅니다. 어긋나면 종료 코드가 1입니다.
 
 ### `skipped` — 읽지 못한 아티팩트
 
