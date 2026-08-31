@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.common import attack, errors, io, refs
+from casepaths import FIXTURES
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -282,7 +283,7 @@ def test_abort_records_then_exits_nonzero(tmp_path):
 
 def test_tally_produces_the_presentation_numbers():
     stats = errors.tally(
-        REPO_ROOT / "benchmark/datasets/C-001-webshell/mock/errors.jsonl"
+        FIXTURES / "errors.jsonl"
     )
     assert stats["total"] == 4
     assert stats["by_type"]["schema_violation"] == 2

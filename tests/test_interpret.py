@@ -15,10 +15,9 @@ from src.stage05_interpret import interpret as interpret_mod
 from src.stage05_interpret import record_filter
 from src.stage05_interpret.interpret import build_findings, interpret
 from src.stage05_interpret.llm_client import InterpretClient
+from casepaths import FIXTURES
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
-PARSED = MOCK / "04_parsed"
+PARSED = FIXTURES / "04_parsed"
 
 
 class FakeBackend:
@@ -47,7 +46,7 @@ def records():
 
 @pytest.fixture
 def scenario():
-    return copy.deepcopy(io.read_json(MOCK / "02_scenario.json"))
+    return copy.deepcopy(io.read_json(FIXTURES / "02_scenario.json"))
 
 
 def _mft(ref, **fields):
@@ -75,7 +74,7 @@ def test_reproduces_the_mock_input_refs(records):
     # 목업의 input_refs가 곧 이 함수의 기대 출력이다. MFT#12400은
     # 파싱은 됐으나 전달되지 않은 레코드로 일부러 넣어 둔 것이다.
     selected = _selected(records.values())
-    assert [r["ref"] for r in selected] == io.read_json(MOCK / "05_findings.json")["input_refs"]
+    assert [r["ref"] for r in selected] == io.read_json(FIXTURES / "05_findings.json")["input_refs"]
 
 
 def test_flagged_records_are_always_included():
@@ -182,7 +181,7 @@ def test_a_call_failure_that_is_not_a_timeout_aborts_without_retrying(
     selected = _selected(records.values())
     backend = FakeBackend(
         llm.LLMError("존재하지-않는-모델:v0: HTTP 400 — invalid model name"),
-        (MOCK / "05_findings.json").read_text(encoding="utf-8"),
+        (FIXTURES / "05_findings.json").read_text(encoding="utf-8"),
     )
     log = errlog.ErrorLog.for_case(tmp_path)
     with pytest.raises(SystemExit):
@@ -196,17 +195,17 @@ def test_a_call_failure_that_is_not_a_timeout_aborts_without_retrying(
 def test_output_matches_the_findings_schema(records, scenario, tmp_path):
     selected = _selected(records.values())
     client = InterpretClient(
-        FakeBackend((MOCK / "05_findings.json").read_text(encoding="utf-8"))
+        FakeBackend((FIXTURES / "05_findings.json").read_text(encoding="utf-8"))
     )
     doc = interpret(scenario, selected, client, errlog.ErrorLog.for_case(tmp_path))
     schema.validate(doc, "findings")
 
 
 def test_reproduces_the_findings_fixture(records, scenario, tmp_path):
-    expected = io.read_json(MOCK / "05_findings.json")
+    expected = io.read_json(FIXTURES / "05_findings.json")
     selected = _selected(records.values())
     client = InterpretClient(
-        FakeBackend((MOCK / "05_findings.json").read_text(encoding="utf-8"))
+        FakeBackend((FIXTURES / "05_findings.json").read_text(encoding="utf-8"))
     )
     got = interpret(scenario, selected, client, errlog.ErrorLog.for_case(tmp_path))
 
@@ -218,7 +217,7 @@ def test_reproduces_the_findings_fixture(records, scenario, tmp_path):
 
 def test_the_prompt_tells_the_model_which_refs_exist(records, scenario, tmp_path):
     selected = _selected(records.values())
-    backend = FakeBackend((MOCK / "05_findings.json").read_text(encoding="utf-8"))
+    backend = FakeBackend((FIXTURES / "05_findings.json").read_text(encoding="utf-8"))
     interpret(scenario, selected, InterpretClient(backend), errlog.ErrorLog.for_case(tmp_path))
 
     prompt = backend.calls[0][1]
@@ -228,11 +227,11 @@ def test_the_prompt_tells_the_model_which_refs_exist(records, scenario, tmp_path
 
 def test_a_schema_violation_is_retried(records, scenario, tmp_path):
     log = errlog.ErrorLog.for_case(tmp_path)
-    broken = copy.deepcopy(io.read_json(MOCK / "05_findings.json"))
+    broken = copy.deepcopy(io.read_json(FIXTURES / "05_findings.json"))
     broken["findings"][0]["severity"] = "catastrophic"
     backend = FakeBackend(
         json.dumps(broken, ensure_ascii=False),
-        (MOCK / "05_findings.json").read_text(encoding="utf-8"),
+        (FIXTURES / "05_findings.json").read_text(encoding="utf-8"),
     )
     selected = _selected(records.values())
     interpret(scenario, selected, InterpretClient(backend), log)
@@ -248,7 +247,7 @@ def test_the_failed_response_is_kept_verbatim(records, scenario, tmp_path):
     log = errlog.ErrorLog.for_case(tmp_path)
     backend = FakeBackend(
         "여기서 잘렸습니다 {\"findings\": [",
-        (MOCK / "05_findings.json").read_text(encoding="utf-8"),
+        (FIXTURES / "05_findings.json").read_text(encoding="utf-8"),
     )
     selected = _selected(records.values())
     interpret(scenario, selected, InterpretClient(backend), log)
@@ -264,11 +263,11 @@ def test_the_failed_response_is_kept_verbatim(records, scenario, tmp_path):
 def test_a_schema_violation_keeps_the_response_too(records, scenario, tmp_path):
     # JSON 이긴 한데 스키마를 어긴 경우가 실측에서 더 잦았다.
     log = errlog.ErrorLog.for_case(tmp_path)
-    broken = copy.deepcopy(io.read_json(MOCK / "05_findings.json"))
+    broken = copy.deepcopy(io.read_json(FIXTURES / "05_findings.json"))
     broken["findings"][0]["severity"] = "catastrophic"
     backend = FakeBackend(
         json.dumps(broken, ensure_ascii=False),
-        (MOCK / "05_findings.json").read_text(encoding="utf-8"),
+        (FIXTURES / "05_findings.json").read_text(encoding="utf-8"),
     )
     interpret(scenario, _selected(records.values()), InterpretClient(backend), log)
 
@@ -298,10 +297,10 @@ def test_cli_stub_run(tmp_path):
     code = interpret_mod.main(
         [
             "--in", str(PARSED),
-            "--scenario", str(MOCK / "02_scenario.json"),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
             "--out", str(out),
             "--llm", "stub",
-            "--replay", str(MOCK / "05_findings.json"),
+            "--replay", str(FIXTURES / "05_findings.json"),
         ]
     )
     assert code == 0
@@ -323,12 +322,12 @@ def test_cli_ties_the_output_cap_to_the_reserved_budget(monkeypatch, tmp_path, r
 
     def fake_build_backend(kind, **kwargs):
         captured.update(kwargs)
-        return FakeBackend((MOCK / "05_findings.json").read_text(encoding="utf-8"))
+        return FakeBackend((FIXTURES / "05_findings.json").read_text(encoding="utf-8"))
 
     monkeypatch.setattr(interpret_mod.llm, "build_backend", fake_build_backend)
     argv = [
         "--in", str(PARSED),
-        "--scenario", str(MOCK / "02_scenario.json"),
+        "--scenario", str(FIXTURES / "02_scenario.json"),
         "--out", str(tmp_path / "05_findings.json"),
         "--llm", "ollama", "--model", "m",
     ]
@@ -348,10 +347,10 @@ def test_cli_aborts_when_no_record_carries_a_signal(tmp_path):
         interpret_mod.main(
             [
                 "--in", str(parsed),
-                "--scenario", str(MOCK / "02_scenario.json"),
+                "--scenario", str(FIXTURES / "02_scenario.json"),
                 "--out", str(tmp_path / "05_findings.json"),
                 "--llm", "stub",
-                "--replay", str(MOCK / "05_findings.json"),
+                "--replay", str(FIXTURES / "05_findings.json"),
             ]
         )
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
@@ -368,10 +367,10 @@ def test_cli_aborts_when_the_budget_admits_nothing(tmp_path, capsys):
         interpret_mod.main(
             [
                 "--in", str(PARSED),
-                "--scenario", str(MOCK / "02_scenario.json"),
+                "--scenario", str(FIXTURES / "02_scenario.json"),
                 "--out", str(tmp_path / "05_findings.json"),
                 "--llm", "stub",
-                "--replay", str(MOCK / "05_findings.json"),
+                "--replay", str(FIXTURES / "05_findings.json"),
                 # 출력 자리로 창을 통째로 떼어 레코드에 남는 예산을 0으로.
                 "--num-ctx", "4096",
                 "--reserve-output-tokens", "4096",
@@ -389,10 +388,10 @@ def test_cli_says_so_when_the_budget_trims_seats(tmp_path, capsys):
     code = interpret_mod.main(
         [
             "--in", str(PARSED),
-            "--scenario", str(MOCK / "02_scenario.json"),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
             "--out", str(out),
             "--llm", "stub",
-            "--replay", str(MOCK / "05_findings.json"),
+            "--replay", str(FIXTURES / "05_findings.json"),
             # 레코드 넷 중 둘만 들어갈 만큼만 연다.
             "--num-ctx", "5300",
             "--reserve-output-tokens", "4096",
@@ -412,10 +411,10 @@ def test_a_roomy_context_says_nothing_about_the_budget(tmp_path, capsys):
     interpret_mod.main(
         [
             "--in", str(PARSED),
-            "--scenario", str(MOCK / "02_scenario.json"),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
             "--out", str(tmp_path / "05_findings.json"),
             "--llm", "stub",
-            "--replay", str(MOCK / "05_findings.json"),
+            "--replay", str(FIXTURES / "05_findings.json"),
         ]
     )
     assert "토큰 예산" not in capsys.readouterr().out

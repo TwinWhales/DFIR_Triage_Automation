@@ -17,10 +17,10 @@ import pytest
 
 from benchmark import evaluate, validator_check
 from src.common import io, schema
+from casepaths import FIXTURES, case_file
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATASET = REPO_ROOT / "benchmark/datasets/C-001-webshell"
-MOCK = DATASET / "mock"
 
 
 @pytest.fixture
@@ -34,8 +34,8 @@ def case_dir(tmp_path):
         "01_input.json", "02_scenario.json", "03_selection.json",
         "05_findings.json", "06_verified.json", "errors.jsonl",
     ):
-        shutil.copy(MOCK / name, target / name)
-    shutil.copytree(MOCK / "04_parsed", target / "04_parsed")
+        shutil.copy(case_file(name), target / name)
+    shutil.copytree(FIXTURES / "04_parsed", target / "04_parsed")
     return target
 
 
@@ -63,7 +63,7 @@ def test_shipped_ground_truth_matches_its_schema():
 
 def test_ground_truth_refs_exist_in_the_parsed_mock():
     # 정답이 실재하지 않는 레코드를 가리키면 재현율이 영원히 100%에 못 간다.
-    parsed = set(io.read_parsed_records(MOCK / "04_parsed"))
+    parsed = set(io.read_parsed_records(FIXTURES / "04_parsed"))
     for entry in io.read_json(DATASET / "ground_truth.json")["required_refs"]:
         assert entry["ref"] in parsed, entry["ref"]
 
@@ -178,7 +178,7 @@ def test_without_stage04_the_funnel_says_so(truth, tmp_path):
     partial = tmp_path / "partial"
     partial.mkdir()
     for name in ("02_scenario.json", "03_selection.json", "05_findings.json", "06_verified.json"):
-        shutil.copy(MOCK / name, partial / name)
+        shutil.copy(case_file(name), partial / name)
 
     result = evaluate.evaluate_case(_dataset_with(tmp_path, truth), partial)
     assert "04 미실행" in result["evidence"]["status"]

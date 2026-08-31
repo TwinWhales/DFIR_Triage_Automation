@@ -2,7 +2,7 @@
 
 `src/common/`과 함께 단계들의 유일한 접점입니다. **변경은 전체 공지 대상입니다.**
 
-스키마는 상상해서 쓴 것이 아니라 `benchmark/datasets/C-001-webshell/mock/`의
+스키마는 상상해서 쓴 것이 아니라 `benchmark/fixtures/C-001-webshell/`의
 실제 파일에서 역산했습니다. `tests/test_schemas.py`가 목업이 여전히 통과하는지
 확인합니다. 통과하는 인스턴스가 존재하지 않는 스키마를 동결하면 담당자들이
 각자 다른 해석으로 구현하게 됩니다.

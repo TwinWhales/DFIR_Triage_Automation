@@ -9,7 +9,7 @@
 # 실제 경로를 그대로 지나가고 네트워크 호출만 대체된다.
 #
 #   ./run_pipeline.sh C-001 /mnt/evidence/WEB01 \
-#       benchmark/datasets/C-001-webshell/mock
+#       benchmark/fixtures/C-001-webshell
 #
 # evidence_root 는 **볼륨 루트**다. KAPE 출력이면 <수집폴더>/C 이지
 # <수집폴더>가 아니다. 볼륨이 여럿이면 케이스를 나눠 각각 돌린다

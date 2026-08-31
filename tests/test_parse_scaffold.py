@@ -14,9 +14,9 @@ import pytest
 from src.common import io
 from src.stage04_parse import evidence
 from src.stage04_parse.parsers.base import Scope
+from casepaths import GOLDEN
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
 
 
 def _utc(text: str) -> datetime:
@@ -29,7 +29,7 @@ def _utc(text: str) -> datetime:
 
 
 def test_scope_reads_the_real_selection():
-    selection = io.read_json(MOCK / "03_selection.json")
+    selection = io.read_json(GOLDEN / "03_selection.json")
     mft = next(e for e in selection["selected"] if e["artifact"] == "$MFT")
     scope = Scope.from_selection(mft["scope"])
 

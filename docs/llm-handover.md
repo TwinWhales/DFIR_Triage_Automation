@@ -167,7 +167,7 @@ A부를 건너뛰면 B부의 "건드리면 안 되는 것"이 왜 그런지 납�
 
 말로 설명하는 것보다 값을 보는 게 빠릅니다. 저장소에 들어 있는 예제 케이스
 하나를 처음부터 끝까지 따라갑니다. 파일은
-`benchmark/datasets/C-001-webshell/mock/` 에 있습니다.
+`benchmark/fixtures/C-001-webshell/` 에 있습니다.
 
 ### ① 01_input.json — 사람이 적은 상황
 
@@ -408,7 +408,7 @@ python -m venv .venv
 ```bash
 .venv/Scripts/python.exe tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \
   --input benchmark/datasets/C-001-webshell/input.json \
-  --seed-parsed benchmark/datasets/C-001-webshell/mock/04_parsed
+  --seed-parsed benchmark/fixtures/C-001-webshell/04_parsed
 ```
 
 `--seed-parsed`는 파싱 결과를 미리 넣어 두는 것입니다. 이제 카탈로그의
@@ -417,7 +417,7 @@ python -m venv .venv
 
 ```bash
 PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
-  benchmark/datasets/C-001-webshell/mock
+  benchmark/fixtures/C-001-webshell
 ```
 
 ```
@@ -440,7 +440,7 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 
 ```bash
 .venv/Scripts/python.exe -m src.stage06_verify.verify \
-  --findings benchmark/datasets/C-001-webshell/mock/05_findings.bad.json \
+  --findings benchmark/fixtures/C-001-webshell/05_findings.bad.json \
   --parsed cases/C-001/04_parsed/ --out /tmp/06_bad.json
 ```
 
@@ -692,7 +692,7 @@ FINDINGS_BODY_FIELDS = ("findings", "timeline")   # input_refs 없음
 | 응답에서 JSON을 못 찾는다 | `src/common/llm.py`의 `extract_json` |
 | 스키마 위반이 반복된다 | 위반 필드가 `errors.jsonl`의 `detail.field`에 |
 | 모델 없이 뒷단만 보고 싶다 | `--llm stub --replay <mock 파일>` |
-| 데이터가 어떻게 생겼는지 | `schemas/*.schema.json` + `benchmark/datasets/C-001-webshell/mock/` |
+| 데이터가 어떻게 생겼는지 | `schemas/*.schema.json` + `benchmark/fixtures/C-001-webshell/` |
 | 왜 이렇게 짰는지 | 각 모듈 최상단 docstring |
 
 모든 단계 CLI에 `--help`가 있습니다.

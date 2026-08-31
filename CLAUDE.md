@@ -32,7 +32,7 @@ DFIR_LIVE_MODEL=qwen2.5:14b .venv/Scripts/python.exe -m pytest tests/test_llm_li
 
 # 관통 실행 (LLM 스텁, 세 번째 인자가 replay 디렉터리)
 PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
-  benchmark/datasets/C-001-webshell/mock
+  benchmark/fixtures/C-001-webshell
 
 # 단계 하나만
 .venv/Scripts/python.exe -m src.stage04_parse.parse \

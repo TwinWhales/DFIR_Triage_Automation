@@ -20,9 +20,9 @@ from src.stage04_parse.parse import group_by_artifact, merge_scopes
 from src.stage05_interpret import interpret as interpret_mod
 from src.stage06_verify import verify as verify_mod
 from src.stage07_report import report as report_mod
+from casepaths import FIXTURES, GOLDEN
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
 MAPPINGS = REPO_ROOT / "mappings"
 
 
@@ -71,17 +71,17 @@ def test_the_same_artifact_requested_twice_is_read_once():
 
 
 def test_real_selection_groups_cleanly():
-    grouped = group_by_artifact(io.read_json(MOCK / "03_selection.json"))
+    grouped = group_by_artifact(io.read_json(GOLDEN / "03_selection.json"))
     assert set(grouped) == {"$MFT", "evtx:Security"}
     assert grouped["$MFT"]["extensions"] == [".aspx", ".asp", ".ashx", ".asmx"]
 
 
 def test_parse_skips_when_output_already_exists(tmp_path):
     out = tmp_path / "04_parsed"
-    shutil.copytree(MOCK / "04_parsed", out)
+    shutil.copytree(FIXTURES / "04_parsed", out)
     code = parse_mod.main(
         [
-            "--in", str(MOCK / "03_selection.json"),
+            "--in", str(GOLDEN / "03_selection.json"),
             "--out", str(out),
             "--evidence", str(tmp_path),
             "--skip-existing",
@@ -100,7 +100,7 @@ def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
     with pytest.raises(SystemExit) as e:
         parse_mod.main(
             [
-                "--in", str(MOCK / "03_selection.json"),
+                "--in", str(GOLDEN / "03_selection.json"),
                 "--out", str(tmp_path / "04_parsed"),
                 "--evidence", str(evidence_dir),
             ]
@@ -370,8 +370,8 @@ def case(tmp_path):
     """04_parsed를 미리 채운 케이스 디렉터리."""
     case_dir = tmp_path / "C-001"
     case_dir.mkdir()
-    shutil.copy(MOCK / "01_input.json", case_dir / "01_input.json")
-    shutil.copytree(MOCK / "04_parsed", case_dir / "04_parsed")
+    shutil.copy(FIXTURES / "01_input.json", case_dir / "01_input.json")
+    shutil.copytree(FIXTURES / "04_parsed", case_dir / "04_parsed")
     return case_dir
 
 
@@ -379,7 +379,7 @@ def run_pipeline(case_dir: Path) -> None:
     c = str(case_dir)
     assert normalize_mod.main(
         ["--in", f"{c}/01_input.json", "--out", f"{c}/02_scenario.json",
-         "--llm", "stub", "--replay", str(MOCK / "02_scenario.json")]
+         "--llm", "stub", "--replay", str(FIXTURES / "02_scenario.json")]
     ) == 0
     assert select_mod.main(
         ["--in", f"{c}/02_scenario.json", "--out", f"{c}/03_selection.json",
@@ -393,7 +393,7 @@ def run_pipeline(case_dir: Path) -> None:
         ["--in", f"{c}/04_parsed", "--scenario", f"{c}/02_scenario.json",
          "--selection", f"{c}/03_selection.json", "--mappings", str(MAPPINGS),
          "--out", f"{c}/05_findings.json",
-         "--llm", "stub", "--replay", str(MOCK / "05_findings.json")]
+         "--llm", "stub", "--replay", str(FIXTURES / "05_findings.json")]
     ) == 0
     assert verify_mod.main(
         ["--findings", f"{c}/05_findings.json", "--parsed", f"{c}/04_parsed",
@@ -478,7 +478,7 @@ def test_a_broken_stage_stops_the_pipeline_instead_of_passing_junk_on(case):
     with pytest.raises(SystemExit):
         normalize_mod.main(
             ["--in", str(case / "01_input.json"), "--out", str(case / "02_scenario.json"),
-             "--llm", "stub", "--replay", str(MOCK / "02_scenario.json")]
+             "--llm", "stub", "--replay", str(FIXTURES / "02_scenario.json")]
         )
     assert not (case / "02_scenario.json").exists()
     assert (case / "errors.jsonl").is_file()

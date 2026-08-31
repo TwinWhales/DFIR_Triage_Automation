@@ -14,9 +14,8 @@ from src.stage02_normalize import alert_adapter
 from src.stage02_normalize import normalize as normalize_mod
 from src.stage02_normalize.llm_client import DEFAULT_NUM_PREDICT, NormalizeClient
 from src.stage02_normalize.normalize import build_scenario, check_attack_ids, normalize
+from casepaths import FIXTURES
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
 
 
 class FakeBackend:
@@ -41,7 +40,7 @@ class FakeBackend:
 
 @pytest.fixture
 def scenario_body():
-    body = copy.deepcopy(io.read_json(MOCK / "02_scenario.json"))
+    body = copy.deepcopy(io.read_json(FIXTURES / "02_scenario.json"))
     for key in ("case_id", "stage", "schema_version", "generated_at", "generator"):
         body.pop(key)
     return body
@@ -128,12 +127,12 @@ def test_cli_hands_the_output_cap_to_the_backend(monkeypatch, tmp_path):
 
     def fake_build_backend(kind, **kwargs):
         captured.update(kwargs)
-        return FakeBackend((MOCK / "02_scenario.json").read_text(encoding="utf-8"))
+        return FakeBackend((FIXTURES / "02_scenario.json").read_text(encoding="utf-8"))
 
     monkeypatch.setattr(llm, "build_backend", fake_build_backend)
     code = normalize_mod.main(
         [
-            "--in", str(MOCK / "01_input.json"),
+            "--in", str(FIXTURES / "01_input.json"),
             "--out", str(tmp_path / "02_scenario.json"),
             "--llm", "ollama", "--model", "m", "--num-predict", "1234",
         ]
@@ -147,12 +146,12 @@ def test_the_default_cap_is_the_stage_constant(monkeypatch, tmp_path):
 
     def fake_build_backend(kind, **kwargs):
         captured.update(kwargs)
-        return FakeBackend((MOCK / "02_scenario.json").read_text(encoding="utf-8"))
+        return FakeBackend((FIXTURES / "02_scenario.json").read_text(encoding="utf-8"))
 
     monkeypatch.setattr(llm, "build_backend", fake_build_backend)
     normalize_mod.main(
         [
-            "--in", str(MOCK / "01_input.json"),
+            "--in", str(FIXTURES / "01_input.json"),
             "--out", str(tmp_path / "02_scenario.json"),
             "--llm", "ollama", "--model", "m",
         ]
@@ -398,10 +397,10 @@ def test_cli_stub_run_produces_a_valid_scenario(tmp_path):
     out = tmp_path / "02_scenario.json"
     code = normalize_mod.main(
         [
-            "--in", str(MOCK / "01_input.json"),
+            "--in", str(FIXTURES / "01_input.json"),
             "--out", str(out),
             "--llm", "stub",
-            "--replay", str(MOCK / "02_scenario.json"),
+            "--replay", str(FIXTURES / "02_scenario.json"),
         ]
     )
     assert code == 0
@@ -413,7 +412,7 @@ def test_cli_stub_run_produces_a_valid_scenario(tmp_path):
 
 def test_cli_refuses_stub_without_a_replay_file(tmp_path):
     code = normalize_mod.main(
-        ["--in", str(MOCK / "01_input.json"), "--out", str(tmp_path / "o.json"), "--llm", "stub"]
+        ["--in", str(FIXTURES / "01_input.json"), "--out", str(tmp_path / "o.json"), "--llm", "stub"]
     )
     assert code == 2
     assert not (tmp_path / "errors.jsonl").exists()

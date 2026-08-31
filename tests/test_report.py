@@ -14,19 +14,18 @@ import pytest
 from src.common import io
 from src.stage07_report import report as report_mod
 from src.stage07_report.report import build_context, render
+from casepaths import FIXTURES, GOLDEN
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
-PARSED = MOCK / "04_parsed"
+PARSED = FIXTURES / "04_parsed"
 
 
 @pytest.fixture
 def docs():
     return {
-        "verified": copy.deepcopy(io.read_json(MOCK / "06_verified.json")),
-        "findings": copy.deepcopy(io.read_json(MOCK / "05_findings.json")),
-        "selection": copy.deepcopy(io.read_json(MOCK / "03_selection.json")),
-        "scenario": copy.deepcopy(io.read_json(MOCK / "02_scenario.json")),
+        "verified": copy.deepcopy(io.read_json(GOLDEN / "06_verified.json")),
+        "findings": copy.deepcopy(io.read_json(FIXTURES / "05_findings.json")),
+        "selection": copy.deepcopy(io.read_json(GOLDEN / "03_selection.json")),
+        "scenario": copy.deepcopy(io.read_json(FIXTURES / "02_scenario.json")),
     }
 
 
@@ -362,10 +361,10 @@ def test_cli_reproduces_the_report_fixture(tmp_path):
     out = tmp_path / "07_report.md"
     code = report_mod.main(
         [
-            "--in", str(MOCK / "06_verified.json"),
-            "--findings", str(MOCK / "05_findings.json"),
-            "--selection", str(MOCK / "03_selection.json"),
-            "--scenario", str(MOCK / "02_scenario.json"),
+            "--in", str(GOLDEN / "06_verified.json"),
+            "--findings", str(FIXTURES / "05_findings.json"),
+            "--selection", str(GOLDEN / "03_selection.json"),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
             "--parsed", str(PARSED),
             "--out", str(out),
         ]
@@ -376,7 +375,7 @@ def test_cli_reproduces_the_report_fixture(tmp_path):
         return [line for line in text.splitlines() if not line.startswith("생성: ")]
 
     assert strip_volatile(out.read_text(encoding="utf-8")) == strip_volatile(
-        (MOCK / "07_report.md").read_text(encoding="utf-8")
+        (GOLDEN / "07_report.md").read_text(encoding="utf-8")
     )
 
 
@@ -384,9 +383,9 @@ def test_cli_output_is_lf_only(tmp_path):
     out = tmp_path / "07_report.md"
     report_mod.main(
         [
-            "--in", str(MOCK / "06_verified.json"),
-            "--findings", str(MOCK / "05_findings.json"),
-            "--selection", str(MOCK / "03_selection.json"),
+            "--in", str(GOLDEN / "06_verified.json"),
+            "--findings", str(FIXTURES / "05_findings.json"),
+            "--selection", str(GOLDEN / "03_selection.json"),
             "--out", str(out),
         ]
     )
@@ -395,7 +394,7 @@ def test_cli_output_is_lf_only(tmp_path):
 
 def test_cli_aborts_on_a_schema_violating_input(tmp_path):
     broken = tmp_path / "06_verified.json"
-    doc = io.read_json(MOCK / "06_verified.json")
+    doc = io.read_json(GOLDEN / "06_verified.json")
     doc["stats"]["hallucination_rate"] = 5.0
     io.write_json(broken, doc)
 
@@ -403,8 +402,8 @@ def test_cli_aborts_on_a_schema_violating_input(tmp_path):
         report_mod.main(
             [
                 "--in", str(broken),
-                "--findings", str(MOCK / "05_findings.json"),
-                "--selection", str(MOCK / "03_selection.json"),
+                "--findings", str(FIXTURES / "05_findings.json"),
+                "--selection", str(GOLDEN / "03_selection.json"),
                 "--out", str(tmp_path / "07_report.md"),
             ]
         )

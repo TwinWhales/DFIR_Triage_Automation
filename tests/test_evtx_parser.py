@@ -534,7 +534,7 @@ def test_mock_records_validate_against_the_parser_shape():
 
     mock = (
         Path(__file__).resolve().parents[1]
-        / "benchmark/datasets/C-001-webshell/mock/04_parsed/evtx_security.jsonl"
+        / "benchmark/fixtures/C-001-webshell/04_parsed/evtx_security.jsonl"
     )
     parser = evtx.EvtxParser("evtx:Security")
     (built,) = _one(parser, FakeRecord(record_num=40912, offset=0x2A1000))
