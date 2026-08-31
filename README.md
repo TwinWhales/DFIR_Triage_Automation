@@ -41,6 +41,51 @@ ollama pull qwen2.5:7b
 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01
 ```
 
+## 산출물 확인 — 실제 사건에서 거치는 두 자리
+
+**아래 "평가"는 벤치마크용입니다.** 실제 케이스에서 보는 것은 이 둘입니다.
+
+### 04단계 직후 — 산출물이 스스로와 맞는가
+
+```bash
+.venv/Scripts/python.exe tools/inspect_jsonl.py --parsed cases/C-001/04_parsed
+```
+
+`_manifest.json`이 적은 건수가 실제 줄 수와 같은지, `ref`가 유일한지,
+`record_num`이 `ref`와 같은지, 레코드가 제 파일에 있는지를 봅니다.
+**하나라도 어긋나면 종료 코드가 1입니다.**
+
+앞의 둘을 여기서 안 보면 05단계에 가서야 터지고, 매니페스트의 건수는
+**07단계 보고서가 그대로 싣는 값**입니다. 60GB 이미지를 돌린 결과에는
+이 대조 상대가 달리 없습니다.
+
+경로·플래그·`event_id`로 걸러 보는 것도 같은 도구입니다.
+
+```bash
+.venv/Scripts/python.exe tools/inspect_jsonl.py --parsed cases/C-001/04_parsed \
+  --flag deleted --path "Users\Public" --limit 20
+```
+
+### 보고서를 받은 뒤 — 문장에서 원본 바이트로
+
+`07_report.md`의 타임라인은 항목마다 `ref`를 답니다. 그 `ref`를 그대로
+넘기면 디스크의 원본 바이트가 나옵니다.
+
+```bash
+.venv/Scripts/python.exe tools/hexdump_record.py MFT#12345 \
+  --parsed cases/C-001/04_parsed --evidence evidence/<image>.001 --volume 1
+```
+
+덤프만 하지 않고 **거기 있는 바이트가 정말 그 레코드인지 대조합니다** —
+`$MFT`는 헤더의 레코드 번호와 업데이트 시퀀스, evtx는 EventRecordID처럼
+**레코드가 자기 안에 들고 있는 값**으로 맞춥니다. 우리가 해석해 넣은 값이
+아니라 Windows가 쓴 값이라, 파서가 틀렸다면 어긋나야 정상입니다.
+
+보고할 사실을 원본으로 뒷받침해야 할 때 여기서 끝납니다. 파서를 고친
+뒤라면 아티팩트마다 20건씩 뽑아 한 번에 봅니다(`--sample 20`).
+
+---
+
 ## 평가
 
 ```bash
@@ -276,6 +321,9 @@ C=cases/K-001
 .venv/Scripts/python.exe -m src.stage04_parse.parse \
   --in $C/03_selection.json --out $C/04_parsed/ \
   --evidence evidence/<image>.001 --volume 1
+
+# 04 산출물이 스스로와 맞는지 본다. 어긋나면 여기서 멈춘다 (종료 코드 1)
+.venv/Scripts/python.exe tools/inspect_jsonl.py --parsed $C/04_parsed
 
 .venv/Scripts/python.exe -m src.stage05_interpret.interpret \
   --in $C/04_parsed/ --scenario $C/02_scenario.json --selection $C/03_selection.json \

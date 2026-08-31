@@ -47,6 +47,8 @@ __all__ = ["MftParser", "ROOT_RECORD_NUMBER", "DEFAULT_RECORD_SIZE"]
 # 아니고 파싱 진행 상황을 가리므로 낮춘다. 원본을 고치지 않는 방법이다.
 logging.getLogger("third_party.analyzeMFT").setLevel(logging.ERROR)
 
+_log = logging.getLogger(__name__)
+
 #: 볼륨 루트(``.``)의 MFT 레코드 번호. 경로 재구성이 여기서 멈춘다.
 ROOT_RECORD_NUMBER = 5
 
@@ -74,6 +76,18 @@ class MftParser:
         #: 없다. 한 실행은 한 볼륨이므로 증거 경로에서 유추해 넘긴다.
         self.volume_letter = volume_letter
         self.record_size = record_size
+        self.stats: dict[str, int] = self._new_stats()
+
+    @staticmethod
+    def _new_stats() -> dict[str, int]:
+        return {
+            #: 04단계가 매니페스트에 싣는 값. 건너뛴 레코드 수다.
+            "parse_errors": 0,
+            #: 그중 업데이트 시퀀스를 되돌리지 못한 것. 따로 세는 이유는
+            #: 원인이 다르기 때문이다 — 이 값이 전체와 비슷하면 손상이
+            #: 아니라 **섹터 크기 판정이 틀린 것**을 의심해야 한다.
+            "fixup_errors": 0,
+        }
 
     # ------------------------------------------------------------ 공개
 
@@ -86,7 +100,20 @@ class MftParser:
 
         record_size = self.record_size or self._detect_record_size(stream)
         index = self._build_index(stream, record_size)
+
+        # **1회차 것은 버린다.** 같은 스트림을 두 번 도므로 그대로 두면 모든
+        # 집계가 두 배가 된다. 두 번 다 같은 레코드에서 실패하므로 2회차
+        # 것만 세면 충분하다.
+        self.stats = self._new_stats()
         yield from self._emit(stream, scope, record_size, index)
+
+        if self.stats["parse_errors"]:
+            _log.warning(
+                "%s: 레코드 %d건을 건너뛰었습니다 (그중 업데이트 시퀀스 실패 %d건)",
+                self.artifact,
+                self.stats["parse_errors"],
+                self.stats["fixup_errors"],
+            )
 
     # ------------------------------------------------------------ 내부
 
@@ -150,11 +177,27 @@ class MftParser:
                 continue  # 미사용 슬롯. 0으로 채워져 있다
             try:
                 fixed = bytes(structs.apply_fixups(raw))
-            except structs.StructError:
+            except structs.StructError as e:
+                # **세지 않으면 조용하다.** 이 경로가 전부 걸리는 상황이
+                # 실재한다 — 섹터 크기를 512로 고정하던 시절의 4Kn 디스크가
+                # 그랬다. 그때 나오는 것은 오류가 아니라 "$MFT: 0건" 이다.
+                self.stats["fixup_errors"] += 1
+                self.stats["parse_errors"] += 1
+                if self.stats["fixup_errors"] == 1:
+                    # 수만 건이면 콘솔을 덮는다. 첫 건만 사유를 보이고
+                    # 나머지는 수로 남긴다(매니페스트의 parse_errors).
+                    _log.warning(
+                        "%s: 레코드 @0x%X 의 업데이트 시퀀스를 되돌리지 못했습니다 — %s "
+                        "(이후 같은 실패는 수만 셉니다)",
+                        self.artifact,
+                        offset,
+                        e,
+                    )
                 continue
             try:
                 yield position - 1, offset, fixed, MftRecord(fixed)
             except Exception:  # noqa: BLE001 — 남의 코드가 무엇을 던질지 모른다
+                self.stats["parse_errors"] += 1
                 continue
 
     def _build_index(

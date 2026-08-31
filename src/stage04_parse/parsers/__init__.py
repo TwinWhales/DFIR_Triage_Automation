@@ -156,6 +156,17 @@ _rfc_parser = RecentFileCacheParser()
 PARSERS["recentfilecache"] = _rfc_parser
 REFERENCE_PARSERS["recentfilecache"] = _rfc_parser
 
+# SRUM(SRUDB.dat). 한 클래스가 공급자 테이블 셋을 맡으므로 **인스턴스를
+# 아티팩트마다 따로 만든다** — artifact 가 ref 접두어와 출력 파일명을
+# 정하기 때문이다. 공유하면 한쪽 레코드가 다른 쪽 접두어로 나간다.
+from .srum import ARTIFACTS as _SRUM_ARTIFACTS  # noqa: E402 — 등록 블록 순서
+from .srum import SrumParser  # noqa: E402 — 등록 블록 순서
+
+for _artifact in _SRUM_ARTIFACTS:
+    _srum_parser = SrumParser(_artifact)
+    PARSERS[_artifact] = _srum_parser
+    REFERENCE_PARSERS[_artifact] = _srum_parser
+
 
 IMPLEMENTATIONS = ("native", "reference")
 

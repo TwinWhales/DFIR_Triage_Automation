@@ -42,6 +42,7 @@ __all__ = [
     "FixupError",
     "StructError",
     "filetime_to_datetime",
+    "sector_size_of",
     "apply_fixups",
     "RecordHeader",
     "AttributeHeader",
@@ -58,7 +59,10 @@ class FixupError(StructError):
     """업데이트 시퀀스가 맞지 않는다. 레코드가 손상됐을 가능성이 높다."""
 
 
-#: 섹터 크기. 4Kn 디스크는 4096이므로 부트섹터에서 읽어 넘겨야 한다.
+#: 흔한 섹터 크기. **판정에는 쓰지 않는다** — ``apply_fixups`` 는 레코드에서
+#: 유도한다(``sector_size_of``). 4Kn 디스크는 4096이고, 여기 고정하면 그런
+#: 이미지의 레코드가 전부 ``FixupError`` 가 된다. 되돌릴 섹터가 없을 때의
+#: 자리 채움과 문서용으로만 남긴다.
 SECTOR_SIZE = 512
 
 FILE_SIGNATURE = b"FILE"
@@ -141,20 +145,54 @@ def filetime_to_datetime(value: int) -> datetime | None:
         return None
 
 
-def apply_fixups(data: bytes, *, sector_size: int = SECTOR_SIZE) -> bytearray:
+def sector_size_of(data: bytes, usa_count: int) -> int:
+    """레코드가 **자기 섹터 크기를 말하게 한다.**
+
+    업데이트 시퀀스 배열은 항목이 ``섹터 수 + 1``개입니다(첫 항목이 USN
+    자신). 그래서 레코드 크기를 섹터 수로 나누면 섹터 크기가 나옵니다.
+
+    **부트섹터를 읽지 않아도 됩니다.** 그 편이 낫습니다 — 추출된 ``$MFT``
+    파일만 받는 경우(``evidence/`` 가 폴더일 때)에는 부트섹터가 아예 없어서
+    "부트섹터에서 읽어 넘긴다"가 성립하지 않습니다.
+
+    4Kn 디스크가 실재하는 이유이기도 합니다. 512로 고정하면 그런 이미지의
+    레코드가 **전부** ``FixupError`` 가 되고, 호출부가 그것을 건너뛰면
+    ``$MFT: 0건`` 이 조용히 나옵니다.
+
+    나누어떨어지지 않으면 배열이 깨진 것이므로 ``FixupError`` 입니다.
+    추측해서 넘어가면 뒤의 USN 대조가 엉뚱한 자리를 보게 됩니다.
+    """
+    sectors = usa_count - 1
+    if sectors <= 0:
+        # 되돌릴 섹터가 없다. 호출부의 루프도 돌지 않으므로 값은 쓰이지 않는다.
+        return SECTOR_SIZE
+    if len(data) % sectors:
+        raise FixupError(
+            f"업데이트 시퀀스 배열이 레코드 크기와 맞지 않음 "
+            f"({len(data)}바이트 / 섹터 {sectors}개)"
+        )
+    return len(data) // sectors
+
+
+def apply_fixups(data: bytes, *, sector_size: int | None = None) -> bytearray:
     """업데이트 시퀀스를 원래 값으로 되돌린다.
 
     NTFS는 각 섹터의 **마지막 2바이트를 업데이트 시퀀스 번호(USN)로
     덮어쓰고**, 원래 값은 레코드 앞쪽 배열에 보관합니다. 쓰기 도중
     전원이 끊긴 레코드를 감지하기 위해서입니다.
 
-    **이걸 안 되돌리면 섹터 경계에서 값이 깨집니다.** 512바이트마다
-    2바이트가 엉뚱한 값입니다. 경로 문자열이 중간에 깨지거나 타임스탬프가
+    **이걸 안 되돌리면 섹터 경계에서 값이 깨집니다.** 섹터마다 2바이트가
+    엉뚱한 값입니다. 경로 문자열이 중간에 깨지거나 타임스탬프가
     이상해지는데, 레코드 대부분은 멀쩡해서 원인을 찾기 어렵습니다.
     직접 구현에서 가장 흔히 놓치는 지점이라 여기에 넣어 둡니다.
 
+    ``sector_size`` 를 주지 않으면 **레코드에서 유도합니다**
+    (``sector_size_of``). 512로 고정하면 4Kn 디스크에서 전부 실패합니다.
+    아는 값이 따로 있을 때만 넘기십시오.
+
     USN이 섹터 끝의 값과 다르면 ``FixupError``입니다. 그 레코드만
-    건너뛰고 나머지는 계속 읽으십시오.
+    건너뛰고 나머지는 계속 읽으십시오. **다만 건너뛴 수를 세십시오** —
+    조용히 넘기면 4Kn 이미지가 "레코드 0건"으로만 보입니다.
     """
     if len(data) < RecordHeader.SIZE:
         raise StructError(f"레코드가 너무 짧음: {len(data)}바이트")
@@ -162,6 +200,9 @@ def apply_fixups(data: bytes, *, sector_size: int = SECTOR_SIZE) -> bytearray:
     usa_offset, usa_count = struct.unpack_from("<HH", data, 0x04)
     if usa_count == 0:
         raise FixupError("업데이트 시퀀스 배열이 비어 있음")
+
+    if sector_size is None:
+        sector_size = sector_size_of(data, usa_count)
 
     end_of_array = usa_offset + usa_count * 2
     if end_of_array > len(data):

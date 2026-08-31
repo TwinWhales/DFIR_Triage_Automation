@@ -198,11 +198,23 @@ def _decode_symbol(
     first_index: list[int],
     symbols: list[int],
 ) -> int:
-    code = 0
+    # **상위 15비트를 한 번에 본다.** 부호 길이 상한이 15이므로 그 안에
+    # 답이 있고, 판독기의 상위 16비트는 항상 유효합니다(`_BitReader`).
+    #
+    # 예전에는 길이를 늘려 가며 ``read_bits(1)`` 을 최대 15번 불렀습니다.
+    # 값은 같지만 심볼 하나에 판독기 호출이 스무 번씩 들어갔습니다 —
+    # 실측(2026-08-28, 프리패치 137개)에서 ``read_bits`` 789만 회,
+    # ``consume`` 789만 회로 04단계 프리패치 시간의 82%가 여기였습니다.
+    #
+    # ``peek`` 은 소비하지 않으므로 **길이를 정한 뒤 그만큼만 소비합니다.**
+    # 부호를 못 찾으면 한 비트도 소비하지 않은 채 예외가 나가는데, 그
+    # 경우 호출자가 청크를 포기하므로 스트림 위치는 뜻이 없습니다.
+    bits = reader.peek(MAX_CODE_LENGTH)
     for length in range(1, MAX_CODE_LENGTH + 1):
-        code = (code << 1) | reader.read_bits(1)
-        if counts[length] and code - first_code[length] < counts[length]:
-            return symbols[first_index[length] + code - first_code[length]]
+        offset = (bits >> (MAX_CODE_LENGTH - length)) - first_code[length]
+        if counts[length] and offset < counts[length]:
+            reader.consume(length)
+            return symbols[first_index[length] + offset]
     raise XpressError("허프만 부호가 테이블에 없습니다 (테이블이 깨졌거나 스트림이 어긋났습니다)")
 
 

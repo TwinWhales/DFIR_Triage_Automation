@@ -61,6 +61,7 @@ from ..stage03_select.mapping_loader import (
     DEFAULT_SIGNAL_SOURCE,
     PRIORITIES,
 )
+from ..stage04_parse.flagging import KeepPaths, prompt_keep_paths
 from .record_filter import (
     DEFAULT_LIMIT,
     DEFAULT_WINDOW_SECONDS,
@@ -190,11 +191,49 @@ class Budget:
         return int(self.used_chars / CHARS_PER_TOKEN)
 
 
-def for_prompt(record: dict[str, Any], max_list_items: int | None = MAX_LIST_ITEMS) -> dict[str, Any]:
+def _trim_list(values: list, max_list_items: int, keep: KeepPaths) -> list:
+    """목록 하나를 상한까지 줄인다. **원래 순서를 지킨다.**
+
+    어휘에 걸린 항목을 어휘의 상한까지 먼저 잡고, 남은 자리를 앞에서부터
+    채운 뒤, 자리 번호 순으로 되돌려 냅니다. 어휘 상한을 ``max_list_items``
+    로도 한 번 더 누르는 것은 YAML이 상한을 크게 적었을 때 앞머리 몫이
+    통째로 사라지지 않게 하려는 것입니다.
+    """
+    hit_budget = min(keep.max_items, max_list_items)
+    chosen: set[int] = set()
+    if hit_budget:
+        for index, value in enumerate(values):
+            if len(chosen) >= hit_budget:
+                break
+            if isinstance(value, str) and keep.matches(value):
+                chosen.add(index)
+
+    for index in range(len(values)):
+        if len(chosen) >= max_list_items:
+            break
+        chosen.add(index)
+
+    return [values[index] for index in sorted(chosen)]
+
+
+def for_prompt(
+    record: dict[str, Any],
+    max_list_items: int | None = MAX_LIST_ITEMS,
+    keep: "KeepPaths | None" = None,
+) -> dict[str, Any]:
     """레코드를 프롬프트에 실을 모양으로. ``04_parsed/``의 원본은 안 건드립니다.
 
-    ``fields`` 안의 긴 목록을 앞에서 ``max_list_items``개까지만 남깁니다.
+    ``fields`` 안의 긴 목록을 ``max_list_items``개까지만 남깁니다.
     ``None``이면 자르지 않습니다.
+
+    **어느 것을 남기는가.** ``mappings/_flags.yaml``의
+    ``prompt_keep_paths``에 적힌 자리(드롭 자리·사용자 폴더 등)에 걸리는
+    항목을 그 어휘의 상한까지 먼저 넣고, 남은 자리를 목록 앞에서부터
+    채웁니다. 어휘가 없으면 예전과 같이 앞에서부터입니다.
+
+    **출력은 원래 순서를 지킵니다.** 부분집합이지 재정렬이 아닙니다.
+    순서를 흔들면 적재 순서가 담고 있는 정보(실행 파일이 대개 첫 항목)가
+    사라지고, 06단계가 원본과 대조할 때도 순서가 근거가 됩니다.
 
     **왜 자르나.** 실측(``win10_sysmon_testimage``, 60건 100,068자)에서
     ``fields.loaded_files`` 하나가 프롬프트의 **54%**를 먹었습니다. 한
@@ -206,10 +245,16 @@ def for_prompt(record: dict[str, Any], max_list_items: int | None = MAX_LIST_ITE
     ``fields``는 아티팩트마다 다른 무제한 주머니이고, 터지는 곳은 늘 이쪽
     입니다.
 
-    **왜 앞에서부터.** 어느 항목이 중요한지 고르는 물리적 근거가 없습니다.
-    "시스템 DLL은 덜 중요하다" 같은 추측으로 순위를 매기면 그 추측이 틀렸을
-    때 조용히 증거를 버립니다. 파일에 있던 순서는 근거는 아니지만 **재현은
-    됩니다**(6-6이 말하는 "임시"와 같은 자리).
+    **왜 어휘로 고르나.** 한때는 순수하게 앞에서부터였습니다 — 어느 항목이
+    중요한지 고르는 근거가 없었기 때문입니다. 04단계가 프리패치 적재 경로를
+    드라이브 문자로 바꾸면서(2026-08-27) 근거가 생겼습니다. 경로가 비교
+    가능해졌으니 "권한 없이 파일을 떨어뜨릴 수 있는 자리"를 먼저 남길 수
+    있습니다. 그 자리 목록은 코드가 아니라 어휘에 있습니다.
+
+    **추측으로 순위를 매기지는 않습니다.** "시스템 DLL은 덜 중요하다" 같은
+    기준을 코드에 박으면 그 추측이 틀렸을 때 조용히 증거를 버립니다. 어휘에
+    걸리지 않은 항목들 사이의 순서는 여전히 파일에 있던 순서이고, 그것은
+    근거는 아니지만 **재현은 됩니다**(6-6이 말하는 "임시"와 같은 자리).
 
     **잘렸다는 사실은 프롬프트가 말합니다**(``llm_client.user_prompt``).
     말하지 않으면 모델이 "적재 파일은 20개였다"고 쓸 수 있고, 그것은 우리가
@@ -221,8 +266,9 @@ def for_prompt(record: dict[str, Any], max_list_items: int | None = MAX_LIST_ITE
     if max_list_items is None or not isinstance(fields, dict):
         return record
 
+    keep = prompt_keep_paths() if keep is None else keep
     trimmed = {
-        key: value[:max_list_items]
+        key: _trim_list(value, max_list_items, keep)
         if isinstance(value, list) and len(value) > max_list_items
         else value
         for key, value in fields.items()
@@ -236,7 +282,9 @@ def for_prompt(record: dict[str, Any], max_list_items: int | None = MAX_LIST_ITE
 
 
 def record_chars(
-    record: dict[str, Any], max_list_items: int | None = MAX_LIST_ITEMS
+    record: dict[str, Any],
+    max_list_items: int | None = MAX_LIST_ITEMS,
+    keep: "KeepPaths | None" = None,
 ) -> int:
     """레코드 하나가 프롬프트에서 차지할 글자 수.
 
@@ -245,7 +293,7 @@ def record_chars(
     잽니다.** 다르게 재면 예산이 맞아도 프롬프트가 넘칩니다. 줄바꿈 한
     글자를 더합니다.
     """
-    return len(json.dumps(for_prompt(record, max_list_items), ensure_ascii=False)) + 1
+    return len(json.dumps(for_prompt(record, max_list_items, keep), ensure_ascii=False)) + 1
 
 
 def char_budget(

@@ -55,6 +55,13 @@ schemas/
 
 레코드 번호는 아티팩트 내부의 고유 번호(MFT 레코드 번호, EVTX RecordId 등)를 그대로 씁니다. 자체 일련번호를 새로 매기면 원본 대조가 어려워집니다.
 
+**그 대조를 실제로 하는 자리가 있습니다.** 보고서의 `ref`를 그대로 넘기면 디스크의 원본 바이트가 나오고, 거기 있는 바이트가 정말 그 레코드인지까지 봅니다.
+
+```bash
+.venv/Scripts/python.exe tools/hexdump_record.py MFT#12345 \
+  --parsed cases/<케이스>/04_parsed --evidence <증거> [--volume N]
+```
+
 ---
 
 ## 01_input.json
@@ -303,6 +310,16 @@ defaults:
 }
 ```
 
+### 이 값들이 파일과 같은지 보는 방법
+
+`record_count`·`total_records`는 **07단계 보고서가 그대로 싣는 값**입니다. 매니페스트는 04단계가 자기가 셌다고 적은 수이므로, 파일과 같은지는 따로 봐야 합니다.
+
+```bash
+.venv/Scripts/python.exe tools/inspect_jsonl.py --parsed cases/<케이스>/04_parsed
+```
+
+건수 대조에 더해 `ref` 유일성(겹치면 05·06단계가 섭니다)과 `record_num` = `ref`의 숫자(스키마가 보지 않는 불변식입니다)까지 봅니다. 어긋나면 종료 코드가 1입니다.
+
 ### `skipped` — 읽지 못한 아티팩트
 
 **매니페스트는 04단계가 자기가 한 일을 적는 곳이므로 "안 한 일"도 여기 적습니다.**
@@ -548,7 +565,9 @@ $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황�
 
 `type`과 `action`은 고정 어휘로 관리합니다. 발표 자료의 통계가 여기서 직접 산출되기 때문입니다.
 
-- `type`: `schema_violation` / `parse_error` / `malformed_output` / `empty_result` / `timeout`
+- `type`: `schema_violation` / `parse_error` / `malformed_output` / `empty_result` / `timeout` / `llm_error`
+
+`llm_error`는 모델 호출이 **타임아웃이 아닌 이유로** 실패한 것입니다 — 모델명 오타, 서버 미기동, 잘못된 호스트. `timeout`과 합치지 않는 이유는 조치가 다르기 때문입니다(기다릴 것인가, 설정을 고칠 것인가). **재시도하지 않고 즉시 중단합니다** — 세 번 불러도 같은 답이라 시간만 씁니다. 어휘는 `src/common/errors.py`의 `ERROR_TYPES`가 코드로 강제합니다.
 - `action`: `retry` / `skip` / `abort`
 
 예를 들어 `stage=02_normalize`이면서 `type=schema_violation`인 항목을 케이스 수로 나누면 정규화 단계 실패율이 나오고, `detail.field` 분포를 보면 어떤 필드에서 sLLM이 자주 틀리는지 드러납니다. 이것이 이후 폴백 설계의 근거 데이터가 됩니다.

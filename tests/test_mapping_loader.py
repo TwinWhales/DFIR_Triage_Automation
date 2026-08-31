@@ -74,6 +74,9 @@ def test_catalog_loads_every_artifact(catalog):
         "evtx:Application",
         "prefetch",
         "recentfilecache",
+        "srum:NetworkUsage",
+        "srum:AppResourceUsage",
+        "srum:NetworkConnectivity",
         "$LogFile",
     }
     # 목록이나 아티팩트의 성질(signal_source)이 바뀌면 이 값도 올린다.

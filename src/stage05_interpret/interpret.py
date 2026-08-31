@@ -108,6 +108,12 @@ def interpret(
             log.record(STAGE, "timeout", {"message": str(e)}, action="retry", attempt=attempt)
             feedback = None
 
+        except llm.LLMError as e:
+            # 02단계와 같은 이유로 재시도하지 않는다 — 모델명 오타·서버
+            # 미기동은 세 번 불러도 같은 답이다. normalize.py 의 같은 자리
+            # 주석 참고.
+            log.abort(STAGE, "llm_error", {"message": str(e)})
+
         except schema.SchemaViolation as violation:
             detail = violation.as_detail()
             saved = dump_raw(log, attempt, client.last_raw)

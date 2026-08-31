@@ -94,6 +94,10 @@ __all__ = [
     "RegistryParser",
     "HiveBuffer",
     "HIVE_OF",
+    "AMCACHE_FILE_VALUE_NAMES",
+    "AMCACHE_FILE_VALUE_PROVENANCE",
+    "AMCACHE_PROGRAMS_VALUE_NAMES",
+    "AMCACHE_VALUE_NAME_TABLES",
     "DEFAULT_VALUE_NAME",
     "STRING_TYPES",
     "MULTI_STRING_TYPE",
@@ -126,6 +130,216 @@ HIVE_OF: dict[str, str] = {
 #: 이름이 실제로 이 문자열인 값과 충돌할 수 있으나, 실측 하이브
 #: 20,512개 키에서 0건이었습니다.
 DEFAULT_VALUE_NAME = "(default)"
+
+#: Amcache ``Root\File\{GUID}\`` 아래의 **숫자 값 이름** → 뜻이 있는 이름.
+#:
+#: Amcache 는 같은 사실을 두 레이아웃으로 적습니다. ``Root\File`` 은 값
+#: 이름이 ``"15"`` 처럼 숫자뿐이고, ``Root\InventoryApplicationFile`` 은
+#: ``LowerCaseLongPath`` 처럼 이름이 붙어 있습니다. **같은 이미지에 둘이
+#: 함께 있습니다** — 실측(``0824test.001``, Win10 15063)에서 File 360건,
+#: InventoryApplicationFile 29건이었습니다.
+#:
+#: 숫자 이름을 그대로 내보내면 06단계가 경로인 줄 몰라 정확 문자열 비교로
+#: 떨어지고, 대소문자 하나로 정상 문장이 기각됩니다
+#: (``comparators.is_path_field`` 는 **이름으로** 판단합니다).
+#:
+#: **이 표는 공개 자료가 아니라 같은 이미지 안의 대조로 얻었습니다.**
+#: ``101`` 을 ``FileId`` 로 보고 두 레이아웃을 1:1 로 조인하면 29건이 맞물
+#: 리고, 그 29건에서:
+#:
+#: .. code-block:: text
+#:
+#:     15  == LowerCaseLongPath   29 / 29
+#:     6   == Size (16진수)       29 / 29
+#:     100 == ProgramId           28 / 29   ← 한 건이 어긋난다
+#:
+#: ``100`` 의 한 건은 두 저장소가 같은 파일을 다른 프로그램에 귀속시킨
+#: 것으로 보이나 확인하지 못했습니다 — ``docs/artifact-notes.md``.
+#:
+#: **이름이 한 군데서 사실과 어긋납니다.** ``LowerCaseLongPath`` 는
+#: Microsoft 가 ``InventoryApplicationFile`` 에 붙인 이름이고 그쪽 값은
+#: 실제로 전부 소문자인데, ``File`` 의 ``15`` 는 대소문자가 살아 있습니다
+#: (``C:\Program Files\...``). 위 29/29 는 대소문자를 무시한 비교입니다.
+#:
+#: 그래도 같은 이름을 씁니다. 어휘가 갈라지면 ``PATH_FIELDS`` 항목도
+#: 매핑도 둘씩 되는데, **경로 비교는 어차피 대소문자를 무시하므로**
+#: (``comparators`` 가 04단계와 같은 ``normalize_path`` 를 씁니다) 이
+#: 차이는 비교 결과를 바꾸지 않습니다. 새 이름을 지어내면 어휘가 셋이
+#: 됩니다.
+#:
+#: **나머지는 공개 출처 둘에서 채웠습니다** (2026-08-27). 처음에는 이미지
+#: 안에서 확인한 넷만 넣고 나머지를 숫자로 남겼는데, 그러면 360건 전부에
+#: 있는 타임스탬프(``17``)를 못 씁니다.
+#:
+#: 출처 둘은 **계보가 완전히 다릅니다.**
+#:
+#: - AmcacheParser (C#, Eric Zimmerman, MIT) — ``Amcache/AmcacheOld.cs``
+#:   의 ``private const int`` 목록
+#: - Plaso / log2timeline (Python) —
+#:   ``plaso/parsers/winreg_plugins/amcache.py`` 의 값 이름 표
+#:
+#: **겹치는 항목에서 둘이 어긋나는 곳이 하나도 없었습니다.** 그리고 우리가
+#: 이미지 안에서 독립적으로 확인한 넷(``15``·``6``·``100``·``101``)이
+#: 양쪽과 전부 일치합니다 — 서로를 지지하는 세 번째 축입니다.
+#:
+#: 값 이름은 **16진수**입니다(``a``·``b``·``f`` 가 그래서 나옵니다).
+#: AmcacheParser 가 ``int.Parse(name, NumberStyles.HexNumber)`` 로 읽습니다.
+#:
+#: 아래 ``AMCACHE_FILE_VALUE_PROVENANCE`` 가 이름마다 근거를 들고 있습니다.
+#: **채웠다고 다 같은 강도가 아닙니다** — 그 표를 함께 보십시오.
+#:
+#: 넣지 않은 것도 있습니다. ``2``(FileVersionNumber)·``4``
+#: (SwitchBackContext)·``7``·``8``·``9``·``d``·``106`` 은 이 이미지에
+#: 한 건씩만 있거나 아예 없어 생김새조차 못 봤습니다. 만나면 숫자로
+#: 나가고, 그때 이 표를 늘립니다.
+AMCACHE_FILE_VALUE_NAMES: dict[str, str] = {
+    # 이미지 안에서 확인한 넷. 아래 것들보다 근거가 강하다.
+    "15": "LowerCaseLongPath",
+    "101": "FileId",
+    "100": "ProgramId",
+    "6": "Size",
+    # 공개 출처 둘이 일치하고, 이 이미지의 값 생김새와도 맞는 것들.
+    "0": "ProductName",
+    "1": "CompanyName",
+    "3": "LanguageCode",
+    "5": "FileVersionString",
+    "c": "FileDescription",
+    "f": "LinkDate",
+    "a": "BinProductVersion",
+    "b": "BinFileVersion",
+    "10": "BinaryType",
+    "11": "LastModified",
+    "12": "Created",
+    "16": "IsLocal",
+    "17": "LastModifiedStore",
+}
+
+#: ``AMCACHE_FILE_VALUE_NAMES`` 의 이름마다 **근거가 무엇인가.**
+#:
+#: 이 표가 있는 이유는 하나입니다 — 대응이 틀린 것으로 드러났을 때 **어느
+#: 것부터 의심해야 하는지** 알기 위해서입니다. 전부 같은 dict 에 들어
+#: 있으면 이미지로 확인한 것과 문서만 보고 넣은 것이 구별되지 않습니다.
+#:
+#: - ``image``  — 이 이미지 안의 **다른 아티팩트나 레이아웃과 대조해 확인**
+#: - ``shape``  — 공개 출처 둘이 일치하고, **값의 생김새로 뒷받침됨**
+#: - ``docs``   — 공개 출처 둘이 일치하나 이 이미지로는 확인 못 함
+#:
+#: ``17`` 은 ``$MFT`` 로 확인했습니다. FILETIME 으로 읽어 같은 경로의 MFT
+#: 레코드와 맞춰 보면 **335건 중 329건(98%)이 ``si_mtime`` 과 2초 이내**
+#: 입니다(``si_ctime``·``fn_*`` 는 46%). 파일의 수정 시각을 따라간다는
+#: 뜻입니다.
+#:
+#: 다만 이름은 공개 출처의 것을 씁니다. ``si_btime`` 도 98%로 같이 맞는데,
+#: 이 이미지의 해당 파일들이 설치 시각과 수정 시각이 같아서 **둘을 가르지
+#: 못했습니다.** 우리 측정으로는 "파일 타임스탬프"까지가 확실하고 그 이상은
+#: 아니므로, 새 이름을 짓지 않고 ``LastModifiedStore`` 를 그대로 둡니다.
+#:
+#: ``shape`` 의 근거(실측):
+#:
+#: .. code-block:: text
+#:
+#:     16  값이 0/1 두 가지뿐 (26건)          → IsLocal 과 맞다
+#:     10  작은 열거값 5종 (6·9·15·12)        → BinaryType 과 맞다
+#:     11  FILETIME 으로 읽으면 2022-10-24    → 사고 시간창과 맞다
+#:     12  FILETIME 으로 읽으면 2022-10-24    → 같음
+#:     b   서로 다른 값 67종의 큰 정수        → 묶인 버전 번호와 맞다
+#:
+#: ``f``(LinkDate)를 POSIX 초로 읽으면 2042년이 나옵니다. **틀렸다는 뜻은
+#: 아닙니다** — PE 링크 시각은 원래 엉뚱한 값이 흔합니다(재현 가능 빌드는
+#: 해시를 넣습니다). 다만 뒷받침이 안 되므로 ``docs`` 로 둡니다.
+AMCACHE_FILE_VALUE_PROVENANCE: dict[str, str] = {
+    "15": "image",
+    "101": "image",
+    "100": "image",
+    "6": "image",
+    "17": "image",
+    "16": "shape",
+    "10": "shape",
+    "11": "shape",
+    "12": "shape",
+    "b": "shape",
+    "0": "docs",
+    "1": "docs",
+    "3": "docs",
+    "5": "docs",
+    "c": "docs",
+    "f": "docs",
+    "a": "docs",
+}
+
+if set(AMCACHE_FILE_VALUE_PROVENANCE) != set(AMCACHE_FILE_VALUE_NAMES):
+    # 이름을 늘리면서 근거를 안 적으면 "어디까지 믿을 수 있나"가 사라진다.
+    # 임포트 시점에 잡는다 — assert 로 두면 ``-O`` 에서 사라진다.
+    raise RuntimeError(
+        "Amcache 값 이름과 근거 표가 어긋남: "
+        f"{sorted(set(AMCACHE_FILE_VALUE_NAMES) ^ set(AMCACHE_FILE_VALUE_PROVENANCE))}"
+    )
+
+#: Amcache ``Root\Programs\`` 아래의 숫자 값 이름 → 뜻이 있는 이름.
+#:
+#: **``Root\File`` 과 표를 공유하면 안 됩니다.** 같은 숫자가 다른 뜻입니다:
+#:
+#: .. code-block:: text
+#:
+#:     이름   Root\File          Root\Programs
+#:     0      ProductName        ProgramName
+#:     1      CompanyName        ProgramVersion
+#:     6      FileSize           InstallSource
+#:     17     LastModifiedStore  (정체 불명의 Qword)
+#:
+#: 한 표로 묶으면 8건이 통째로 잘못된 이름을 답니다. 그래서 표도 접두어도
+#: 따로 둡니다.
+#:
+#: 출처는 ``AMCACHE_FILE_VALUE_NAMES`` 와 같은 AmcacheParser
+#: (``Amcache/Classes/ProgramsEntryOld.cs`` 를 채우는 ``AmcacheOld.cs`` 의
+#: switch)입니다. **Plaso 는 이 서브키를 다루지 않아 교차 확인이 없습니다** —
+#: 대신 실측 8건의 값 생김새가 뒷받침합니다:
+#:
+#: .. code-block:: text
+#:
+#:     0  'Microsoft OneDrive'        → ProgramName 과 맞다
+#:     1  '26.145.0728.0011'          → ProgramVersion 과 맞다
+#:     2  'Microsoft Corporation'     → VendorName 과 맞다
+#:     6  'AddRemoveProgram'          → InstallSource 와 맞다
+#:     7  ['HKEY_USERS\...\Uninstall'] → UninstallKey 와 맞다
+#:     d  ['c:\users\...\onedrive\']  → PathList 와 맞다
+#:
+#: **AmcacheParser 자신도 모르는 것이 여럿입니다.** ``5``·``13``·``14``·
+#: ``15``·``16``·``17``·``18`` 은 그쪽 코드에서도 이름이 ``Dword5``·
+#: ``UnknownBytes`` 같은 자리 표시입니다. 그것들은 넣지 않습니다 — 뜻이
+#: 없는 이름으로 바꾸면 숫자로 두는 것보다 나을 게 없고, "우리가 안다"는
+#: 인상만 줍니다.
+AMCACHE_PROGRAMS_VALUE_NAMES: dict[str, str] = {
+    "0": "ProgramName",
+    "1": "ProgramVersion",
+    "2": "VendorName",
+    "3": "LocaleId",
+    "6": "InstallSource",
+    "7": "UninstallKey",
+    "a": "InstallDateEpoch",
+    "b": "InstallDateEpoch2",
+    "d": "PathList",
+    "f": "ProgramGuid",
+    "10": "ProgramGuid2",
+    "11": "UninstallGuid",
+    "12": "ProgramGuid3",
+}
+
+#: ``AMCACHE_FILE_VALUE_NAMES`` 를 적용할 키 경로. ``normalize_path`` 를
+#: 거친 형태라 구분자가 슬래시입니다.
+#:
+#: ``Root\InventoryApplicationFile`` 은 이미 이름이 있으므로 건드리지
+#: 않습니다. **좁게 거는 것이 요점입니다** — 넓게 걸면 다른 서브키의
+#: ``15`` 까지 경로로 둔갑하고, 그것이 06단계가 ``PATH_FIELDS`` 를 값의
+#: 생김새가 아니라 이름으로 판단하는 이유입니다.
+#: 서브키 경로 접두어 → 그 아래에서 쓸 값 이름 표.
+#:
+#: **앞에서부터 찾아 처음 맞는 것을 씁니다.** 접두어가 서로 겹치지 않으므로
+#: 순서는 무관하지만, 늘릴 때 겹치게 만들면 여기가 조용히 틀립니다.
+AMCACHE_VALUE_NAME_TABLES: tuple[tuple[str, dict[str, str]], ...] = (
+    ("amcache/root/file/", AMCACHE_FILE_VALUE_NAMES),
+    ("amcache/root/programs/", AMCACHE_PROGRAMS_VALUE_NAMES),
+)
 
 #: 우리가 직접 디코딩할 문자열 타입. 라이브러리에 맡기면 한글이 잘린다.
 STRING_TYPES = frozenset({"RegSZ", "RegExpandSZ"})
@@ -343,6 +557,10 @@ class RegistryParser:
             "value_errors": 0,
             "pruned_subtrees": 0,
             "dirty_hive": 0,
+            # Amcache Root\File 에서 숫자 이름을 바꾼 값의 수. 0 이면
+            # 그 서브트리를 한 건도 안 만났다는 뜻이라, 매핑이 안 걸린
+            # 것인지 하이브에 없는 것인지 가르는 자리가 된다.
+            "amcache_values_renamed": 0,
         }
 
     # ------------------------------------------------------------ 진입점
@@ -594,7 +812,41 @@ class RegistryParser:
                 self.stats["value_errors"] += 1
                 self.stats["parse_errors"] += 1
                 _log.warning("%s: %s 의 값 하나를 읽지 못했습니다 — %s", self.artifact, path, e)
-        return out
+        return self._rename_amcache_values(out, path)
+
+    def _rename_amcache_values(self, out: dict[str, Any], path: str) -> dict[str, Any]:
+        """Amcache 의 숫자 값 이름을 뜻 있는 이름으로.
+
+        **서브키마다 표가 다릅니다** — 같은 숫자가 다른 뜻이라
+        (``Root\\File`` 의 ``6`` 은 파일 크기, ``Root\\Programs`` 의 ``6``
+        은 설치 출처) 한 표로 묶으면 통째로 잘못된 이름을 답니다. 근거는
+        ``AMCACHE_VALUE_NAME_TABLES`` 가 가리키는 두 표에 있습니다.
+
+        원래 이름이 이미 있으면 덮지 않고 숫자 이름을 그대로 둡니다. 두
+        레이아웃이 한 키에 섞이는 것은 본 적 없지만, 덮으면 어느 쪽이
+        원본이었는지 사라집니다. 표에 없는 이름도 그대로 둡니다 — 모르는
+        것은 모르는 채로 나가야 합니다.
+        """
+        if self.artifact != "registry:Amcache":
+            return out
+
+        normalized = normalize_path(path)
+        table = next(
+            (t for prefix, t in AMCACHE_VALUE_NAME_TABLES if normalized.startswith(prefix)),
+            None,
+        )
+        if table is None:
+            return out
+
+        renamed: dict[str, Any] = {}
+        for name, value in out.items():
+            target = table.get(name)
+            if target is None or target in out:
+                renamed[name] = value
+                continue
+            renamed[target] = value
+            self.stats["amcache_values_renamed"] += 1
+        return renamed
 
 
 class HiveBuffer:

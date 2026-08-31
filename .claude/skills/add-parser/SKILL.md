@@ -160,6 +160,20 @@ OUTPUT_FILENAMES = { ..., "registry:SYSTEM": "registry_system.jsonl" }
 | `$MFT` | `tools/compare_mft.py` + 합성 레코드 테스트 |
 | `prefetch` | `tools/scan_prefetch.py` — 메트릭 배열을 보지 않고 문자열 블록을 쪼갠다 |
 | `recentfilecache` | `tools/scan_recentfilecache.py` — 길이 필드를 보지 않고 널로 쪼갠다 |
+| 전 아티팩트 | `tools/hexdump_record.py` — `offset` 으로 원본에 내려가 그 레코드가 맞는지 본다 |
+| 전 아티팩트 | `tools/inspect_jsonl.py` — 매니페스트·`ref` 유일성·`record_num` 대조 |
+
+**실물 한 번 돌린 뒤 `inspect_jsonl.py --parsed <04_parsed>` 를 통과시킨다.**
+새 파서가 깨뜨리기 쉬운 넷을 본다 — 매니페스트의 건수가 파일과 같은가,
+`ref` 가 다른 파서의 것과 겹치지 않는가, `record_num` 이 `ref` 의 숫자와
+같은가, 레코드의 `artifact` 가 그 파일의 것인가. 앞의 둘은 안 보면 05·06
+단계에 가서야 터진다.
+
+**새 파서는 `hexdump_record.py` 의 대조에도 자리를 만들어야 한다.** 모르는
+아티팩트가 오면 그 도구는 통과시키지 않고 "어떻게 대조하는지 모른다"고
+말한다 — 일부러 그렇게 해 두었다. 무엇으로 맞출지는 **레코드가 자기 안에
+들고 있는 식별자**를 찾는 일이다(아래 문단과 같은 논리).
+
 
 외부 도구가 없는 아티팩트(프리패치가 그랬다)는 **같은 파일을 다른 경로로
 읽는 스캐너**를 만든다. 덤으로, 파일 안에 **Windows가 쓴 값**이 있으면

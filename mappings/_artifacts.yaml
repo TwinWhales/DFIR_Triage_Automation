@@ -274,6 +274,36 @@ artifacts:
     exclude_reason: 전용 파서 미구현
     description: PSReadLine 콘솔 히스토리(ConsoleHost_history.txt). 대화형 PowerShell 세션 입력 이력.
 
+  # SRUM(SRUDB.dat). 공급자 테이블마다 아티팩트가 하나다 — 레코드 번호로
+  # 쓸 AutoIncId 가 테이블 안에서만 유일해서, 묶으면 ref 가 겹친다
+  # (src/stage04_parse/parsers/srum.py).
+  #
+  # signal_source 가 scope 인 이유는 레지스트리·프리패치와 같다. SRUM 의
+  # 모든 행은 "무언가가 자원을 썼다"이고 그 사실 자체는 변별력이 없다.
+  # 무엇이 얼마나 보냈는지가 신호인데, 임계치를 정할 근거가 아직 없어
+  # flags 로 거르지 않는다 — 모든 레코드에 붙는 플래그는 필터가 못 된다.
+  # 임계치를 정하면 그때 flags 로 옮긴다(docs/limitations.md).
+  srum:NetworkUsage:
+    parser: srum
+    os: [windows]
+    supported: true
+    signal_source: scope
+    description: SRUM 네트워크 사용량. 앱별 송수신 바이트와 시각. Windows 8 이상.
+
+  srum:AppResourceUsage:
+    parser: srum
+    os: [windows]
+    supported: true
+    signal_source: scope
+    description: SRUM 앱 자원 사용량. 앱별 전경·배경 실행 시간과 디스크 I/O. Windows 8 이상.
+
+  srum:NetworkConnectivity:
+    parser: srum
+    os: [windows]
+    supported: true
+    signal_source: scope
+    description: SRUM 네트워크 연결 이력. 인터페이스별 접속 시각과 지속 시간. Windows 8 이상.
+
   $LogFile:
     parser: null
     os: [windows]

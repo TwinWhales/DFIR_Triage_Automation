@@ -141,6 +141,18 @@
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
     {
+      "artifact": "srum:NetworkUsage",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "srum:AppResourceUsage",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "srum:NetworkConnectivity",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
       "artifact": "$LogFile",
       "reason": "본 버전 미지원 (파싱 모듈 범위 외)"
     }
@@ -148,6 +160,6 @@
   "stats": {
     "selected_count": 2,
     "deferred_count": 2,
-    "excluded_count": 18
+    "excluded_count": 21
   }
 }

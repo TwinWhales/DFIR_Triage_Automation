@@ -610,8 +610,8 @@
     },
     {
       "id": "V36",
-      "risk": "경로 필드인데 이름이 화이트리스트에 없다 (Amcache 숫자 값 이름)",
-      "why": "is_path_field() 가 PATH_FIELDS 네 이름과 *_path 만 경로로 봐서, 그 밖의 이름은 정확 문자열 비교로 간다. Amcache 는 값 이름이 숫자 문자열이라 여기 걸린다. NTFS 대소문자 무시는 파일시스템의 사실이지 필드 이름의 문제가 아니다 — 2026-08-26 K-ALERT 실측에서 이것 하나로 정상 문장이 기각됐다. 2026-08-26 시점 결론: Sysmon·Security 계열은 이름으로 받게 고쳤고, Amcache 숫자 이름은 04단계 몫으로 남겼다.",
+      "risk": "Amcache 경로 필드가 이름으로 경로임을 드러내는가",
+      "why": "is_path_field() 는 이름으로만 경로를 판단한다. Amcache Root\\File 은 값 이름이 숫자 문자열이라(\"15\" = 전체 경로) 그 판단이 성립하지 않았고, 2026-08-26 K-ALERT 실측에서 이것 하나로 정상 문장이 기각됐다. 2026-08-27 에 04단계가 숫자 이름을 InventoryApplicationFile 의 어휘로 바꿔 내보내게 하면서 풀렸다 — 같은 이미지 안에서 두 레이아웃을 FileId 로 조인해 얻은 대응이다(parsers/registry.AMCACHE_FILE_VALUE_NAMES). 06단계는 PATH_FIELDS 에 lowercaselongpath 를 받는 것으로 끝난다.",
       "statement": "sppsvc.exe 가 Amcache 에 등재돼 있습니다.",
       "refs": [
         "AMCACHE#15044"
@@ -619,12 +619,11 @@
       "claims": [
         {
           "ref": "AMCACHE#15044",
-          "field": "15",
+          "field": "LowerCaseLongPath",
           "value": "C:\\WINDOWS\\SYSTEM32\\sppsvc.exe"
         }
       ],
-      "expect": "rejected",
-      "gap": "비교기가 풀 문제가 아니다. Amcache 는 값 이름이 숫자 문자열이라 ('15' = 전체 경로) 이름으로는 경로인지 알 수 없고, PATH_FIELDS 에 '15' 를 넣으면 다른 서브키의 15 까지 경로로 본다. **04단계에서 Amcache 값 이름을 해석해 내보내야 풀린다** — 그때 이 사례의 expect 를 passed 로 되돌린다."
+      "expect": "passed"
     },
     {
       "id": "V37",

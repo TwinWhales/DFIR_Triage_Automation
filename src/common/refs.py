@@ -79,6 +79,14 @@ ARTIFACT_PREFIX: dict[str, str] = {
     # 접두어도 짝이 되게 지었다 — ref만 보고 "어느 세대의 실행 흔적인가"가
     # 드러난다. 레코드 번호는 항목의 파일 내 오프셋이다(레지스트리와 같다).
     "recentfilecache": "RFCACHE",
+
+    # SRUM(SRUDB.dat). 공급자 테이블마다 아티팩트를 나눈다 — evtx 가 채널
+    # 마다 나눈 것과 같은 이유이고, 여기서는 그것이 **필수**다. 레코드
+    # 번호로 쓸 값은 AutoIncId 뿐인데 그것이 테이블 안에서만 유일해서,
+    # 한 접두어로 묶으면 서로 다른 테이블의 1번이 같은 ref 가 된다.
+    "srum:NetworkUsage": "SRUM-NET",
+    "srum:AppResourceUsage": "SRUM-APP",
+    "srum:NetworkConnectivity": "SRUM-CONN",
 }
 
 #: 역방향. ref만 보고 어느 파서가 만든 레코드인지 되짚을 때 쓴다.
@@ -89,7 +97,8 @@ PREFIX_ARTIFACT: dict[str, str] = {v: k for k, v in ARTIFACT_PREFIX.items()}
 REF_PATTERN = re.compile(
     r"^(?P<prefix>MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET"
     r"|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF"
-    r"|SYSMON|EVTX-DRV|EVTX-PNP|EVTX-AAOP|EVTX-AAADM|EVTX-AABRK|EVTX-RDPCM|EVTX-RDPLSM|EVTX-APP)#(?P<num>0|[1-9]\d*)$"
+    r"|SYSMON|EVTX-DRV|EVTX-PNP|EVTX-AAOP|EVTX-AAADM|EVTX-AABRK|EVTX-RDPCM|EVTX-RDPLSM|EVTX-APP"
+    r"|SRUM-NET|SRUM-APP|SRUM-CONN)#(?P<num>0|[1-9]\d*)$"
 )
 
 

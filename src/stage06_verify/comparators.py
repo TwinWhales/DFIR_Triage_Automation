@@ -74,6 +74,12 @@ PATH_FIELDS = frozenset(
         "processname",
         "parentprocessname",
         "newprocessname",
+        # Amcache — 값이 **전부 소문자로 저장된다**(`c:\program files\...`).
+        # 모델은 `C:\Program Files\...` 라고 쓰므로, 여기 없으면 정확 문자열
+        # 비교로 떨어져 Amcache 를 인용한 정상 문장이 **전량** 기각된다.
+        # Root\File 의 숫자 이름을 이 이름으로 바꾸는 것은 04단계다
+        # (`parsers/registry.AMCACHE_FILE_VALUE_NAMES`).
+        "lowercaselongpath",
     }
 )
 

@@ -27,7 +27,7 @@
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
@@ -52,6 +52,8 @@ __all__ = [
     "mappings_dir",
     "load_vocabulary",
     "privileged_groups",
+    "KeepPaths",
+    "prompt_keep_paths",
     "apply",
     "apply_all",
 ]
@@ -155,6 +157,21 @@ class FlagRule:
             return False
         return True
 
+    def applies_to(self, artifact: str) -> bool:
+        """이 룰이 **이 아티팩트에 걸릴 가능성이 있는가.**
+
+        ``matches`` 와 달리 레코드를 보지 않습니다. 아티팩트 이름만으로
+        걸러지는 룰을 레코드마다 다시 확인하지 않으려는 것입니다
+        (``Vocabulary.for_artifact``).
+
+        **절이 없으면 항상 참입니다.** 그때는 ``handler`` 혼자 판정하므로
+        아티팩트로 좁힐 근거가 없습니다 — 여기서 거짓을 내면 플래그가
+        조용히 사라집니다.
+        """
+        if not self.clauses:
+            return True
+        return any(_artifact_matches(artifact, clause.artifact) for clause in self.clauses)
+
 
 @dataclass(frozen=True)
 class Vocabulary:
@@ -162,6 +179,33 @@ class Vocabulary:
 
     names: tuple[str, ...]
     rules: tuple[FlagRule, ...]
+    #: ``for_artifact`` 의 메모. 어휘는 실행 중 안 바뀌므로 한 번 채우면 끝이다.
+    #:
+    #: ``frozen=True`` 는 **속성 대입**을 막을 뿐 dict 내용 변경은 막지
+    #: 않습니다. ``compare=False`` 로 둔 것은 이것이 계산 결과이지 어휘의
+    #: 일부가 아니기 때문입니다 — 두 어휘가 같은지 볼 때 메모까지 보면
+    #: 어느 쪽을 먼저 썼느냐로 답이 달라집니다.
+    _by_artifact: dict[str, tuple[FlagRule, ...]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+
+    def for_artifact(self, artifact: str) -> tuple[FlagRule, ...]:
+        """이 아티팩트에 걸릴 수 있는 룰만.
+
+        **레코드마다 룰 26개를 다 도는 것이 04단계의 큰 비용이었습니다.**
+        아티팩트 이름은 파싱 한 번 동안 고정인데 ``_artifact_matches`` 가
+        레코드마다 같은 답을 다시 냈습니다. 실측(2026-08-28)에서 레지스트리
+        223,569건이 룰 26개 × 절 34개를 전부 돌아 플래그 0건을 냈습니다.
+
+        걸러지는 폭이 아티팩트마다 다릅니다 —
+        ``registry``·``prefetch``·``srum`` 은 26 → 1, ``$MFT`` 는 26 → 5,
+        ``evtx:Security`` 는 26 → 8 입니다.
+        """
+        cached = self._by_artifact.get(artifact)
+        if cached is None:
+            cached = tuple(rule for rule in self.rules if rule.applies_to(artifact))
+            self._by_artifact[artifact] = cached
+        return cached
 
 
 @dataclass(frozen=True)
@@ -582,6 +626,67 @@ def privileged_groups(directory: str | None = None) -> frozenset[str]:
     return frozenset(str(n).strip().lower() for n in names) or DEFAULT_PRIVILEGED_GROUPS
 
 
+@dataclass(frozen=True)
+class KeepPaths:
+    """긴 목록에서 먼저 남길 항목의 기준. ``prompt_keep_paths`` 참조."""
+
+    max_items: int
+    contains: tuple[str, ...]
+
+    def matches(self, value: str) -> bool:
+        """이 값이 눈여겨볼 자리인가. 대소문자는 무시한다."""
+        lowered = value.lower()
+        return any(needle in lowered for needle in self.contains)
+
+
+#: ``prompt_keep_paths`` 가 없을 때. 지금까지와 같은 동작이다 — 앞에서부터.
+NO_KEEP_PATHS = KeepPaths(max_items=0, contains=())
+
+
+@functools.lru_cache(maxsize=None)
+def prompt_keep_paths(directory: str | None = None) -> KeepPaths:
+    """05단계가 긴 목록을 자를 때 먼저 남길 항목의 기준.
+
+    **플래그가 아니라 배분의 문제인데 이 파일에서 읽습니다.** 판단의
+    성격이 같기 때문입니다 — "이 경로는 눈여겨볼 자리인가"를 코드가
+    아니라 어휘로 정해 둡니다. ``allocation.for_prompt``가 씁니다.
+
+    **키가 없으면 기능이 꺼집니다**(``NO_KEEP_PATHS``). 그때의 동작은
+    이 기능이 생기기 전과 같아서 — 목록을 앞에서부터 자릅니다 — 조용히
+    틀리는 자리가 아닙니다.
+
+    **모양이 틀렸으면 멈춥니다.** ``max_items``가 숫자가 아니거나
+    ``contains``가 목록이 아니면 ``VocabularyError``입니다. 슬쩍 무시하면
+    "왜 그 DLL 이 프롬프트에 없지"를 되짚을 방법이 없습니다.
+    """
+    path = Path(directory or mappings_dir()) / "_flags.yaml"
+    if not path.is_file():
+        return NO_KEEP_PATHS
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    spec = data.get("prompt_keep_paths")
+    if spec is None:
+        return NO_KEEP_PATHS
+    if not isinstance(spec, dict):
+        raise VocabularyError(f"{path}: prompt_keep_paths 가 매핑이 아님")
+
+    max_items = spec.get("max_items", 0)
+    if isinstance(max_items, bool) or not isinstance(max_items, int) or max_items < 0:
+        raise VocabularyError(
+            f"{path}: prompt_keep_paths.max_items 는 0 이상의 정수여야 함 "
+            f"(현재 {max_items!r})"
+        )
+
+    contains = spec.get("contains") or []
+    if not isinstance(contains, list) or any(not isinstance(c, str) for c in contains):
+        raise VocabularyError(f"{path}: prompt_keep_paths.contains 는 문자열 목록이어야 함")
+
+    return KeepPaths(
+        max_items=int(max_items),
+        contains=tuple(c.lower() for c in contains),
+    )
+
+
 #: 고정 어휘. ``mappings/_flags.yaml`` 이 원본이고, 스키마 enum 은
 #: ``tools/sync_flag_enum.py`` 가 여기서 생성한다.
 FLAGS: tuple[str, ...] = load_vocabulary().names
@@ -607,7 +712,10 @@ def apply(
     ctx = Context(groups=privileged_groups() if groups is None else groups, scope=scope)
     vocabulary = load_vocabulary()
 
-    found = [rule.name for rule in vocabulary.rules if rule.matches(record, ctx)]
+    artifact = str(record.get("artifact", ""))
+    found = [
+        rule.name for rule in vocabulary.for_artifact(artifact) if rule.matches(record, ctx)
+    ]
 
     # 파서가 이미 붙인 것이 있으면 합친다. 순서는 어휘 정의 순서로 고정해
     # 같은 레코드가 항상 같은 JSON을 내게 한다.
