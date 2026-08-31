@@ -1,0 +1,29 @@
+technique: T1083
+name: "File and Directory Discovery"
+os: windows
+
+# K-001 Stage 2 — 리버스쉘에서 dir /s, type, findstr 명령으로
+# C:\KioskApp 디렉터리를 탐색해 settings.json(PIN·엔드포인트)을 발견.
+# T1552 자격증명 탈취의 직전 단계다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: dir.exe·findstr.exe 명령으로 설정파일(settings.json) 탐색 — T1552 자격증명 발견 직전 단계
+
+  - name: $MFT
+    tier: 1
+    priority: 2
+    scope_template:
+      path_prefix:
+        - 'C:\KioskApp'
+    rationale: 앱 디렉터리 파일 접근 흔적 — 설정파일 접근 시각 확증
+
+  - name: prefetch
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 탐색 명령 실행이 확인되어 실행 이력을 확인해야 하는 경우
+    scope_template: {}
+    rationale: cmd.exe·findstr.exe 실행 횟수·최근 실행 시각

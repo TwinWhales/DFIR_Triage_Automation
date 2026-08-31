@@ -235,6 +235,45 @@ artifacts:
     signal_source: scope
     description: 프리패치. 실행 이력 — 실행 파일 경로·실행 횟수·최근 실행 시각·적재된 파일 목록.
 
+  # ── HID/BadUSB 시나리오 추가 채널 (2026-08-31) ───────────────────────
+  # evtx 파서 재사용. T1562.001·T1059.001 매핑이 참조한다.
+  evtx:Defender:
+    parser: evtx
+    os: [windows]
+    supported: true
+    signal_source: flags
+    description: Windows Defender 운영 로그. 실시간 보호 비활성(5001)·보호 비활성화 알림(5004)·구성 변경(5007).
+
+  evtx:PowerShell:
+    parser: evtx
+    os: [windows]
+    supported: true
+    signal_source: flags
+    description: PowerShell 운영 로그. 스크립트블록 로깅(4104)·모듈 로깅(4103).
+
+  # ── 커스텀/미지원 아티팩트 ────────────────────────────────────────────
+  # 파서 미구현. supported: false 로 범위 한계에 기록해 둔다.
+  kiosk_app_config:
+    parser: null
+    os: [windows]
+    supported: false
+    exclude_reason: 커스텀 JSON 파서 미구현 — 추후 파서 구현 시 교체
+    description: 키오스크 앱 설정 파일(C:\KioskApp\settings.json). 관리자 PIN·POS API 엔드포인트.
+
+  cryptnet_urlcache:
+    parser: null
+    os: [windows]
+    supported: false
+    exclude_reason: 전용 파서 미구현
+    description: CryptnetUrlCache. certutil -urlcache 다운로드 흔적. URL·바이트 캐시 사본.
+
+  psreadline_history:
+    parser: null
+    os: [windows]
+    supported: false
+    exclude_reason: 전용 파서 미구현
+    description: PSReadLine 콘솔 히스토리(ConsoleHost_history.txt). 대화형 PowerShell 세션 입력 이력.
+
   $LogFile:
     parser: null
     os: [windows]

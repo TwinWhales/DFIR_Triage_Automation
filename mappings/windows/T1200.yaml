@@ -34,8 +34,9 @@ artifacts:
       path_prefix:
         - 'SYSTEM\CurrentControlSet\Enum\USB'
         - 'SYSTEM\CurrentControlSet\Enum\USBSTOR'
+        - 'SYSTEM\CurrentControlSet\Enum\HID'
         - 'SYSTEM\MountedDevices'
-    rationale: 신규 USB 장치 열거 정보(VID/PID, 시리얼)와 드라이브 문자 매핑
+    rationale: 신규 USB·HID 장치 열거 정보(VID/PID, 시리얼)와 드라이브 문자 매핑 — HID(BadUSB)는 Enum\HID에 키보드로 열거됨
 
   # 장치 연결 시각의 1차 근거. evtx:System 의 20001/10000 은 제공자를
   # 구분하지 않는 선별이라 다른 장치 이벤트가 섞이는데, 이 두 채널은

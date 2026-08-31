@@ -2,7 +2,8 @@ technique: T1021.001
 name: "Remote Services: Remote Desktop Protocol"
 os: windows
 
-# K-001 Stage 5·8 — 재사용된 관리자/정산 계정으로 원격 세션 생성.
+# K-001 Stage 8 — POS에 저장된 정산 동기화 자격증명(mgmt-credentials.ini)을
+# 재사용해 관리서버로 원격 세션 생성. (키오스크→POS 이동은 T1021.002 SMB)
 #
 # 같은 사건이 세 곳에 다르게 남는다. Security 는 "누가 로그온했는가",
 # RemoteConnectionManager 는 "어디서 붙었는가", LocalSessionManager 는
