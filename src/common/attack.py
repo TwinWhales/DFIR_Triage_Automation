@@ -81,6 +81,19 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1657": "Financial Theft",
     "T1041": "Exfiltration Over C2 Channel",
     "T1048": "Exfiltration Over Alternative Protocol",
+    # HID/BadUSB 시나리오(2026-08-31, PR #35 의 매핑에 맞춘 등재).
+    # 매핑 YAML 이 먼저 들어오고 여기가 비어 있었다 — 그러면 02단계가
+    # 그 기법을 낼 수 없어 매핑이 도달 불가가 된다. 관문 1이 관문 2보다
+    # 앞이라는 것이 이 자리에서 드러났다
+    # (.claude/skills/add-scenario/SKILL.md 의 관문 표).
+    "T1016": "System Network Configuration Discovery",
+    "T1018": "Remote System Discovery",
+    "T1021.002": "Remote Services: SMB/Windows Admin Shares",
+    "T1071.001": "Application Layer Protocol: Web Protocols",
+    "T1082": "System Information Discovery",
+    "T1083": "File and Directory Discovery",
+    "T1105": "Ingress Tool Transfer",
+    "T1569.002": "System Services: Service Execution",
     # 매핑은 아직 없으나 시나리오에 자주 등장하는 기법
     "T1003.001": "OS Credential Dumping: LSASS Memory",
     "T1021.001": "Remote Services: Remote Desktop Protocol",

@@ -78,11 +78,20 @@ def test_catalog_loads_every_artifact(catalog):
         "srum:AppResourceUsage",
         "srum:NetworkConnectivity",
         "$LogFile",
+        # HID/BadUSB 시나리오 (2026-08-31). 앞의 둘은 evtx 파서를 재사용하고,
+        # 뒤의 셋은 전용 파서가 없어 supported: false 다 — 카탈로그에 두는
+        # 것은 매핑이 이름으로 참조할 수 있게 하고, 보고서에 "왜 안 봤는가"가
+        # 남게 하려는 것이다.
+        "evtx:Defender",
+        "evtx:PowerShell",
+        "kiosk_app_config",
+        "cryptnet_urlcache",
+        "psreadline_history",
     }
     # 목록이나 아티팩트의 성질(signal_source)이 바뀌면 이 값도 올린다.
     # 03_selection.json 에 실려 나가므로 산출물만 보고 어느 카탈로그로
     # 돌렸는지 되짚을 수 있어야 한다.
-    assert catalog.mapping_table_version == "1.1"
+    assert catalog.mapping_table_version == "1.2"
 
 
 def test_unsupported_artifacts_carry_a_reason(catalog):
@@ -167,6 +176,10 @@ def test_all_shipped_mappings_load(mappings):
         "T1074.001", "T1565.001",
         "T1005", "T1657",
         "T1041", "T1048",
+        # HID/BadUSB 시나리오 (2026-08-31). T1059.001 은 예전부터
+        # KNOWN_TECHNIQUES 에는 있었고 매핑만 없었다 — 이번에 생겼다.
+        "T1016", "T1018", "T1021.002", "T1071.001",
+        "T1082", "T1083", "T1105", "T1569.002", "T1059.001",
     }
 
 

@@ -2,9 +2,9 @@
   "case_id": "C-001",
   "stage": "03_select",
   "schema_version": "1.0",
-  "generated_at": "2026-08-25T02:45:13Z",
+  "generated_at": "2026-08-31T07:23:54Z",
   "generator": "select.py",
-  "mapping_table_version": "1.1",
+  "mapping_table_version": "1.2",
   "selected": [
     {
       "artifact": "$MFT",
@@ -141,6 +141,26 @@
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
     {
+      "artifact": "evtx:Defender",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "evtx:PowerShell",
+      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
+    },
+    {
+      "artifact": "kiosk_app_config",
+      "reason": "본 버전 미지원 (커스텀 JSON 파서 없음 — 추후 구현 시 교체)"
+    },
+    {
+      "artifact": "cryptnet_urlcache",
+      "reason": "본 버전 미지원 (전용 파서 없음)"
+    },
+    {
+      "artifact": "psreadline_history",
+      "reason": "본 버전 미지원 (전용 파서 없음)"
+    },
+    {
       "artifact": "srum:NetworkUsage",
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
@@ -160,6 +180,6 @@
   "stats": {
     "selected_count": 2,
     "deferred_count": 2,
-    "excluded_count": 21
+    "excluded_count": 26
   }
 }

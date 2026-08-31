@@ -74,6 +74,10 @@ ARTIFACT_PREFIX: dict[str, str] = {
     "evtx:RDPConnection": "EVTX-RDPCM",
     "evtx:RDPSession": "EVTX-RDPLSM",
     "evtx:Application": "EVTX-APP",
+    # HID/BadUSB 시나리오 채널(2026-08-31). Defender 는 방어 무력화
+    # (T1562.001), PowerShell 은 스크립트 실행(T1059.001)의 근거다.
+    "evtx:Defender": "EVTX-DEF",
+    "evtx:PowerShell": "EVTX-PS",
 
     # RecentFileCache.bcf. Windows 7에서 Amcache 자리를 대신하는 아티팩트라
     # 접두어도 짝이 되게 지었다 — ref만 보고 "어느 세대의 실행 흔적인가"가
@@ -98,6 +102,7 @@ REF_PATTERN = re.compile(
     r"^(?P<prefix>MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET"
     r"|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF"
     r"|SYSMON|EVTX-DRV|EVTX-PNP|EVTX-AAOP|EVTX-AAADM|EVTX-AABRK|EVTX-RDPCM|EVTX-RDPLSM|EVTX-APP"
+    r"|EVTX-DEF|EVTX-PS"
     r"|SRUM-NET|SRUM-APP|SRUM-CONN)#(?P<num>0|[1-9]\d*)$"
 )
 

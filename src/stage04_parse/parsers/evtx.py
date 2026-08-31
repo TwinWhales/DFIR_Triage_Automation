@@ -117,6 +117,8 @@ CHANNEL_FALLBACK = {
     "evtx:RDPConnection": "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational",
     "evtx:RDPSession": "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
     "evtx:Application": "Application",
+    "evtx:Defender": "Microsoft-Windows-Windows Defender/Operational",
+    "evtx:PowerShell": "Microsoft-Windows-PowerShell/Operational",
 }
 
 #: 청크 하나의 크기. python-evtx가 같은 값을 쓰고 있으며, 여기서는

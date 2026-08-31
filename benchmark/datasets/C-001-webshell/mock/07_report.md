@@ -69,6 +69,11 @@
 | registry:Amcache | 식별된 기법에 매핑된 아티팩트가 아님 |
 | recentfilecache | 식별된 기법에 매핑된 아티팩트가 아님 |
 | prefetch | 식별된 기법에 매핑된 아티팩트가 아님 |
+| evtx:Defender | 식별된 기법에 매핑된 아티팩트가 아님 |
+| evtx:PowerShell | 식별된 기법에 매핑된 아티팩트가 아님 |
+| kiosk_app_config | 본 버전 미지원 (커스텀 JSON 파서 없음 — 추후 구현 시 교체) |
+| cryptnet_urlcache | 본 버전 미지원 (전용 파서 없음) |
+| psreadline_history | 본 버전 미지원 (전용 파서 없음) |
 | srum:NetworkUsage | 식별된 기법에 매핑된 아티팩트가 아님 |
 | srum:AppResourceUsage | 식별된 기법에 매핑된 아티팩트가 아님 |
 | srum:NetworkConnectivity | 식별된 기법에 매핑된 아티팩트가 아님 |
@@ -81,4 +86,4 @@
 본 보고서는 자동 생성되었으며 수사상 참고 자료입니다. 포렌식 감정 결과나
 전문가 의견이 아니며, 해석의 타당성은 분석가 검토가 필요합니다.
 
-생성: 2026-08-27T02:44:53Z / report.py
+생성: 2026-08-31T07:23:55Z / report.py
