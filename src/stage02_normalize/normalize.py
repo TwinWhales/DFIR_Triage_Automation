@@ -18,7 +18,7 @@ sLLM이 채우는 첫 구조체를 만든다. 이후 단계는 이 스키마만 
     # 모델 없이 배선만 확인 (스텁)
     python -m src.stage02_normalize.normalize \\
         --in cases/C-001/01_input.json --out cases/C-001/02_scenario.json \\
-        --llm stub --replay benchmark/datasets/C-001-webshell/mock/02_scenario.json
+        --llm stub --replay benchmark/fixtures/C-001-webshell/02_scenario.json
 
     # 실제 모델
     python -m src.stage02_normalize.normalize \\

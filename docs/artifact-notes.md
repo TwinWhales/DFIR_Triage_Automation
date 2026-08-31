@@ -359,7 +359,7 @@ $MFT·$UsnJrnl·evtx:Security·evtx:System·registry:SYSTEM·SOFTWARE·Amcache.
   `$UsnJrnl`·`registry` 분기에는 있던 것과 같은 조치입니다("timestamp는
   required가 아니다" 주석 참고).
 
-두 버그 다 **작은 목업 데이터(`benchmark/datasets/C-001-webshell/mock`)
+두 버그 다 **작은 목업 데이터(`benchmark/fixtures/C-001-webshell`)
 로는 재현되지 않았습니다.** 전자는 디바이스 드라이버 속성이 많은 실물
 SYSTEM 하이브에서만, 후자는 atime 갱신이 꺼진 실물 NTFS 볼륨에서만
 나타나는 분포입니다. `work-guide.md` 3.2가 실물 대조를 요구하는 이유가
@@ -1015,7 +1015,7 @@ SYSTEM\ControlSet001\Control\Session Manager\Memory Management\PrefetchParameter
 
 ### 이 측정이 목업 픽스처의 오류를 드러냈다
 
-`benchmark/datasets/C-001-webshell/mock/04_parsed/mft.jsonl` 의 레코드
+`benchmark/fixtures/C-001-webshell/04_parsed/mft.jsonl` 의 레코드
 12346·12400 은 "정상 파일"을 표현하려고 손으로 쓴 것인데 `$SI` 가
 `.0000000Z` 였습니다. 새 룰이 그것을 조작된 파일로 판정했습니다.
 

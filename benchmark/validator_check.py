@@ -13,7 +13,7 @@
 
     python benchmark/validator_check.py
 
-``benchmark/validator_cases.json``에 사례가 있습니다. 새 비교 규칙을
+``benchmark/validator/cases.json``에 사례가 있습니다. 새 비교 규칙을
 넣거나 실제 데이터에서 오탐을 발견하면 거기에 사례를 추가하십시오.
 """
 
@@ -32,15 +32,15 @@ from src.stage06_verify.verify import verify  # noqa: E402
 
 __all__ = ["build_findings", "run", "main"]
 
-DEFAULT_CASES = REPO_ROOT / "benchmark/validator_cases.json"
+DEFAULT_CASES = REPO_ROOT / "benchmark/validator/cases.json"
 #: 사례가 대조할 레코드. **두 곳입니다.**
 #:
 #: C-001 목업은 웹셸 벤치마크의 입력이라 표기 시험용 레코드를 넣으면
 #: 파싱 건수와 05단계 배분이 함께 흔들립니다. 그래서 표기 경계 사례는
-#: ``benchmark/validator_records/`` 에 따로 둡니다.
+#: ``benchmark/validator/records/`` 에 따로 둡니다.
 DEFAULT_PARSED = (
-    REPO_ROOT / "benchmark/datasets/C-001-webshell/mock/04_parsed",
-    REPO_ROOT / "benchmark/validator_records",
+    REPO_ROOT / "benchmark/fixtures/C-001-webshell/04_parsed",
+    REPO_ROOT / "benchmark/validator/records",
 )
 
 
@@ -214,7 +214,7 @@ def main(argv: "list[str] | None" = None) -> int:
         action="append",
         default=None,
         help="대조할 04_parsed 디렉터리. 여러 번 주면 합쳐서 읽는다 "
-        "(기본: C-001 목업 + benchmark/validator_records)",
+        "(기본: C-001 픽스처 + benchmark/validator/records)",
     )
     parser.add_argument("--tolerance-seconds", type=float, default=1.0)
     parser.add_argument(

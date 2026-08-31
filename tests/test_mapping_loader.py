@@ -19,10 +19,10 @@ from src.common import io, schema
 from src.stage03_select import mapping_loader, scope_resolver
 from src.stage03_select import select as select_mod
 from src.stage03_select.select import select
+from casepaths import FIXTURES, GOLDEN
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAPPINGS = REPO_ROOT / "mappings"
-MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
 
 
 @pytest.fixture(scope="module")
@@ -37,7 +37,7 @@ def mappings(catalog):
 
 @pytest.fixture
 def scenario():
-    return copy.deepcopy(io.read_json(MOCK / "02_scenario.json"))
+    return copy.deepcopy(io.read_json(FIXTURES / "02_scenario.json"))
 
 
 def _write_mapping(tmp_path: Path, body: dict, name: str) -> Path:
@@ -385,7 +385,7 @@ def test_time_range_is_appended_without_the_basis(scenario):
 
 
 def test_reproduces_the_selection_fixture_exactly(scenario, catalog, mappings):
-    expected = io.read_json(MOCK / "03_selection.json")
+    expected = io.read_json(GOLDEN / "03_selection.json")
     got, unmapped = select(scenario, catalog, mappings)
     assert unmapped == []
     got.pop("generated_at")
@@ -489,11 +489,11 @@ def test_cli_reproduces_the_fixture(tmp_path):
     out = tmp_path / "03_selection.json"
     assert (
         select_mod.main(
-            ["--in", str(MOCK / "02_scenario.json"), "--out", str(out), "--mappings", str(MAPPINGS)]
+            ["--in", str(FIXTURES / "02_scenario.json"), "--out", str(out), "--mappings", str(MAPPINGS)]
         )
         == 0
     )
-    got, expected = io.read_json(out), io.read_json(MOCK / "03_selection.json")
+    got, expected = io.read_json(out), io.read_json(GOLDEN / "03_selection.json")
     got.pop("generated_at")
     expected.pop("generated_at")
     assert got == expected
@@ -501,7 +501,7 @@ def test_cli_reproduces_the_fixture(tmp_path):
 
 
 def test_cli_logs_unmapped_techniques_as_skipped(tmp_path):
-    scenario = io.read_json(MOCK / "02_scenario.json")
+    scenario = io.read_json(FIXTURES / "02_scenario.json")
     scenario["techniques"].append(
         {"id": "T1486", "name": "Data Encrypted for Impact", "confidence": 0.6, "evidence_text": "x"}
     )
@@ -518,7 +518,7 @@ def test_cli_logs_unmapped_techniques_as_skipped(tmp_path):
 
 
 def test_cli_aborts_when_nothing_can_be_selected(tmp_path):
-    scenario = io.read_json(MOCK / "02_scenario.json")
+    scenario = io.read_json(FIXTURES / "02_scenario.json")
     scenario["target_os"] = "linux"  # mappings/linux/ 는 비어 있다
     src = tmp_path / "02_scenario.json"
     io.write_json(src, scenario)
@@ -534,7 +534,7 @@ def test_cli_aborts_when_nothing_can_be_selected(tmp_path):
 
 
 def test_cli_aborts_on_a_schema_violating_scenario(tmp_path):
-    scenario = io.read_json(MOCK / "02_scenario.json")
+    scenario = io.read_json(FIXTURES / "02_scenario.json")
     scenario["techniques"] = []  # 스펙의 명시적 위반
     src = tmp_path / "02_scenario.json"
     io.write_json(src, scenario)

@@ -95,17 +95,19 @@ dfir-triage/
 │       └── .gitkeep
 │
 ├── benchmark/
-│   ├── datasets/
-│   │   ├── C-001-webshell/
-│   │   │   ├── input.json
-│   │   │   ├── evidence/          # 실제 이미지는 Git 제외, 경로만 기록
-│   │   │   └── ground_truth.json
-│   │   └── C-002-ransomware/
+│   ├── README.md                  # 벤치마크 구조 및 사용법 가이드
+│   ├── datasets/                  # 측정 대상 (input.json, ground_truth.json)
+│   │   └── C-001-webshell/        # evidence/ 는 경로만 기록, Git 제외
+│   ├── fixtures/                  # 손으로 쓴 입력·스텁 응답 (재생성 금지)
+│   │   └── C-001-webshell/
+│   ├── golden/                    # 코드의 기대 출력 (재생성 대상)
+│   │   └── C-001-webshell/
+│   ├── validator/                 # cases.json 및 레코드 샘플
 │   ├── ground_truth_schema.json
-│   ├── evaluate.py                # 재현율·환각률·소요시간 산출
-│   ├── validator_check.py         # 검증기 자체 오탐 확인용 정답 문장 30건 테스트
-│   └── results/
-│       └── .gitkeep
+│   ├── collect.py                 # results/ 실행 결과 종합 집계
+│   ├── evaluate.py                # 재현율 산출
+│   ├── validator_check.py         # 검증기 자체 오탐 확인
+│   └── results/                   # 실행 산출물 기록 (Git 제외)
 │
 ├── cases/                         # 실행 산출물 (Git 제외)
 │   └── .gitkeep

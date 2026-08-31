@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 
 from src.common import io, refs, schema
+from casepaths import FIXTURES, GOLDEN, case_file
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
 DATASET = REPO_ROOT / "benchmark/datasets/C-001-webshell"
 
 
@@ -53,7 +53,7 @@ def test_stage_schema_map_points_at_files_that_exist():
     ],
 )
 def test_mock_documents_validate(filename, schema_name):
-    schema.validate(io.read_json(MOCK / filename), schema_name)
+    schema.validate(io.read_json(case_file(filename)), schema_name)
 
 
 def test_dataset_entry_point_validates():
@@ -63,12 +63,12 @@ def test_dataset_entry_point_validates():
 def test_validate_stage_dispatches_by_header():
     for filename in ["01_input.json", "02_scenario.json", "03_selection.json",
                      "05_findings.json", "06_verified.json"]:
-        schema.validate_stage(io.read_json(MOCK / filename))
+        schema.validate_stage(io.read_json(case_file(filename)))
 
 
 @pytest.mark.parametrize("filename", ["mft.jsonl", "evtx_security.jsonl"])
 def test_every_parsed_record_validates(filename):
-    records = list(io.read_jsonl(MOCK / "04_parsed" / filename))
+    records = list(io.read_jsonl(FIXTURES / "04_parsed" / filename))
     assert records
     for record in records:
         schema.validate(record, "parsed_record")
@@ -77,16 +77,16 @@ def test_every_parsed_record_validates(filename):
 def test_parsed_record_ref_agrees_with_record_num():
     # 스키마는 두 필드를 각각만 본다. 서로 어긋나는 것은 여기서 잡는다.
     for filename in ["mft.jsonl", "evtx_security.jsonl"]:
-        for record in io.read_jsonl(MOCK / "04_parsed" / filename):
+        for record in io.read_jsonl(FIXTURES / "04_parsed" / filename):
             parsed = refs.parse_ref(record["ref"])
             assert parsed.record_num == record["record_num"], record["ref"]
             assert parsed.artifact == record["artifact"], record["ref"]
 
 
 def test_manifest_record_counts_match_the_actual_files():
-    manifest = io.read_json(MOCK / "04_parsed/_manifest.json")
+    manifest = io.read_json(FIXTURES / "04_parsed/_manifest.json")
     for entry in manifest["files"]:
-        assert entry["record_count"] == io.count_jsonl(MOCK / "04_parsed" / entry["path"])
+        assert entry["record_count"] == io.count_jsonl(FIXTURES / "04_parsed" / entry["path"])
     assert manifest["total_records"] == sum(f["record_count"] for f in manifest["files"])
 
 
@@ -96,7 +96,7 @@ def test_manifest_record_counts_match_the_actual_files():
 
 
 def _scenario():
-    return copy.deepcopy(io.read_json(MOCK / "02_scenario.json"))
+    return copy.deepcopy(io.read_json(FIXTURES / "02_scenario.json"))
 
 
 def test_empty_techniques_is_a_violation():
@@ -156,21 +156,21 @@ def test_unexpected_field_is_a_violation():
 
 
 def test_malformed_ref_in_findings_is_a_violation():
-    doc = copy.deepcopy(io.read_json(MOCK / "05_findings.json"))
+    doc = copy.deepcopy(io.read_json(FIXTURES / "05_findings.json"))
     doc["findings"][0]["refs"] = ["MFT12345"]
     with pytest.raises(schema.SchemaViolation, match=r"findings\[0\]\.refs"):
         schema.validate(doc, "findings")
 
 
 def test_claim_requires_all_three_of_ref_field_value():
-    doc = copy.deepcopy(io.read_json(MOCK / "05_findings.json"))
+    doc = copy.deepcopy(io.read_json(FIXTURES / "05_findings.json"))
     del doc["findings"][0]["claims"][0]["value"]
     with pytest.raises(schema.SchemaViolation, match=r"findings\[0\]\.claims\[0\]"):
         schema.validate(doc, "findings")
 
 
 def test_unknown_flag_is_a_violation():
-    record = next(io.read_jsonl(MOCK / "04_parsed/mft.jsonl"))
+    record = next(io.read_jsonl(FIXTURES / "04_parsed/mft.jsonl"))
     record = copy.deepcopy(record)
     record["flags"] = ["looks_suspicious"]
     with pytest.raises(schema.SchemaViolation, match="flags"):
@@ -185,21 +185,21 @@ def test_mft_si_and_fn_timestamps_are_optional():
     si_atime이 0인 레코드가 다수였다. NTFS는 최근 접근 시각 갱신을
     기본적으로 꺼 둔다. $UsnJrnl·registry의 timestamp와 같은 규약이다.
     """
-    record = copy.deepcopy(next(io.read_jsonl(MOCK / "04_parsed/mft.jsonl")))
+    record = copy.deepcopy(next(io.read_jsonl(FIXTURES / "04_parsed/mft.jsonl")))
     del record["fn_ctime"]
     del record["si_atime"]
     schema.validate(record, "parsed_record")  # 예외가 나면 안 된다
 
 
 def test_mft_record_still_needs_its_core_fields():
-    record = copy.deepcopy(next(io.read_jsonl(MOCK / "04_parsed/mft.jsonl")))
+    record = copy.deepcopy(next(io.read_jsonl(FIXTURES / "04_parsed/mft.jsonl")))
     del record["path"]
     with pytest.raises(schema.SchemaViolation):
         schema.validate(record, "parsed_record")
 
 
 def test_offset_must_be_hex():
-    record = copy.deepcopy(next(io.read_jsonl(MOCK / "04_parsed/mft.jsonl")))
+    record = copy.deepcopy(next(io.read_jsonl(FIXTURES / "04_parsed/mft.jsonl")))
     record["offset"] = "123456"
     with pytest.raises(schema.SchemaViolation, match="offset"):
         schema.validate(record, "parsed_record")
@@ -207,7 +207,7 @@ def test_offset_must_be_hex():
 
 def test_unknown_rejection_reason_is_a_violation():
     # 환각 유형 분포가 발표 수치이므로 어휘를 벗어나면 막는다.
-    doc = copy.deepcopy(io.read_json(MOCK / "06_verified.bad.json"))
+    doc = copy.deepcopy(io.read_json(GOLDEN / "06_verified.bad.json"))
     doc["rejected"][0]["reason"] = "looks_wrong"
     with pytest.raises(schema.SchemaViolation, match="rejected"):
         schema.validate(doc, "verified")

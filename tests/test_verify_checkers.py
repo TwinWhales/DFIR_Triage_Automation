@@ -20,10 +20,9 @@ import pytest
 from src.common import io
 from src.stage06_verify import checkers, comparators, verify as verify_mod
 from src.stage06_verify.verify import load_records, verify
+from casepaths import FIXTURES, GOLDEN
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
-PARSED = MOCK / "04_parsed"
+PARSED = FIXTURES / "04_parsed"
 
 
 @pytest.fixture(scope="module")
@@ -33,7 +32,7 @@ def records():
 
 @pytest.fixture
 def findings():
-    return copy.deepcopy(io.read_json(MOCK / "05_findings.json"))
+    return copy.deepcopy(io.read_json(FIXTURES / "05_findings.json"))
 
 
 def _finding(**overrides):
@@ -383,14 +382,14 @@ def _without_volatile(doc):
 
 
 def test_reproduces_the_passing_fixture_exactly(records, findings):
-    expected = io.read_json(MOCK / "06_verified.json")
+    expected = io.read_json(GOLDEN / "06_verified.json")
     got = verify(findings, records, tolerance_seconds=1)
     assert _without_volatile(got) == _without_volatile(expected)
 
 
 def test_reproduces_the_rejection_fixture_exactly(records):
-    bad = io.read_json(MOCK / "05_findings.bad.json")
-    expected = io.read_json(MOCK / "06_verified.bad.json")
+    bad = io.read_json(FIXTURES / "05_findings.bad.json")
+    expected = io.read_json(GOLDEN / "06_verified.bad.json")
     got = verify(bad, records, tolerance_seconds=1, generator="mock (negative fixture)")
     assert _without_volatile(got) == _without_volatile(expected)
 
@@ -408,7 +407,7 @@ def test_hallucination_rate_excludes_unverifiable(records, findings):
 
 
 def test_all_rejected_gives_a_rate_of_one(records):
-    bad = io.read_json(MOCK / "05_findings.bad.json")
+    bad = io.read_json(FIXTURES / "05_findings.bad.json")
     assert verify(bad, records)["stats"]["hallucination_rate"] == 1.0
 
 
@@ -445,7 +444,7 @@ def test_record_without_a_ref_is_rejected(tmp_path):
 def test_cli_writes_a_schema_valid_document(tmp_path, capsys):
     out = tmp_path / "06_verified.json"
     code = verify_mod.main(
-        ["--findings", str(MOCK / "05_findings.json"), "--parsed", str(PARSED), "--out", str(out)]
+        ["--findings", str(FIXTURES / "05_findings.json"), "--parsed", str(PARSED), "--out", str(out)]
     )
     assert code == 0
     from src.common import schema
@@ -460,7 +459,7 @@ def test_cli_rejects_an_unknown_checker_without_touching_errors_jsonl(tmp_path, 
     out = tmp_path / "06_verified.json"
     code = verify_mod.main(
         [
-            "--findings", str(MOCK / "05_findings.json"),
+            "--findings", str(FIXTURES / "05_findings.json"),
             "--parsed", str(PARSED),
             "--out", str(out),
             "--checkers", "vibes",
@@ -473,7 +472,7 @@ def test_cli_rejects_an_unknown_checker_without_touching_errors_jsonl(tmp_path, 
 
 def test_cli_aborts_and_logs_when_the_input_violates_its_schema(tmp_path):
     broken = tmp_path / "05_findings.json"
-    doc = io.read_json(MOCK / "05_findings.json")
+    doc = io.read_json(FIXTURES / "05_findings.json")
     doc["findings"][0]["severity"] = "catastrophic"
     io.write_json(broken, doc)
 
@@ -498,7 +497,7 @@ def test_cli_aborts_when_the_parse_output_is_empty(tmp_path):
     with pytest.raises(SystemExit):
         verify_mod.main(
             [
-                "--findings", str(MOCK / "05_findings.json"),
+                "--findings", str(FIXTURES / "05_findings.json"),
                 "--parsed", str(empty),
                 "--out", str(tmp_path / "06_verified.json"),
             ]
@@ -510,7 +509,7 @@ def test_cli_aborts_when_the_parse_output_is_empty(tmp_path):
 def test_cli_output_is_lf_only(tmp_path):
     out = tmp_path / "06_verified.json"
     verify_mod.main(
-        ["--findings", str(MOCK / "05_findings.json"), "--parsed", str(PARSED), "--out", str(out)]
+        ["--findings", str(FIXTURES / "05_findings.json"), "--parsed", str(PARSED), "--out", str(out)]
     )
     assert b"\r\n" not in out.read_bytes()
     assert json.loads(out.read_text(encoding="utf-8"))["stage"] == "06_verify"

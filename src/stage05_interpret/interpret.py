@@ -15,7 +15,7 @@
         --in cases/C-001/04_parsed/ --scenario cases/C-001/02_scenario.json \\
         --selection cases/C-001/03_selection.json \\
         --out cases/C-001/05_findings.json \\
-        --llm stub --replay benchmark/datasets/C-001-webshell/mock/05_findings.json
+        --llm stub --replay benchmark/fixtures/C-001-webshell/05_findings.json
 
 ``--selection``은 선택이지만 **주는 것이 정상이다.** 없으면 모든 아티팩트가
 같은 비중으로 자리를 나눠 갖는다 — 배분은 그대로 돌지만 "이 기법 때문에 이

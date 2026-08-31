@@ -24,7 +24,7 @@
     # 벤치마크 데이터셋에서 (파싱 산출물까지 채움)
     python tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \\
         --input     benchmark/datasets/C-001-webshell/input.json \\
-        --seed-parsed benchmark/datasets/C-001-webshell/mock/04_parsed
+        --seed-parsed benchmark/fixtures/C-001-webshell/04_parsed
 """
 
 from __future__ import annotations

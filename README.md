@@ -297,9 +297,9 @@ evtx는 **외부 도구 대조를 실제로 마쳤습니다.** `wevtutil`(Window
 ```bash
 .venv/Scripts/python.exe tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \
   --input benchmark/datasets/C-001-webshell/input.json \
-  --seed-parsed benchmark/datasets/C-001-webshell/mock/04_parsed
+  --seed-parsed benchmark/fixtures/C-001-webshell/04_parsed
 
-PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01 benchmark/datasets/C-001-webshell/mock
+PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01 benchmark/fixtures/C-001-webshell
 ```
 
 `cases/C-001/`에 01부터 07까지 쌓이고 `07_report.md`가 나옵니다.
@@ -370,7 +370,7 @@ C=cases/K-001
 
 ```bash
 .venv/Scripts/python.exe -m src.stage04_parse.parse \
-  --in benchmark/datasets/C-001-webshell/mock/03_selection.json \
+  --in benchmark/golden/C-001-webshell/03_selection.json \
   --out /tmp/out/ --evidence <evidence_root>
 ```
 

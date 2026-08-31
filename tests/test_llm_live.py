@@ -58,9 +58,9 @@ from src.stage02_normalize import llm_client as normalize_client
 from src.stage02_normalize import normalize as normalize_mod
 from src.stage05_interpret import interpret as interpret_mod
 from src.stage05_interpret import llm_client as interpret_client
+from casepaths import FIXTURES, GOLDEN
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
 MAPPINGS = REPO_ROOT / "mappings"
 
 MODEL = os.environ.get("DFIR_LIVE_MODEL", "")
@@ -102,10 +102,10 @@ def case(tmp_path: Path) -> Path:
     """목업 입력만 있는 케이스. 증거 이미지가 필요 없다."""
     case_dir = tmp_path / "LIVE"
     case_dir.mkdir()
-    shutil.copy(MOCK / "01_input.json", case_dir / "01_input.json")
-    shutil.copy(MOCK / "02_scenario.json", case_dir / "02_scenario.json")
-    shutil.copy(MOCK / "03_selection.json", case_dir / "03_selection.json")
-    shutil.copytree(MOCK / "04_parsed", case_dir / "04_parsed")
+    shutil.copy(FIXTURES / "01_input.json", case_dir / "01_input.json")
+    shutil.copy(FIXTURES / "02_scenario.json", case_dir / "02_scenario.json")
+    shutil.copy(GOLDEN / "03_selection.json", case_dir / "03_selection.json")
+    shutil.copytree(FIXTURES / "04_parsed", case_dir / "04_parsed")
     return case_dir
 
 

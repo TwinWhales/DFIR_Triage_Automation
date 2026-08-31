@@ -266,11 +266,11 @@ print('안 걸려야 하는 것:', probe('evtx:Sysmon', event_id=255))
   막으려고 일부러 열거해 둔 것이니, 집합을 지우지 말고 더한다.
 - `mapping_table_version`을 올렸으면 **세 곳이 같이 움직인다** —
   `mappings/_artifacts.yaml`, `tests/test_mapping_loader.py`의 값 단언,
-  `benchmark/datasets/C-001-webshell/mock/03_selection.json`. 하나만
+  `benchmark/golden/C-001-webshell/03_selection.json`. 하나만
   고치면 테스트 셋이 한꺼번에 깨진다. 매핑을 의미 있게 늘렸으면 올린다.
 
 시나리오 하나를 실제로 태워 보려면 02단계 산출물을 손으로 써서 03단계에
-넣는 것이 가장 빠르다. `benchmark/datasets/C-001-webshell/mock/02_scenario.json`을
+넣는 것이 가장 빠르다. `benchmark/fixtures/C-001-webshell/02_scenario.json`을
 복사해 `techniques`만 바꾼다.
 
 ```bash
