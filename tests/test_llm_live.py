@@ -53,9 +53,11 @@ from pathlib import Path
 
 import pytest
 
-from src.common import io, refs, schema
+from src.common import io, llm, refs, schema
+from src.stage02_normalize import llm_client as normalize_client
 from src.stage02_normalize import normalize as normalize_mod
 from src.stage05_interpret import interpret as interpret_mod
+from src.stage05_interpret import llm_client as interpret_client
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MOCK = REPO_ROOT / "benchmark/datasets/C-001-webshell/mock"
@@ -186,6 +188,46 @@ def test_every_ref_the_model_cites_actually_exists(case: Path) -> None:
             ref = claim.get("ref")
             if ref is not None:
                 assert ref in known, f"claims 의 {ref} 가 04단계 산출물에 없다"
+
+
+# ====================================================== 출력 제약 (문법 변환)
+
+
+@pytest.mark.parametrize(
+    "stage, built",
+    [
+        ("02", normalize_client.constrained_schema()),
+        (
+            "05",
+            interpret_client.constrained_schema(
+                {"techniques": [{"id": "T1505.003", "name": "Web Shell"}]},
+                [{"ref": "MFT#12345"}, {"ref": "EVTX-SEC#88"}],
+            ),
+        ),
+    ],
+)
+def test_the_output_schema_survives_grammar_conversion(stage: str, built: dict) -> None:
+    """제약 스키마가 문법으로 **변환되는가**. 스텁으로는 절대 안 잡히는 층이다.
+
+    ``StubBackend`` 는 ``fmt`` 를 받고 버리므로, 서버가 삼키지 못하는
+    스키마를 보내도 단위 테스트는 전부 통과한다. 그리고 실제 모델에서는
+    단계가 **통째로** 죽는다 — HTTP 400 이고 소견이 0건이 아니라 아예 없다.
+
+    실제로 한 번 물렸다 (2026-08-31, Ollama 0.32.14). 동결 스키마의
+    ``pattern`` 을 그대로 실어 보내다가 ``failed to parse grammar`` 로
+    400 을 받았다. 지금은 ``llm.output_schema`` 가 정규식을 걷어낸다.
+
+    **생성이 끝나는 것까지 요구하지 않는다.** 문법이 걸리면 토큰이 느려져
+    시간이 오래 걸릴 수 있고, 그것은 이 시험이 볼 것이 아니다. 400 만
+    실패로 본다.
+    """
+    backend = llm.OllamaBackend(MODEL, host=HOST, timeout=60.0)
+    try:
+        backend.complete("JSON 객체 하나만 출력한다.", "최소한으로 채워라.", fmt=built)
+    except llm.LLMTimeout:
+        pass  # 느린 것은 여기서 볼 문제가 아니다.
+    except llm.LLMError as e:
+        pytest.fail(f"{stage}단계 제약 스키마를 서버가 거부했다 — {e}")
 
 
 # =============================================================== 실패 경로
