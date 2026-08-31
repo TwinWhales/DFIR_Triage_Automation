@@ -713,10 +713,20 @@ class Runner:
                 for r in self.results.values()
             ],
         }
-        if self.case_dir.is_dir():
-            io.write_json(path, document)
-            print()
-            print(f"기록: {path}  (실행끼리 비교할 때 이 파일을 diff 한다)")
+        if not self.case_dir.is_dir():
+            return
+
+        io.write_json(path, document)
+        print()
+        print(f"기록: {path}  (실행끼리 비교할 때 이 파일을 diff 한다)")
+
+        # 같은 기록을 benchmark/results/ 에도 남긴다. 케이스 디렉터리는
+        # --force 로 지워지고 gitignore 대상이지만, 측정치는 실행이 끝난 뒤에도
+        # 남아야 한다 — 발표에 쓸 수치를 손으로 옮겨 적지 않으려는 것이다.
+        stamp = self.started_at.strftime("%Y%m%dT%H%M%SZ")
+        archived = REPO_ROOT / "benchmark/results" / f"{self.args.case_id}-{stamp}.json"
+        io.write_json(archived, document)
+        print(f"      {archived}  (benchmark/collect.py 가 여기를 읽는다)")
 
 
 def _pad(text: str, width: int) -> str:

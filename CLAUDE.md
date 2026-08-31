@@ -45,6 +45,13 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 # 검증기가 과엄격해지지 않았는지 확인 (하나라도 기각되면 환각률이 오염된 것)
 .venv/Scripts/python.exe benchmark/validator_check.py
 
+# 실물 관통 점검 — 단계마다 판정하고 시간을 잰다 (목업 없음, 판정 실패면 1)
+.venv/Scripts/python.exe tools/live_check.py --case-id <케이스> \
+  --evidence <이미지> --volume 1 --model <올라마태그> --raw "<상황 서술>"
+
+# 그렇게 쌓인 실행 기록을 한 표로 (환각률·소요 시간)
+.venv/Scripts/python.exe benchmark/collect.py
+
 # 04 산출물 요약 — 매니페스트·ref 유일성까지 대조한다 (어긋나면 1)
 .venv/Scripts/python.exe tools/inspect_jsonl.py --parsed cases/<케이스>/04_parsed
 
@@ -63,6 +70,7 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 | **다음에 무엇을 할 차례인가** | `work.md` |
 | 왜 이렇게 설계했나, 팀 분담, 비목표 | `work-guide.md` |
 | 데이터 형식 — 필드·타입·제약 | `schemas/*.json` + `schemas/README.md` |
+| **수치가 어디서 나오나**, 픽스처와 골든의 차이 | `benchmark/README.md` |
 | 단계별 입출력 계약 | `docs/pipeline-io-spec.md` |
 | **지금 안 되는 것과 그 이유** | `docs/limitations.md` |
 | 온디스크 구조, 외부 도구 대조 기록 | `docs/artifact-notes.md` |
