@@ -12,7 +12,7 @@ from src.common import errors as errlog
 from src.common import io, llm, schema
 from src.stage02_normalize import alert_adapter
 from src.stage02_normalize import normalize as normalize_mod
-from src.stage02_normalize.llm_client import NormalizeClient
+from src.stage02_normalize.llm_client import DEFAULT_NUM_PREDICT, NormalizeClient
 from src.stage02_normalize.normalize import build_scenario, check_attack_ids, normalize
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +81,103 @@ def test_stub_backend_needs_an_existing_fixture(tmp_path):
 def test_unknown_backend_is_refused():
     with pytest.raises(llm.LLMError, match="알 수 없는 백엔드"):
         llm.build_backend("gpt")
+
+
+def test_a_cut_off_response_is_named_as_cut_not_as_a_format_violation():
+    # 프롬프트를 고쳐야 할 일(형식 위반)과 상한을 올려야 할 일(잘림)은
+    # 대응이 정반대다. errors.jsonl 에서 같은 문구로 보이면 가릴 수 없다.
+    with pytest.raises(llm.MalformedOutput, match="중간에 잘림"):
+        llm.extract_json('{"findings": [{"id": "F1", "statement": "웹셸이 생성')
+
+
+def test_prose_without_any_brace_keeps_the_generic_message():
+    with pytest.raises(llm.MalformedOutput, match="찾지 못함"):
+        llm.extract_json("JSON 없이 설명만 했습니다")
+
+
+# ============================================================ 출력 상한
+
+
+class FakeResponse:
+    """``requests`` 응답 흉내. 전송 계층만 보므로 최소한만 갖춘다."""
+
+    status_code = 200
+    text = ""
+
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+
+@pytest.fixture
+def sent_body(monkeypatch):
+    """``OllamaBackend``가 실제로 보낸 요청 본문을 잡아 둔다."""
+    import requests
+
+    captured: dict = {}
+
+    def fake_post(url, json=None, timeout=None):
+        captured.update(json or {})
+        return FakeResponse({"response": '{"a": 1}'})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    return captured
+
+
+def test_the_output_cap_reaches_ollama(sent_body):
+    backend = llm.build_backend("ollama", model="m", num_predict=2048)
+    assert backend.complete("sys", "user") == '{"a": 1}'
+    assert sent_body["options"]["num_predict"] == 2048
+
+
+def test_no_cap_is_sent_when_the_stage_did_not_ask_for_one(sent_body):
+    # 값은 단계가 정한다. 전송 계층이 임의로 채우면 단계별 실험이 섞인다.
+    llm.build_backend("ollama", model="m").complete("sys", "user")
+    assert "num_predict" not in sent_body["options"]
+
+
+def test_cli_hands_the_output_cap_to_the_backend(monkeypatch, tmp_path):
+    """CLI에서 백엔드까지 상한이 실제로 도달하는가.
+
+    이 배선이 없어서 05단계가 실물 실행에서 타임아웃 3회로 죽었다. 상수가
+    있는 것과 그 상수가 요청에 실리는 것은 다른 이야기다.
+    """
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        return FakeBackend((MOCK / "02_scenario.json").read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(llm, "build_backend", fake_build_backend)
+    code = normalize_mod.main(
+        [
+            "--in", str(MOCK / "01_input.json"),
+            "--out", str(tmp_path / "02_scenario.json"),
+            "--llm", "ollama", "--model", "m", "--num-predict", "1234",
+        ]
+    )
+    assert code == 0
+    assert captured["num_predict"] == 1234
+
+
+def test_the_default_cap_is_the_stage_constant(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        return FakeBackend((MOCK / "02_scenario.json").read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(llm, "build_backend", fake_build_backend)
+    normalize_mod.main(
+        [
+            "--in", str(MOCK / "01_input.json"),
+            "--out", str(tmp_path / "02_scenario.json"),
+            "--llm", "ollama", "--model", "m",
+        ]
+    )
+    assert captured["num_predict"] == DEFAULT_NUM_PREDICT
 
 
 # ============================================================ 문서 조립

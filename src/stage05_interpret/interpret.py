@@ -189,7 +189,9 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         default=allocation.RESERVE_OUTPUT_TOKENS,
         help=(
             "모델이 답을 쓸 자리로 남겨 둘 토큰. 기본 %(default)s. "
-            "프롬프트가 창을 꽉 채우면 응답이 잘려 malformed_output 으로 온다"
+            "프롬프트가 창을 꽉 채우면 응답이 잘려 malformed_output 으로 온다. "
+            "**이 값은 num_predict 로도 그대로 나간다** — 자리를 비워 두는 것과 "
+            "그만큼만 쓰게 하는 것이 같은 수여야 예산이 가정이 아니라 약속이 된다"
         ),
     )
     parser.add_argument(
@@ -268,6 +270,10 @@ def main(argv: "list[str] | None" = None) -> int:
             temperature=args.temperature,
             timeout=args.timeout,
             num_ctx=args.num_ctx,
+            # 예산에서 답을 쓸 자리로 빼 둔 양이 곧 출력 상한이다. 둘을 따로
+            # 두면 "비워 둔 자리"와 "실제로 쓸 수 있는 양"이 갈라지고, 갈라진
+            # 쪽이 맞는지 알 방법이 없다.
+            num_predict=args.reserve_output_tokens,
         )
     except llm.LLMError as e:
         print(f"[{STAGE}] {e}", file=sys.stderr)
