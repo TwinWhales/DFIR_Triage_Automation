@@ -5,20 +5,20 @@ os: windows
 artifacts:
   - name: "evtx:Sysmon"
     tier: 1
-    scope: { event_ids: [1, 3, 11] }
+    scope_template: { event_ids: [1, 3, 11] }
     rationale: "certutil.exe 명령줄(URL 포함)·공격자 IP:8000 아웃바운드·%TEMP%\\s.ps1 생성"
 
   - name: "cryptnet_urlcache"
     tier: 1
-    scope: { path_prefix: ["C:\\Users\\*\\AppData\\LocalLow\\Microsoft\\CryptnetUrlCache"] }
+    scope_template: { path_prefix: ["C:\\Users\\*\\AppData\\LocalLow\\Microsoft\\CryptnetUrlCache"] }
     rationale: "certutil -urlcache가 남기는 캐시 사본(다운로드 URL·바이트 확증) — certutil 다운로드의 결정적 흔적"
 
   - name: "prefetch"
     tier: 1
-    scope: { name_pattern: ["CERTUTIL.EXE", "POWERSHELL.EXE"] }
+    scope_template: { name_pattern: ["CERTUTIL.EXE", "POWERSHELL.EXE"] }
     rationale: "certutil·powershell 실행 횟수·최근 실행시각"
     
   - name: "$MFT"
     tier: 1
-    scope: { path_prefix: ["C:\\Users\\*\\AppData\\Local\\Temp"], extensions: [".ps1"], time_range: true }
+    scope_template: { path_prefix: ["C:\\Users\\*\\AppData\\Local\\Temp"], extensions: [".ps1"], time_range: true }
     rationale: "드롭된 페이로드 s.ps1 생성 흔적"

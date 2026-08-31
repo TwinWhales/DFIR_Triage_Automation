@@ -303,6 +303,31 @@ FILE_LAYOUT: dict[str, ArtifactLocation] = {
         relative_paths=("Windows/System32/winevt/Logs/Application.evtx",),
         filenames=("Application.evtx",),
     ),
+    # HID/BadUSB 시나리오 채널(2026-08-31). 채널 이름에 '/' 가 있어 파일명은
+    # %4 로 인코딩된다. KAPE 등이 '-' 로 바꿔 두는 경우가 있어 둘 다 받는다
+    # (위 TerminalServices 항목과 같은 규약).
+    #
+    # **실물로 확인하지 못했습니다.** 손에 있는 두 이미지에 이 채널이 없어
+    # 파일명을 명세와 다른 수집물의 관례로만 맞췄습니다 — docs/limitations.md.
+    "evtx:Defender": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/"
+            "Microsoft-Windows-Windows Defender%4Operational.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-Windows Defender%4Operational.evtx",
+            "Microsoft-Windows-Windows Defender-Operational.evtx",
+        ),
+    ),
+    "evtx:PowerShell": ArtifactLocation(
+        relative_paths=(
+            "Windows/System32/winevt/Logs/Microsoft-Windows-PowerShell%4Operational.evtx",
+        ),
+        filenames=(
+            "Microsoft-Windows-PowerShell%4Operational.evtx",
+            "Microsoft-Windows-PowerShell-Operational.evtx",
+        ),
+    ),
     "registry:SYSTEM": ArtifactLocation(
         relative_paths=("Windows/System32/config/SYSTEM",),
         filenames=("SYSTEM", "SYSTEM.hiv"),

@@ -91,6 +91,8 @@ OUTPUT_FILENAMES: dict[str, str] = {
     "evtx:RDPConnection": "evtx_rdp_connection.jsonl",
     "evtx:RDPSession": "evtx_rdp_session.jsonl",
     "evtx:Application": "evtx_application.jsonl",
+    "evtx:Defender": "evtx_defender.jsonl",
+    "evtx:PowerShell": "evtx_powershell.jsonl",
     "registry:SYSTEM": "registry_system.jsonl",
     "registry:SOFTWARE": "registry_software.jsonl",
     "registry:Amcache": "registry_amcache.jsonl",
