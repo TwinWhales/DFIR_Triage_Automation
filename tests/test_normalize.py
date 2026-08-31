@@ -25,10 +25,14 @@ class FakeBackend:
     def __init__(self, *responses: str | Exception) -> None:
         self.responses = list(responses)
         self.calls: list[tuple[str, str]] = []
+        #: 호출마다 받은 ``fmt``. 제약을 실제로 걸었는지 시험이 볼 수 있어야
+        #: 한다 — 응답만 보면 스텁이 무엇을 받았든 같은 값이 돌아온다.
+        self.formats: list[dict | None] = []
         self.name = "fake"
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, fmt: dict | None = None) -> str:
         self.calls.append((system, user))
+        self.formats.append(fmt)
         response = self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
         if isinstance(response, Exception):
             raise response

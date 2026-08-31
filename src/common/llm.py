@@ -12,11 +12,12 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Iterable, Protocol
 
 __all__ = [
     "DEFAULT_NUM_CTX",
@@ -29,6 +30,7 @@ __all__ = [
     "OllamaBackend",
     "build_backend",
     "extract_json",
+    "output_schema",
 ]
 
 
@@ -65,12 +67,57 @@ class MalformedOutput(ValueError):
     """응답에서 JSON을 찾지 못했다. ``malformed_output``에 대응한다."""
 
 
+def output_schema(frozen: dict[str, Any], fields: Iterable[str]) -> dict[str, Any]:
+    """동결 스키마에서 **모델이 낼 부분만** 떼어 낸 JSON Schema.
+
+    손으로 다시 쓰지 않는 이유가 있다. 모델에게 요구하는 모양과
+    ``schemas/``가 검증하는 모양이 갈라지면, 모델은 시키는 대로 냈는데
+    검증에서 떨어지고 그것이 환각률에 집계된다. 원본은 하나여야 한다 —
+    ``tools/sync_flag_enum.py``가 ``_flags.yaml``을 원본으로 삼는 것과
+    같은 이유다.
+
+    **헤더는 떼어 낸다.** ``case_id``·``stage``·``schema_version``·
+    ``generated_at``·``generator``는 우리 코드가 붙이는 값이다. 동결
+    스키마를 그대로 넘기면 모델에게 그 다섯을 지어내라고 요구하는 셈이
+    된다(05단계는 ``input_refs``가 하나 더 있다).
+
+    ``$defs``는 함께 옮긴다. ``findings``의 ``ref``처럼 ``$ref``로 가리키는
+    정의가 있어 빼면 참조가 끊긴다.
+
+    호출부가 enum을 꽂아 넣을 수 있도록 **깊은 복사본**을 낸다.
+    ``schema.load_schema``는 캐시된 객체를 돌려주므로, 여기서 얕게 넘기면
+    한 단계가 꽂은 enum이 검증기가 쓰는 스키마까지 오염시킨다.
+    """
+    properties = frozen.get("properties", {})
+    kept = [name for name in fields if name in properties]
+    required = [name for name in kept if name in frozen.get("required", [])]
+
+    built: dict[str, Any] = {
+        "type": "object",
+        "properties": {name: copy.deepcopy(properties[name]) for name in kept},
+        "required": required,
+    }
+    if "$defs" in frozen:
+        built["$defs"] = copy.deepcopy(frozen["$defs"])
+    return built
+
+
 class Backend(Protocol):
-    """모델 호출 인터페이스."""
+    """모델 호출 인터페이스.
+
+    ``fmt``는 모델이 낼 수 있는 출력의 **모양**이다(JSON Schema). 주면
+    백엔드가 디코딩 단계에서 강제하고, 주지 않으면 예전처럼 프롬프트로만
+    부탁한다. 기본값이 ``None``이라 이 인자를 모르는 호출부는 그대로다.
+
+    부탁과 강제는 다르다. ``T1200.001``처럼 형식은 맞고 실재하지 않는 ID는
+    프롬프트로 막을 수 없어 ``attack.is_known``이 사후에 잡았는데,
+    ``temperature 0``에서는 재시도해도 같은 답이 온다(``limitations.md``의
+    2026-08-24 절 ⑤). enum으로 묶으면 그 토큰 자체가 나오지 않는다.
+    """
 
     name: str
 
-    def complete(self, system: str, user: str) -> str: ...
+    def complete(self, system: str, user: str, *, fmt: "dict[str, Any] | None" = None) -> str: ...
 
 
 class StubBackend:
@@ -90,7 +137,12 @@ class StubBackend:
             raise LLMError(f"스텁 응답 파일 없음: {self.path}")
         self.name = f"stub({self.path.name})"
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, fmt: "dict[str, Any] | None" = None) -> str:
+        #: ``fmt``을 받고 버린다. 리플레이는 기록해 둔 응답을 그대로 내는
+        #: 것이라 강제할 디코딩이 없다. 스텁이 스키마를 만족하는지는
+        #: 호출부의 ``schema.validate``가 예전처럼 본다 — 여기서 한 번 더
+        #: 보면 픽스처가 두 곳을 만족해야 하고, 못 지키는 응답을 일부러
+        #: 넣어 두는 실패 경로 테스트가 통과하지 못한다.
         return self.path.read_text(encoding="utf-8")
 
 
@@ -117,25 +169,41 @@ class OllamaBackend:
         self.num_ctx = num_ctx
         self.name = model
 
-    def complete(self, system: str, user: str) -> str:
+    def payload(
+        self, system: str, user: str, *, fmt: "dict[str, Any] | None" = None
+    ) -> dict[str, Any]:
+        """보낼 요청 본문. 조립과 전송을 나눈 것은 테스트를 위해서다.
+
+        ``format``을 **빈 값일 때 넣지 않는다.** Ollama는 이 키가 있으면
+        문법을 컴파일하므로, ``{}``나 ``None``을 넣어 두면 제약이 없는데도
+        비용만 붙거나 서버 버전에 따라 거부된다. 제약을 걸지 않기로 한
+        실행은 예전과 **바이트 단위로 같은 요청**을 보내야, 켰을 때와 껐을
+        때의 차이가 제약 때문임을 말할 수 있다.
+        """
+        body: dict[str, Any] = {
+            "model": self.model,
+            "system": system,
+            "prompt": user,
+            "stream": False,
+            "options": {
+                # 재현성이 우선이다. 같은 입력에 같은 출력이 나와야
+                # 프롬프트 변경의 효과를 측정할 수 있다.
+                "temperature": self.temperature,
+                # 서버 기본값에 맡기면 프롬프트가 조용히 잘린다.
+                "num_ctx": self.num_ctx,
+            },
+        }
+        if fmt:
+            body["format"] = fmt
+        return body
+
+    def complete(self, system: str, user: str, *, fmt: "dict[str, Any] | None" = None) -> str:
         import requests
 
         try:
             response = requests.post(
                 f"{self.host}/api/generate",
-                json={
-                    "model": self.model,
-                    "system": system,
-                    "prompt": user,
-                    "stream": False,
-                    "options": {
-                        # 재현성이 우선이다. 같은 입력에 같은 출력이 나와야
-                        # 프롬프트 변경의 효과를 측정할 수 있다.
-                        "temperature": self.temperature,
-                        # 서버 기본값에 맡기면 프롬프트가 조용히 잘린다.
-                        "num_ctx": self.num_ctx,
-                    },
-                },
+                json=self.payload(system, user, fmt=fmt),
                 timeout=self.timeout,
             )
         except requests.Timeout as e:

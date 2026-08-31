@@ -193,6 +193,14 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
     )
     parser.add_argument("--max-attempts", type=int, default=MAX_ATTEMPTS)
     parser.add_argument("--no-fewshot", action="store_true", help="few-shot 예시를 빼고 호출")
+    parser.add_argument(
+        "--no-constrain",
+        action="store_true",
+        help=(
+            "출력 스키마를 디코딩 단계에서 강제하지 않는다. 폴백이 아니라 "
+            "측정용이다 — 켠 실행과 나란히 돌려 제약의 효과를 잰다"
+        ),
+    )
     parser.add_argument("--errors", default=None, help="errors.jsonl 경로")
     return parser.parse_args(argv)
 
@@ -240,7 +248,9 @@ def main(argv: "list[str] | None" = None) -> int:
         except llm.LLMError as e:
             print(f"[{STAGE}] {e}", file=sys.stderr)
             return 2
-        client = NormalizeClient(backend, few_shot=not args.no_fewshot)
+        client = NormalizeClient(
+            backend, few_shot=not args.no_fewshot, constrain=not args.no_constrain
+        )
         scenario = normalize(input_doc, client, log, max_attempts=args.max_attempts)
 
     io.write_json(out_path, scenario)

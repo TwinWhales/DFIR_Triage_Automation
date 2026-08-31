@@ -25,10 +25,13 @@ class FakeBackend:
     def __init__(self, *responses: "str | Exception") -> None:
         self.responses = list(responses)
         self.calls: list[tuple[str, str]] = []
+        #: 호출마다 받은 ``fmt`` (``test_normalize.py`` 와 같은 규약).
+        self.formats: list["dict | None"] = []
         self.name = "fake"
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, fmt: "dict | None" = None) -> str:
         self.calls.append((system, user))
+        self.formats.append(fmt)
         response = self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
         # 예외를 그대로 두면 호출 실패가 아니라 이상한 응답이 된다
         # (test_normalize.py 의 FakeBackend 와 같은 규약).
