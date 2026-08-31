@@ -1,0 +1,21 @@
+technique: T1082
+name: "System Information Discovery"
+os: windows
+
+# K-001 착지 직후 정찰 — 리버스쉘 세션에서 systeminfo·whoami /priv로
+# OS·패치·도메인·권한 정보 수집. T1016·T1018·T1083과 함께
+# "착지 직후 정찰" 클러스터를 이룬다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: systeminfo.exe·whoami.exe 실행 — 리버스쉘 착지 직후 첫 정찰 행위. 키오스크에서 이 명령이 실행되는 것 자체가 이상
+
+  - name: prefetch
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 정찰 명령 실행이 확인되어 실행 빈도를 확인해야 하는 경우
+    scope_template: {}
+    rationale: systeminfo.exe·whoami.exe 실행 횟수·최근 실행 시각

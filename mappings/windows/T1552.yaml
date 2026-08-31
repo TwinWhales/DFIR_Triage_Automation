@@ -2,14 +2,34 @@ technique: T1552
 name: "Unsecured Credentials"
 os: windows
 
-# K-001 Stage 8 — POS 에 저장된 관리서버(정산 동기화) 접속 자격증명을
-# 공격자가 발견한다. 이 단계가 POS→관리서버 이동(T1078/T1021.001)의 전제다.
+# K-001 Stage 2·8 — 두 지점에서 자격증명이 평문으로 노출된다.
+#
+# Stage 2: 키오스크 앱 설정파일(C:\KioskApp\settings.json)에 관리자 PIN과
+# POS API 엔드포인트가 하드코딩 — 공격자가 리버스쉘에서 dir/type으로 확보.
+#
+# Stage 8: POS에 저장된 관리서버(정산 동기화) 접속 자격증명을 공격자가
+# 발견한다. 이 단계가 POS→관리서버 이동(T1078/T1021.001)의 전제다.
 #
 # **저장소의 "존재"가 이 기법의 판정이다.** 자격증명이 설정파일·서비스
 # 계정·예약작업에 평문으로 놓여 있었다는 사실 자체가 T1552 다. 그 저장소는
 # 경로로 특정되므로(registry 는 signal_source: scope) path_prefix 가
 # 판정을 끝낸다. "그것을 읽었다"는 프로세스 흔적이 보강한다.
 artifacts:
+  # 설정파일에 평문으로 놓인 접속 정보. 파일의 존재·수정 시각.
+  # Stage 2(키오스크 앱)와 Stage 8(POS 설정) 두 경로를 하나의 $MFT로 커버.
+  - name: $MFT
+    tier: 1
+    priority: 1
+    scope_template:
+      path_prefix:
+        - 'C:\KioskApp'
+        - '{pos_config_root}'
+      extensions: ['.json', '.js', '.ini', '.xml', '.config', '.txt']
+    rationale: >
+      키오스크 앱 설정파일(C:\KioskApp\settings.json — 관리자 PIN·POS API 엔드포인트)과
+      POS 설정·구성 파일(관리서버 접속 자격증명) 존재·수정 시각.
+      Stage 2(키오스크→POS 근거)와 Stage 8(POS→관리서버 근거) 두 지점 커버.
+
   # 서비스 계정(ObjectName)에 저장된 자격증명. 경로가 곧 신호다.
   - name: registry:SYSTEM
     tier: 1
@@ -18,15 +38,6 @@ artifacts:
       path_prefix:
         - 'SYSTEM\CurrentControlSet\Services'
     rationale: 서비스 계정에 저장된 정산 동기화 자격증명
-
-  # 설정파일에 평문으로 놓인 접속 정보. 파일의 존재·수정 시각.
-  - name: $MFT
-    tier: 1
-    priority: 1
-    scope_template:
-      path_prefix: ['{pos_config_root}']
-      extensions: ['.ini', '.xml', '.config', '.json', '.txt']
-    rationale: 관리서버 접속 정보가 담긴 POS 설정·구성 파일의 존재·수정 시각
 
   # 그 저장소를 읽은 프로세스. 읽기 자체는 파일시스템에 잘 안 남으므로
   # (NTFS atime 기본 꺼짐) 보강 근거로 둔다.

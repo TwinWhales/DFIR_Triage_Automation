@@ -1,0 +1,20 @@
+technique: T1016
+name: "System Network Configuration Discovery"
+os: windows
+
+# K-001 착지 직후 정찰 — ipconfig /all, arp -a로 내부망 구조와
+# 인접 호스트(POS·관리서버 IP) 파악. T1018 ping과 함께 이동 대상 식별.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: ipconfig.exe·arp.exe 실행 — 내부망 구조·POS(.12)·관리서버(.13) IP 파악
+
+  - name: prefetch
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 네트워크 정찰 명령 실행이 확인되어 실행 이력을 확인해야 하는 경우
+    scope_template: {}
+    rationale: ipconfig.exe·arp.exe 실행 횟수·최근 실행 시각
