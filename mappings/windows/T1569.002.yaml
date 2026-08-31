@@ -1,0 +1,32 @@
+technique: T1569.002
+name: "System Services: Service Execution"
+os: windows
+
+# K-001 Stage 5 경로 B(PsExec) — SMB 공유 접근 후 PsExec으로 POS 셸 직접 획득.
+# PsExec은 대상 호스트에 PSEXESVC 서비스를 드롭·실행해 고유한 흔적을 남긴다.
+#
+# PsExec 실제 사용 여부는 공격팀 확인 후 결정. 미사용 시 삭제 가능.
+artifacts:
+  - name: evtx:System
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [7045]
+    rationale: PSEXESVC 서비스 설치(7045) — PsExec 사용의 고유 흔적(POS 착지 측)
+
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: psexec.exe 실행(키오스크 발신 측) — 명령줄에 대상 IP·계정 포함
+
+  - name: $MFT
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 PsExec 실행이 확인되어 드롭된 파일을 특정해야 하는 경우
+    scope_template:
+      path_prefix:
+        - 'C:\Windows'
+      extensions: ['.exe']
+    rationale: PSEXESVC.exe 드롭 흔적(C:\Windows\PSEXESVC.exe)

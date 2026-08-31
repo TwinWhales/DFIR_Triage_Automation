@@ -118,6 +118,8 @@ for _artifact in (
     "evtx:RDPConnection",
     "evtx:RDPSession",
     "evtx:Application",
+    "evtx:Defender",
+    "evtx:PowerShell",
 ):
     _evtx_parser = EvtxParser(_artifact)
     PARSERS[_artifact] = _evtx_parser

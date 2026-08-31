@@ -22,8 +22,23 @@ from . import io
 __all__ = ["ERROR_TYPES", "ACTIONS", "ErrorLog", "tally"]
 
 #: 고정 어휘. 새 유형이 필요하면 여기에 추가하고 전체 공지한다.
+#:
+#: ``llm_error`` 는 2026-08-30 에 추가됐다(전체 공지 대상). 모델 호출이
+#: 타임아웃이 **아닌** 이유로 실패한 것이다 — 모델명 오타, 서버 미기동,
+#: 잘못된 호스트. 그전에는 이 예외를 아무도 잡지 않아 파이썬 트레이스백이
+#: 그대로 올라왔고 ``errors.jsonl`` 에 남지 않았다.
+#:
+#: **``timeout`` 으로 합치지 않는다.** 둘은 조치가 다르고(기다릴 것인가 /
+#: 설정을 고칠 것인가), 07단계 통계가 이 어휘로 직접 산출된다.
 ERROR_TYPES = frozenset(
-    {"schema_violation", "parse_error", "malformed_output", "empty_result", "timeout"}
+    {
+        "schema_violation",
+        "parse_error",
+        "malformed_output",
+        "empty_result",
+        "timeout",
+        "llm_error",
+    }
 )
 
 ACTIONS = frozenset({"retry", "skip", "abort"})

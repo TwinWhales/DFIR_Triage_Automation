@@ -133,6 +133,16 @@ def normalize(
             log.record(STAGE, "timeout", {"message": str(e)}, action="retry", attempt=attempt)
             feedback = None
 
+        except llm.LLMError as e:
+            # 타임아웃이 아닌 호출 실패는 **재시도해도 같은 결과다** — 모델명
+            # 오타, 서버 미기동, 잘못된 호스트. 세 번 반복하며 시간만 쓴다.
+            #
+            # 예전에는 이 예외를 아무도 잡지 않아 파이썬 트레이스백이 그대로
+            # 올라왔다. 멈추기는 했지만 errors.jsonl 에 남지 않아 07단계가
+            # 볼 수 없었고, "폴백을 만들지 않는다 — 실패는 errors.jsonl 에
+            # 기록하고 사유를 출력하며 중단한다"는 규약 밖이었다.
+            log.abort(STAGE, "llm_error", {"message": str(e)})
+
         except schema.SchemaViolation as violation:
             detail = violation.as_detail()
             saved = dump_raw(log, attempt, client.last_raw)
@@ -198,6 +208,14 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
     )
     parser.add_argument("--max-attempts", type=int, default=MAX_ATTEMPTS)
     parser.add_argument("--no-fewshot", action="store_true", help="few-shot 예시를 빼고 호출")
+    parser.add_argument(
+        "--no-constrain",
+        action="store_true",
+        help=(
+            "출력 스키마를 디코딩 단계에서 강제하지 않는다. 폴백이 아니라 "
+            "측정용이다 — 켠 실행과 나란히 돌려 제약의 효과를 잰다"
+        ),
+    )
     parser.add_argument("--errors", default=None, help="errors.jsonl 경로")
     return parser.parse_args(argv)
 
@@ -246,7 +264,9 @@ def main(argv: "list[str] | None" = None) -> int:
         except llm.LLMError as e:
             print(f"[{STAGE}] {e}", file=sys.stderr)
             return 2
-        client = NormalizeClient(backend, few_shot=not args.no_fewshot)
+        client = NormalizeClient(
+            backend, few_shot=not args.no_fewshot, constrain=not args.no_constrain
+        )
         scenario = normalize(input_doc, client, log, max_attempts=args.max_attempts)
 
     io.write_json(out_path, scenario)

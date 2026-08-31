@@ -1,0 +1,32 @@
+technique: T1021.002
+name: "Remote Services: SMB/Windows Admin Shares"
+os: windows
+
+# K-001 Stage 5 — 키오스크에서 획득한 관리자 계정을 재사용해 POS 관리자
+# 공유(C$)에 접근. (POS→관리서버 이동은 T1021.001 RDP)
+#
+# 경로 B(OS 레벨)가 우선 추천 방식이다. net use로 C$ 마운트 후 SQLite DB를
+# 로컬로 복사·조작해 되돌려쓰거나, PsExec으로 POS 셸을 직접 획득한다.
+# 착지 측(POS)에 Type3 로그온과 SMB 공유 접근 이벤트가 남는다.
+artifacts:
+  - name: evtx:Security
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [5140, 5145, 4624, 4625]
+    rationale: 관리자 공유(C$) 접근(5140/5145) + Type3 네트워크 로그온(4624) — net use \\POS\C$ 착지 증거
+
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [3]
+    rationale: 키오스크 발신 SMB(445포트) + POS 수신 — lateral movement 방향·시각 확증
+
+  - name: evtx:System
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 SMB 접근이 확인되어 PsExec 사용 여부를 확인해야 하는 경우
+    scope_template:
+      event_ids: [7045]
+    rationale: PSEXESVC 서비스 설치 — PsExec 사용의 고유 흔적(POS 착지 측)

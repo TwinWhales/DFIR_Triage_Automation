@@ -14,10 +14,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..common.llm import Backend, extract_json
+from ..common import schema
+from ..common.llm import Backend, extract_json, output_schema
 from .allocation import MAX_LIST_ITEMS, for_prompt
 
-__all__ = ["DEFAULT_MODEL", "FINDINGS_BODY_FIELDS", "InterpretClient"]
+__all__ = [
+    "DEFAULT_MODEL",
+    "FINDINGS_BODY_FIELDS",
+    "InterpretClient",
+    "constrained_schema",
+]
 
 #: 해석은 정규화보다 무거운 작업이다. 같은 7B로 시작하되 모델별 비교
 #: 실험에서 이 단계만 키웠을 때의 효과를 따로 측정한다.
@@ -34,11 +40,57 @@ PROMPT_DIR = Path(__file__).parent / "prompts"
 FINDINGS_BODY_FIELDS = ("findings", "timeline")
 
 
+def constrained_schema(
+    scenario: dict[str, Any], records: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """이 호출에 한정된 출력 스키마. **배치마다 다르다.**
+
+    02단계와 달리 목록이 고정돼 있지 않다. 모델이 인용해도 되는 ``ref``는
+    이번에 실제로 실어 보낸 레코드의 것뿐이고, 그 목록은 호출할 때 정해진다.
+
+    **우리는 무엇을 보냈는지 이미 알고 있다.** 프롬프트가 "이 목록에 없는
+    ref를 쓰면 기각됩니다"라고 적어 부탁해 왔고, 06단계가 사후에
+    ``ref_not_in_input``으로 걸러 왔다. 같은 목록을 enum으로 주면 없는 ref를
+    만들 토큰 경로가 사라진다 — 걸러 낼 것이 아니라 나오지 않는다.
+
+    ``$defs.ref`` 하나를 갈아 끼운다. ``findings[].refs``·
+    ``findings[].claims[].ref``·``timeline[].refs`` 셋이 모두 이 정의를
+    가리키므로, 자리마다 손대면 언젠가 하나를 빠뜨린다.
+
+    ``technique``도 시나리오가 든 기법으로 묶는다. 동결 스키마가 ``null``을
+    허용하므로("특정 기법에 귀속되지 않을 수 있다") enum에 ``None``을 남긴다.
+    """
+    built = output_schema(schema.load_schema("findings"), FINDINGS_BODY_FIELDS)
+
+    refs = [record["ref"] for record in records if "ref" in record]
+    if refs:
+        # 비었으면 갈아 끼우지 않는다. 빈 enum 은 아무 값도 만족시킬 수
+        # 없어 모델이 무엇을 내든 실패하고, 그 실패는 "레코드를 한 건도
+        # 못 받았다"는 앞 단계의 문제를 05단계 환각으로 둔갑시킨다.
+        built["$defs"]["ref"] = {"enum": sorted(set(refs))}
+
+    techniques = [t["id"] for t in scenario.get("techniques", []) if "id" in t]
+    if techniques:
+        built["properties"]["findings"]["items"]["properties"]["technique"] = {
+            "enum": [*sorted(set(techniques)), None]
+        }
+    return built
+
+
 class InterpretClient:
     """레코드 → 해석 문장과 claims."""
 
-    def __init__(self, backend: Backend, *, max_list_items: int | None = MAX_LIST_ITEMS) -> None:
+    def __init__(
+        self,
+        backend: Backend,
+        *,
+        max_list_items: int | None = MAX_LIST_ITEMS,
+        constrain: bool = True,
+    ) -> None:
         self.backend = backend
+        #: 출력 모양을 디코딩 단계에서 강제할 것인가. 02단계와 같은 규약이고
+        #: **폴백이 아니라 측정용**이다 (``stage02_normalize/llm_client.py``).
+        self.constrain = constrain
         #: ``fields`` 안의 목록을 몇 개까지 실을 것인가. ``allocation``이
         #: 예산을 잴 때 쓰는 값과 **같아야 한다** — 어긋나면 예산이 맞아도
         #: 프롬프트가 넘친다. ``interpret``이 둘에 같은 값을 넘긴다.
@@ -136,7 +188,9 @@ class InterpretClient:
         본문 필드만 골라낸다.
         """
         raw = self.backend.complete(
-            self.system_prompt(), self.user_prompt(scenario, records, feedback)
+            self.system_prompt(),
+            self.user_prompt(scenario, records, feedback),
+            fmt=constrained_schema(scenario, records) if self.constrain else None,
         )
         self.last_raw = raw
         parsed = extract_json(raw)

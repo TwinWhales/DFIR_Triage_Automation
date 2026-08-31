@@ -1,0 +1,18 @@
+# ── T1059.001.yaml ── PowerShell 실행(페이로드 구동·방어 해제) (신규)
+technique: T1059.001
+name: "Command and Scripting Interpreter: PowerShell"
+os: windows
+artifacts:
+  - name: "evtx:PowerShell"
+    tier: 1
+    scope_template: { event_ids: [4103, 4104] }
+    rationale: "powershell -ep bypass -f s.ps1 등 스크립트블록·모듈 로깅"
+  - name: "evtx:Sysmon"
+    tier: 1
+    scope_template: { event_ids: [1, 3] }
+    rationale: "powershell.exe 명령줄 + 리버스쉘 아웃바운드(공격자 IP:4444)"
+  - name: "psreadline_history"
+    tier: 2
+    trigger: "대화형 PS 콘솔(리버스쉘 세션 등) 사용 시"
+    scope_template: { path_prefix: ["C:\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine"] }
+    rationale: "대화형 세션 입력 명령 이력(ConsoleHost_history.txt)"

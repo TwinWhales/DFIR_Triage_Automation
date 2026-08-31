@@ -108,6 +108,12 @@ def interpret(
             log.record(STAGE, "timeout", {"message": str(e)}, action="retry", attempt=attempt)
             feedback = None
 
+        except llm.LLMError as e:
+            # 02단계와 같은 이유로 재시도하지 않는다 — 모델명 오타·서버
+            # 미기동은 세 번 불러도 같은 답이다. normalize.py 의 같은 자리
+            # 주석 참고.
+            log.abort(STAGE, "llm_error", {"message": str(e)})
+
         except schema.SchemaViolation as violation:
             detail = violation.as_detail()
             saved = dump_raw(log, attempt, client.last_raw)
@@ -206,6 +212,14 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         default="mappings",
         help="매핑 디렉터리. 아티팩트의 signal_source를 읽는다. 기본 %(default)s",
     )
+    parser.add_argument(
+        "--no-constrain",
+        action="store_true",
+        help=(
+            "출력 스키마를 디코딩 단계에서 강제하지 않는다. 폴백이 아니라 "
+            "측정용이다 (02단계와 같은 규약)"
+        ),
+    )
     parser.add_argument("--errors", default=None)
     return parser.parse_args(argv)
 
@@ -283,7 +297,9 @@ def main(argv: "list[str] | None" = None) -> int:
     # 목록을 0개만 싣는 것은 아무도 원하지 않는 동작이다.
     max_list_items = args.max_list_items if args.max_list_items > 0 else None
 
-    client = InterpretClient(backend, max_list_items=max_list_items)
+    client = InterpretClient(
+        backend, max_list_items=max_list_items, constrain=not args.no_constrain
+    )
     budget_chars = allocation.char_budget(
         args.num_ctx,
         client.prompt_overhead_chars(scenario),

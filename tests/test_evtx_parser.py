@@ -174,13 +174,17 @@ def test_security_and_system_do_not_share_an_instance():
 
 
 def test_unknown_artifact_is_rejected_at_construction():
-    # 예전에는 여기가 evtx:Application 이었다. K-001 시나리오가 Stage 3
-    # 앱 크래시 근거로 요구해서 카탈로그에 들어갔고(2026-08-25), 그 순간
-    # 이 테스트가 "지원하는 채널을 거부하는가"를 묻는 꼴이 돼 깨졌다.
-    # add-parser 스킬이 "미지원 아티팩트를 예시로 쓰던 테스트"로 경고한
-    # 자리다. PowerShell 채널은 아직 카탈로그에 없다.
+    # **실재하는 채널 이름을 쓰지 않는다.** 여기는 두 번 깨졌다 —
+    # evtx:Application 이 K-001 로 카탈로그에 들어가면서(2026-08-25),
+    # 그다음 evtx:PowerShell 이 HID/BadUSB 매핑으로 들어가면서(2026-08-31).
+    # 둘 다 "미지원 예시"로 골라 둔 것이 지원 대상이 되어, 이 테스트가
+    # "지원하는 채널을 거부하는가"를 묻는 꼴이 됐다.
+    #
+    # 실재하는 채널은 언젠가 전부 카탈로그에 들어올 수 있다. 이 테스트가
+    # 묻는 것은 "모르는 이름을 생성 시점에 거부하는가"이지 특정 채널이
+    # 미지원이라는 사실이 아니므로, 채널이 될 수 없는 이름으로 고정한다.
     with pytest.raises(ValueError, match="evtx"):
-        evtx.EvtxParser("evtx:PowerShell")
+        evtx.EvtxParser("evtx:NotARealChannel")
 
 
 # ------------------------------------------------------- strip_namespace

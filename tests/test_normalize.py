@@ -25,10 +25,14 @@ class FakeBackend:
     def __init__(self, *responses: str | Exception) -> None:
         self.responses = list(responses)
         self.calls: list[tuple[str, str]] = []
+        #: 호출마다 받은 ``fmt``. 제약을 실제로 걸었는지 시험이 볼 수 있어야
+        #: 한다 — 응답만 보면 스텁이 무엇을 받았든 같은 값이 돌아온다.
+        self.formats: list[dict | None] = []
         self.name = "fake"
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, fmt: dict | None = None) -> str:
         self.calls.append((system, user))
+        self.formats.append(fmt)
         response = self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
         if isinstance(response, Exception):
             raise response
@@ -98,44 +102,20 @@ def test_prose_without_any_brace_keeps_the_generic_message():
 # ============================================================ 출력 상한
 
 
-class FakeResponse:
-    """``requests`` 응답 흉내. 전송 계층만 보므로 최소한만 갖춘다."""
-
-    status_code = 200
-    text = ""
-
-    def __init__(self, payload: dict) -> None:
-        self._payload = payload
-
-    def json(self) -> dict:
-        return self._payload
+def test_the_output_cap_reaches_the_request_body():
+    body = llm.build_backend("ollama", model="m", num_predict=2048).payload("s", "u")
+    assert body["options"]["num_predict"] == 2048
 
 
-@pytest.fixture
-def sent_body(monkeypatch):
-    """``OllamaBackend``가 실제로 보낸 요청 본문을 잡아 둔다."""
-    import requests
-
-    captured: dict = {}
-
-    def fake_post(url, json=None, timeout=None):
-        captured.update(json or {})
-        return FakeResponse({"response": '{"a": 1}'})
-
-    monkeypatch.setattr(requests, "post", fake_post)
-    return captured
-
-
-def test_the_output_cap_reaches_ollama(sent_body):
-    backend = llm.build_backend("ollama", model="m", num_predict=2048)
-    assert backend.complete("sys", "user") == '{"a": 1}'
-    assert sent_body["options"]["num_predict"] == 2048
-
-
-def test_no_cap_is_sent_when_the_stage_did_not_ask_for_one(sent_body):
+def test_no_cap_is_sent_when_the_stage_did_not_ask_for_one():
     # 값은 단계가 정한다. 전송 계층이 임의로 채우면 단계별 실험이 섞인다.
-    llm.build_backend("ollama", model="m").complete("sys", "user")
-    assert "num_predict" not in sent_body["options"]
+    body = llm.OllamaBackend("m").payload("s", "u")
+    assert "num_predict" not in body["options"]
+    # 상한을 얹어도 나머지는 그대로여야 한다. 제약을 켠 실행과 끈 실행이
+    # 둘 다 이 상한을 지고 가야 둘의 차이가 format 하나로 남는다.
+    capped = llm.OllamaBackend("m", num_predict=512).payload("s", "u", fmt={"type": "object"})
+    assert capped["options"]["num_ctx"] == llm.DEFAULT_NUM_CTX
+    assert capped["format"] == {"type": "object"}
 
 
 def test_cli_hands_the_output_cap_to_the_backend(monkeypatch, tmp_path):
@@ -257,6 +237,31 @@ def test_exhausting_retries_aborts_with_the_reason_recorded(tmp_path, scenario_b
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
     assert [entry["action"] for entry in logged] == ["retry", "retry", "abort"]
     assert all(entry["detail"].get("field") == "target_os" for entry in logged[:2])
+
+
+def test_a_call_failure_that_is_not_a_timeout_aborts_without_retrying(tmp_path, scenario_body):
+    """모델명 오타·서버 미기동은 **세 번 불러도 같은 답이다.**
+
+    실제 모델 테스트에서 드러난 자리입니다(`tests/test_llm_live.py`). 예전에는
+    이 예외를 아무도 잡지 않아 파이썬 트레이스백이 그대로 올라왔고,
+    `errors.jsonl` 에 남지 않아 07단계가 볼 수 없었습니다.
+    """
+    log = errlog.ErrorLog.for_case(tmp_path)
+    backend = FakeBackend(
+        llm.LLMError("존재하지-않는-모델:v0: HTTP 400 — invalid model name"),
+        json.dumps(scenario_body, ensure_ascii=False),
+    )
+    with pytest.raises(SystemExit):
+        normalize(
+            {"case_id": "C-001", "raw": "x", "evidence": {}},
+            NormalizeClient(backend, few_shot=False),
+            log,
+        )
+
+    logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    assert [(e["type"], e["action"]) for e in logged] == [("llm_error", "abort")]
+    # 두 번째 응답까지 갔다면 재시도한 것이다. 한 번에 멈춰야 한다.
+    assert len(backend.calls) == 1
 
 
 def test_timeout_is_recorded_under_its_own_type(tmp_path, scenario_body):

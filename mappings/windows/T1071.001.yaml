@@ -1,0 +1,23 @@
+technique: T1071.001
+name: "Application Layer Protocol: Web Protocols"
+os: windows
+
+# K-001 Stage 5 경로 A — 앱 레벨: 키오스크 리버스쉘에서 curl/Invoke-RestMethod로
+# POS 관리 API(:5001)에 PIN(2580)을 재사용해 인증.
+# 경로 B(SMB)보다 흔적이 적지만 비표준 포트 5001 아웃바운드 자체가 탐지 포인트.
+#
+# 경로 A 실제 사용 여부는 공격팀 확인 후 결정. 미사용 시 삭제 가능.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1, 3]
+    rationale: curl.exe 또는 powershell.exe(Invoke-RestMethod)의 POS API(:5001) HTTP POST — 앱 레벨 PIN 재사용 통신(EID1 명령줄 + EID3 네트워크)
+
+  - name: prefetch
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 curl 실행이 확인되어 실행 이력을 확인해야 하는 경우
+    scope_template: {}
+    rationale: curl.exe 실행 횟수·최근 실행 시각 — 비업무 단말에 curl 등장 자체가 이상
