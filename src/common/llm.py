@@ -84,6 +84,17 @@ def output_schema(frozen: dict[str, Any], fields: Iterable[str]) -> dict[str, An
     ``$defs``는 함께 옮긴다. ``findings``의 ``ref``처럼 ``$ref``로 가리키는
     정의가 있어 빼면 참조가 끊긴다.
 
+    **``pattern``은 걷어낸다.** 이 스키마는 문법으로 변환되려고 존재하는데
+    변환기가 정규식을 다 삼키지 못한다(2026-08-31, Ollama 0.32.14 실측):
+    앵커 없는 패턴은 ``Pattern must start with``로 아예 거부하고, 앵커가
+    있어도 ``\\d``가 들어가면 ``failed to parse grammar``로 400이 온다.
+    우리 정규식 둘이 모두 걸린다 — ``^T\\d{4}(\\.\\d{3})?$``와
+    ``^\\d{4}-\\d{2}-...Z$``.
+
+    **잃는 것이 없다.** 제약은 얹는 층이고 판정은 여전히 ``schemas/``가
+    한다. 모델이 형식을 어긴 값을 내면 ``schema.validate``가 예전 그대로
+    잡는다. 여기서 노리는 것은 enum이고, enum은 변환기가 삼킨다.
+
     호출부가 enum을 꽂아 넣을 수 있도록 **깊은 복사본**을 낸다.
     ``schema.load_schema``는 캐시된 객체를 돌려주므로, 여기서 얕게 넘기면
     한 단계가 꽂은 enum이 검증기가 쓰는 스키마까지 오염시킨다.
@@ -94,12 +105,21 @@ def output_schema(frozen: dict[str, Any], fields: Iterable[str]) -> dict[str, An
 
     built: dict[str, Any] = {
         "type": "object",
-        "properties": {name: copy.deepcopy(properties[name]) for name in kept},
+        "properties": {name: _without_pattern(properties[name]) for name in kept},
         "required": required,
     }
     if "$defs" in frozen:
-        built["$defs"] = copy.deepcopy(frozen["$defs"])
+        built["$defs"] = _without_pattern(frozen["$defs"])
     return built
+
+
+def _without_pattern(node: Any) -> Any:
+    """``pattern`` 을 뺀 깊은 복사본. 이유는 ``output_schema`` 에 있다."""
+    if isinstance(node, dict):
+        return {key: _without_pattern(value) for key, value in node.items() if key != "pattern"}
+    if isinstance(node, list):
+        return [_without_pattern(value) for value in node]
+    return copy.deepcopy(node)
 
 
 class Backend(Protocol):

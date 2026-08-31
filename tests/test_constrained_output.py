@@ -130,15 +130,49 @@ def test_the_ref_enum_is_only_what_we_actually_sent():
     }
 
 
-def test_an_empty_batch_leaves_the_ref_pattern_alone():
+def test_an_empty_batch_does_not_produce_an_empty_enum():
     """빈 enum 은 아무 값도 만족시키지 못한다.
 
     레코드를 한 건도 못 받은 것은 앞 단계의 문제다. 그때 빈 enum 을 걸면
     모델이 무엇을 내든 실패하고, 그 실패가 05단계 환각으로 둔갑한다.
+    묶지 못하면 묶지 않는다 — 판정은 어차피 ``schemas/`` 가 한다.
     """
     built = interpret_client.constrained_schema({"techniques": []}, [])
     assert "enum" not in built["$defs"]["ref"]
-    assert "pattern" in built["$defs"]["ref"]
+
+
+def test_regexes_never_reach_the_grammar():
+    """``pattern`` 은 걷어낸다. 문법 변환기가 우리 정규식을 못 삼킨다.
+
+    2026-08-31 Ollama 0.32.14 실측 — 앵커 없는 패턴은 ``Pattern must start
+    with`` 로 거부하고, 앵커가 있어도 ``\\d`` 가 들어가면 ``failed to parse
+    grammar`` 로 400 이 온다. 우리 정규식 둘이 모두 걸린다.
+
+    이것을 지키지 않으면 **02·05가 실제 모델에서 통째로 죽는다.** 스텁
+    경로는 ``fmt`` 를 버리므로 이 결함이 전체 테스트를 통과한다.
+    """
+
+    def patterns(node, path=""):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "pattern":
+                    yield f"{path}/{key}"
+                else:
+                    yield from patterns(value, f"{path}/{key}")
+        elif isinstance(node, list):
+            for i, value in enumerate(node):
+                yield from patterns(value, f"{path}[{i}]")
+
+    built02 = normalize_client.constrained_schema()
+    built05 = interpret_client.constrained_schema(
+        {"techniques": [{"id": "T1505.003"}]}, [{"ref": "MFT#1"}]
+    )
+    assert list(patterns(built02)) == []
+    assert list(patterns(built05)) == []
+
+    # 걷어낸 것은 제약 스키마뿐이다. 판정하는 쪽은 그대로여야 한다.
+    frozen = schema.load_schema("scenario")
+    assert "pattern" in frozen["properties"]["techniques"]["items"]["properties"]["id"]
 
 
 def test_the_technique_of_a_finding_stays_nullable():
