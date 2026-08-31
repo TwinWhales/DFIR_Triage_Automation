@@ -171,6 +171,19 @@ class OllamaBackend:
 
     온프레미스 전제이므로 기본 호스트는 localhost다. 증거 데이터가
     외부로 나가면 안 되는 것이 이 프로젝트가 sLLM을 쓰는 이유다.
+
+    ``num_predict``를 주지 않으면 Ollama 기본값(``-1`` — EOS를 낼 때까지)이
+    걸린다. 대개는 멈추지만, **안 멈출 때 바닥이 없다.** 소형 모델이 JSON을
+    닫지 못하고 맴돌면 붙잡을 것이 타임아웃밖에 없고, 그 시도는 원문도 남기지
+    못한다(응답이 아예 오지 않았으므로). 실측(2026-08-31, ``qwen2.5:latest``,
+    05단계 프롬프트 16,330토큰): 상한 없이 35분을 기다려도 응답이 없었고,
+    상한을 걸자 같은 프롬프트가 37.7초에 끝났다.
+
+    상한은 길이 목표가 아니라 **실패의 종류를 바꾸는 자리**다. 걸어 두면
+    맴도는 응답이 "시간 초과"가 아니라 "잘린 응답"으로 돌아오고, 잘린 것은
+    원문이 남아 ``malformed_output``으로 기록되고 재시도된다.
+
+    값은 각 단계가 정한다. 정상 출력 길이를 아는 것은 단계 쪽이다.
     """
 
     def __init__(
@@ -181,12 +194,14 @@ class OllamaBackend:
         temperature: float = 0.0,
         timeout: float = DEFAULT_TIMEOUT,
         num_ctx: int = DEFAULT_NUM_CTX,
+        num_predict: "int | None" = None,
     ) -> None:
         self.model = model
         self.host = host.rstrip("/")
         self.temperature = temperature
         self.timeout = timeout
         self.num_ctx = num_ctx
+        self.num_predict = num_predict
         self.name = model
 
     def payload(
@@ -200,18 +215,25 @@ class OllamaBackend:
         실행은 예전과 **바이트 단위로 같은 요청**을 보내야, 켰을 때와 껐을
         때의 차이가 제약 때문임을 말할 수 있다.
         """
+        options: dict[str, Any] = {
+            # 재현성이 우선이다. 같은 입력에 같은 출력이 나와야
+            # 프롬프트 변경의 효과를 측정할 수 있다.
+            "temperature": self.temperature,
+            # 서버 기본값에 맡기면 프롬프트가 조용히 잘린다.
+            "num_ctx": self.num_ctx,
+        }
+        # ``num_predict``도 같은 이유로 값이 있을 때만 넣는다. 제약을 켠 실행과
+        # 끈 실행이 둘 다 이 상한을 지고 가므로, 둘의 차이는 ``format`` 하나로
+        # 남는다.
+        if self.num_predict is not None:
+            options["num_predict"] = self.num_predict
+
         body: dict[str, Any] = {
             "model": self.model,
             "system": system,
             "prompt": user,
             "stream": False,
-            "options": {
-                # 재현성이 우선이다. 같은 입력에 같은 출력이 나와야
-                # 프롬프트 변경의 효과를 측정할 수 있다.
-                "temperature": self.temperature,
-                # 서버 기본값에 맡기면 프롬프트가 조용히 잘린다.
-                "num_ctx": self.num_ctx,
-            },
+            "options": options,
         }
         if fmt:
             body["format"] = fmt
@@ -245,6 +267,7 @@ def build_backend(
     temperature: float = 0.0,
     timeout: float = DEFAULT_TIMEOUT,
     num_ctx: int = DEFAULT_NUM_CTX,
+    num_predict: "int | None" = None,
 ) -> Backend:
     """``--llm`` 값에 따라 백엔드를 만든다."""
     if kind == "stub":
@@ -255,7 +278,12 @@ def build_backend(
         if not model:
             raise LLMError("ollama 백엔드에는 --model 이 필요하다")
         return OllamaBackend(
-            model, host=host, temperature=temperature, timeout=timeout, num_ctx=num_ctx
+            model,
+            host=host,
+            temperature=temperature,
+            timeout=timeout,
+            num_ctx=num_ctx,
+            num_predict=num_predict,
         )
     raise LLMError(f"알 수 없는 백엔드: {kind!r} (사용 가능: stub, ollama)")
 
@@ -290,6 +318,14 @@ def extract_json(text: str) -> dict[str, Any]:
             return parsed
         raise MalformedOutput(f"JSON 최상위가 객체가 아님: {type(parsed).__name__}")
 
+    if "{" in text and _first_object(text) is None:
+        # 여는 중괄호는 있는데 짝이 안 맞는다. 모델이 형식을 어긴 것이 아니라
+        # 말하다 만 것이다. 둘을 같은 문구로 적으면 프롬프트를 고쳐야 할 일과
+        # 상한을 올려야 할 일이 errors.jsonl 에서 구별되지 않는다.
+        raise MalformedOutput(
+            f"응답이 중간에 잘림 — 여는 중괄호가 닫히지 않음 ({len(text):,}자). "
+            "출력 상한(num_predict)이나 컨텍스트가 모자란 것이지 형식 위반이 아니다"
+        )
     raise MalformedOutput("응답에서 JSON 객체를 찾지 못함")
 
 

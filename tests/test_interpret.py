@@ -311,6 +311,34 @@ def test_cli_stub_run(tmp_path):
     assert doc["generator"] == "interpret.py / stub(05_findings.json)"
 
 
+@pytest.mark.parametrize("reserve", [None, 1024])
+def test_cli_ties_the_output_cap_to_the_reserved_budget(monkeypatch, tmp_path, reserve):
+    """예산에서 답을 쓰라고 비워 둔 양이 그대로 출력 상한으로 나가는가.
+
+    둘이 갈라지면 "비워 둔 자리"와 "실제로 쓸 수 있는 양"이 달라지고, 어느
+    쪽이 맞는지 확인할 방법이 없다. 상한이 아예 없던 동안에는 모델이 JSON을
+    닫지 못할 때 컨텍스트가 찰 때까지 써서 타임아웃으로만 끝났다.
+    """
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        return FakeBackend((MOCK / "05_findings.json").read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", fake_build_backend)
+    argv = [
+        "--in", str(PARSED),
+        "--scenario", str(MOCK / "02_scenario.json"),
+        "--out", str(tmp_path / "05_findings.json"),
+        "--llm", "ollama", "--model", "m",
+    ]
+    if reserve is not None:
+        argv += ["--reserve-output-tokens", str(reserve)]
+
+    assert interpret_mod.main(argv) == 0
+    assert captured["num_predict"] == (reserve or allocation.RESERVE_OUTPUT_TOKENS)
+
+
 def test_cli_aborts_when_no_record_carries_a_signal(tmp_path):
     parsed = tmp_path / "04_parsed"
     parsed.mkdir()

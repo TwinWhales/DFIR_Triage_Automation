@@ -19,6 +19,7 @@ from ..common.llm import Backend, extract_json, output_schema
 
 __all__ = [
     "DEFAULT_MODEL",
+    "DEFAULT_NUM_PREDICT",
     "NormalizeClient",
     "SCENARIO_BODY_FIELDS",
     "constrained_schema",
@@ -31,6 +32,18 @@ __all__ = [
 #: 하고, 이 값이 산출물의 ``generator``에 기록되어 실험 조건을 복원한다.
 #: 양자화 수준까지 태그에 들어 있어야 Q4/Q8 비교가 결과 파일만으로 구분된다.
 DEFAULT_MODEL = "qwen2.5:7b-instruct-q4_K_M"
+
+#: 이 단계가 쓸 수 있는 출력 토큰의 상한.
+#:
+#: **길이 목표가 아니라 실패의 종류를 바꾸는 자리다.** 상한이 없으면 멈추지
+#: 않는 응답을 붙잡을 것이 타임아웃밖에 없고, 그 시도는 원문도 남지 않는다.
+#: 상한이 있으면 같은 일이 "잘린 응답"으로 돌아와 기록되고 재시도된다.
+#:
+#: 값의 근거: 실측한 시나리오 본문이 233토큰이었다(``qwen2.5:latest``,
+#: C-001, 기법 2건). 기법과 엔티티가 훨씬 많은 케이스를 감안해도 그 몇 배면
+#: 충분하므로 여덟 배 남짓으로 잡는다. 정상 응답은 절대 여기 닿지 않아야
+#: 하고, 닿았다면 그것은 잘린 것이므로 ``malformed_output``으로 기록된다.
+DEFAULT_NUM_PREDICT = 2048
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 

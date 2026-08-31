@@ -38,7 +38,12 @@ from ..common import errors as errlog
 from ..common import io, llm, schema
 from ..common.llm import DEFAULT_NUM_CTX, DEFAULT_TIMEOUT
 from . import alert_adapter
-from .llm_client import DEFAULT_MODEL, SCENARIO_BODY_FIELDS, NormalizeClient
+from .llm_client import (
+    DEFAULT_MODEL,
+    DEFAULT_NUM_PREDICT,
+    SCENARIO_BODY_FIELDS,
+    NormalizeClient,
+)
 
 __all__ = ["STAGE", "build_scenario", "check_attack_ids", "dump_raw", "normalize", "main"]
 
@@ -191,6 +196,16 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
             "작으면 프롬프트가 조용히 잘린다"
         ),
     )
+    parser.add_argument(
+        "--num-predict",
+        type=int,
+        default=DEFAULT_NUM_PREDICT,
+        help=(
+            "모델이 쓸 수 있는 출력 토큰의 상한. 기본 %(default)s. "
+            "**길이 목표가 아니라 폭주를 끊는 자리다** — 주지 않으면 모델이 "
+            "JSON을 닫지 못할 때 컨텍스트가 찰 때까지 쓰고 타임아웃으로만 끝난다"
+        ),
+    )
     parser.add_argument("--max-attempts", type=int, default=MAX_ATTEMPTS)
     parser.add_argument("--no-fewshot", action="store_true", help="few-shot 예시를 빼고 호출")
     parser.add_argument(
@@ -244,6 +259,7 @@ def main(argv: "list[str] | None" = None) -> int:
                 temperature=args.temperature,
                 timeout=args.timeout,
                 num_ctx=args.num_ctx,
+                num_predict=args.num_predict,
             )
         except llm.LLMError as e:
             print(f"[{STAGE}] {e}", file=sys.stderr)
