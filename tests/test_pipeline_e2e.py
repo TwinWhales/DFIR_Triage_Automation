@@ -482,3 +482,100 @@ def test_a_broken_stage_stops_the_pipeline_instead_of_passing_junk_on(case):
         )
     assert not (case / "02_scenario.json").exists()
     assert (case / "errors.jsonl").is_file()
+
+
+# ================================== 파싱 실패가 errors.jsonl 에 남는가
+
+
+def _unreadable_pf(name: str = "ROGUE.EXE", path_hash: int = 0xDEADBEEF) -> bytes:
+    """레이아웃 표에 없는 ``.pf``. 파서가 ``UnknownLayout`` 으로 건너뛴다.
+
+    실물에서 이 모양을 만났습니다 — Windows 10 19045 의 파일 정보 블록이
+    212바이트인데 표에 없어 192건이 전부 실패했습니다. 여기서는 표에
+    없을 것이 확실한 크기(200)를 씁니다.
+    """
+    import struct
+
+    from src.stage04_parse.structs import prefetch_record as pf
+
+    info_size = 200
+    assert (30, info_size) not in pf.FILE_INFORMATION, "표에 있으면 이 시험이 무의미하다"
+
+    info = bytes(info_size)
+    total = pf.HEADER_SIZE + info_size
+    header = (
+        struct.pack("<I4sII", 30, pf.SIGNATURE, 0x11, total)
+        + name.encode("utf-16-le")[:58].ljust(60, b"\x00")
+        + struct.pack("<II", path_hash, 0)
+    )
+    return header + info
+
+
+def test_an_artifact_that_fails_completely_is_written_to_the_error_log(tmp_path, capsys):
+    """**아티팩트 하나가 100% 실패해도 예전에는 조용했다.**
+
+    ``parse_errors`` 가 ``_manifest.json`` 에만 남아, 단계는 정상 종료하고
+    ``errors.jsonl`` 은 만들어지지도 않았습니다. 실측에서 프리패치 192건이
+    전부 실패했는데 ``tools/live_check.py`` 가 "재시도·실패 0건 — 모든
+    단계가 첫 시도에 통과"로 결산했습니다 (``docs/limitations.md``
+    2026-09-01 절). 같은 리포트가 위쪽에서는 "파싱 오류 192건"을 찍고
+    있었으므로, 산출물이 아니라 **결산이** 틀린 것이었습니다.
+    """
+    evidence_dir = tmp_path / "evidence"
+    prefetch_dir = evidence_dir / "Windows" / "Prefetch"
+    prefetch_dir.mkdir(parents=True)
+    for i in range(3):
+        (prefetch_dir / f"ROGUE{i}.EXE-DEADBEE{i}.pf").write_bytes(
+            _unreadable_pf(f"ROGUE{i}.EXE", 0xDEADBEE0 + i)
+        )
+
+    selection = tmp_path / "03_selection.json"
+    io.write_json(
+        selection,
+        {
+            "case_id": "PARSE-ERR",
+            "stage": "03_select",
+            "schema_version": "1.0",
+            "generated_at": "2026-09-01T00:00:00Z",
+            "generator": "test",
+            "mapping_table_version": "1.2",
+            "selected": [
+                {
+                    "artifact": "prefetch",
+                    "tier": 1,
+                    "priority": 1,
+                    "scope": {},
+                    "reason": {"technique": "T1204.002", "rationale": "USB 실행 흔적"},
+                }
+            ],
+            "deferred": [],
+            "excluded": [],
+            "stats": {"selected_count": 1, "deferred_count": 0, "excluded_count": 0},
+        },
+    )
+
+    code = parse_mod.main(
+        [
+            "--in", str(selection),
+            "--out", str(tmp_path / "04_parsed"),
+            "--evidence", str(evidence_dir),
+        ]
+    )
+    assert code == 0, "읽을 파일은 있었으므로 단계 자체는 성공한다"
+
+    manifest = io.read_json(tmp_path / "04_parsed" / "_manifest.json")
+    entry = next(f for f in manifest["files"] if f["artifact"] == "prefetch")
+    assert entry["record_count"] == 0
+    assert entry["parse_errors"] == 3
+
+    logged = [e for e in io.read_jsonl(tmp_path / "errors.jsonl") if e["type"] == "parse_error"]
+    assert len(logged) == 1, "아티팩트당 한 줄이다 — 파일마다 쓰면 다른 실패가 묻힌다"
+    detail = logged[0]["detail"]
+    assert detail["value"] == "prefetch"
+    assert detail["parse_errors"] == 3
+    assert detail["record_count"] == 0
+    assert detail["total_failure"] is True, "전량 실패와 일부 실패는 조치가 다르다"
+
+    # 화면에서도 소리를 내야 한다. 실측에서 이 실패가 evtx 청크 복구 경고
+    # 215줄 사이에 묻혔다.
+    assert "전량 실패" in capsys.readouterr().err
