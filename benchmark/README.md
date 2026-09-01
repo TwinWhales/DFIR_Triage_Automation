@@ -113,7 +113,7 @@ benchmark/
 - **`과제 2` K-001 키오스크 및 관리 서버 공식 데이터셋 등록**: 타깃 침해 시나리오를 `datasets/`에 패키징.
 - **`과제 3` `--update-golden` 자동 갱신 CLI 스크립트 구현**.
 - **`과제 4` `tests/casepaths.py` 다중 케이스 지원 구조로 리팩토링**.
-- **`과제 5` `ground_truth_schema.json` 정식 규격 확정**.
+- ~~**`과제 5` `ground_truth_schema.json` 정식 규격 확정**~~ — **2026-09-02 처리.** 자기채점 판정을 `provenance` 로 떼어 냈고(`authored_by` 는 이름 그대로), `required_refs` 접두어는 스키마가 모양만 보고 어휘는 `src/common/refs.py` 가 본다. 남은 것은 지표 정의(`work-guide.md` 8장)와 필드를 한 번 더 맞추는 일뿐.
 - **`과제 6` 3대 수치(재현율 + 환각률 + 시간) 단일 통합 리포트 도구**.
 
 ---

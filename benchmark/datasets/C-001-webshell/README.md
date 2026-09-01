@@ -74,8 +74,16 @@ F6이 성립하려면 `mft.jsonl`에는 있으나 `input_refs`에는 없는 레�
 스펙 예시는 `2026-07-20T03:14:22Z`로 줄여 썼지만, 기각 사유의 `actual`은 분석가가
 원본을 되짚는 값이므로 레코드에 저장된 그대로여야 합니다.
 
+## 이 정답은 채점에 쓸 수 없습니다
+
+`provenance`가 `derived_from_spec`입니다 — `docs/pipeline-io-spec.md`의 예시에서
+역산한 것이라, 우리가 만든 답을 우리가 맞히는 자기채점입니다. `evaluate.py`가
+결과 끝에 그 사실을 경고로 찍습니다. **발표에 쓸 수치는 사람이 실제 증거를
+외부 도구로 보고 만든 정답(`provenance: human_analysis`)에서 나와야 합니다** —
+절차는 `work.md` 8번에 있습니다.
+
 ## 확정되지 않은 것
 
-`ground_truth.json`의 스키마는 초안입니다. `work-guide.md` 8장의 지표 정의
-(재현율 = 정답 아티팩트 중 selected 비율)에서 역산했으나,
-`benchmark/ground_truth_schema.json` 작성 시 팀 합의가 필요합니다.
+스키마의 **지표 쪽**은 아직 초안입니다. `work-guide.md` 8장의 정의(재현율 =
+정답 아티팩트 중 selected 비율)에서 역산했고, 팀 합의가 남아 있습니다.
+정답의 출처(`provenance`)와 `ref` 접두어는 2026-09-02에 정해졌습니다.

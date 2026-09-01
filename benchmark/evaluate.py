@@ -38,6 +38,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.common import errors as errlog  # noqa: E402
 from src.common import io  # noqa: E402
+from src.common import refs  # noqa: E402
 
 __all__ = ["evaluate_case", "aggregate", "main", "STAGE_FILES"]
 
@@ -247,12 +248,37 @@ def _durations(case_dir: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------- 케이스
 
 
+def _check_refs(truth: dict[str, Any], dataset: Path) -> None:
+    """정답의 ``ref`` 접두어를 ``src/common/refs.py`` 로 검사한다.
+
+    **스키마는 모양만 봅니다.** 접두어 목록을 스키마에 베껴 두면 아티팩트가
+    늘 때마다 조용히 갈라집니다 — 실제로 프리패치(``PF``)·Sysmon·Amcache 가
+    빠져 있어서, 그 셋이 핵심 증거인 케이스는 정답을 **적을 자리가 없었습니다.**
+
+    어휘의 원본은 ``ARTIFACT_PREFIX`` 하나뿐이므로 여기서 그것으로 봅니다.
+    오타를 조용히 넘기면 그 레코드는 영원히 "놓친 증거"로 집계됩니다.
+    """
+    bad: list[str] = []
+    for entry in truth.get("required_refs", []):
+        try:
+            refs.parse_ref(entry["ref"])
+        except refs.RefError as e:
+            bad.append(f"  {entry['ref']!r} — {e}")
+    if bad:
+        raise ValueError(
+            f"{dataset / 'ground_truth.json'}: 알 수 없는 ref 가 있습니다." + "\n"
+            + "\n".join(bad)
+            + "\n  접두어 어휘는 src/common/refs.py 의 ARTIFACT_PREFIX 가 원본입니다."
+        )
+
+
 def evaluate_case(dataset_dir: str | Path, case_dir: str | Path | None = None) -> dict[str, Any]:
     """데이터셋 하나를 평가한다."""
     dataset = Path(dataset_dir)
     truth = _load(dataset / "ground_truth.json")
     if truth is None:
         raise FileNotFoundError(f"정답 파일 없음: {dataset / 'ground_truth.json'}")
+    _check_refs(truth, dataset)
 
     case = Path(case_dir) if case_dir else REPO_ROOT / "cases" / truth["case_id"]
 
@@ -274,6 +300,9 @@ def evaluate_case(dataset_dir: str | Path, case_dir: str | Path | None = None) -
         "dataset": str(dataset),
         "case_dir": str(case),
         "authored_by": truth.get("authored_by", "?"),
+        # **채점 가능 여부는 이 값이 가른다.** 없으면 사람이 만들었다고 보지
+        # 않는다 — 틀리는 방향이 "자기채점을 발표에 쓴다"가 되면 안 된다.
+        "provenance": truth.get("provenance", "derived_from_pipeline"),
         "generators": {
             "02_normalize": (scenario or {}).get("generator"),
             "05_interpret": (findings or {}).get("generator"),
@@ -310,7 +339,11 @@ def aggregate(cases: list[dict[str, Any]]) -> dict[str, Any]:
         if c["interpretation"].get("hallucination_rate") is not None
     ]
 
-    human_authored = sum(1 for c in cases if c["authored_by"] != "human")
+    # 예전에는 authored_by 가 정확히 "human" 인지로 봤다. 그러면 담당자
+    # 이름을 적은 정답이 자기채점으로 집계되고, 반대로 "human" 이라고만
+    # 적으면 누가 만들었는지가 사라진다. 두 질문을 필드 둘로 나눴다 —
+    # authored_by 는 "누가", provenance 는 "어디서 왔나".
+    human_authored = sum(1 for c in cases if c["provenance"] != "human_analysis")
     return {
         "cases": len(cases),
         "technique_recall": _mean(technique_recalls),
