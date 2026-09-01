@@ -546,3 +546,131 @@ def test_cli_aborts_on_a_schema_violating_scenario(tmp_path):
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
     assert logged[0]["type"] == "schema_violation"
     assert logged[0]["detail"]["field"] == "techniques"
+
+
+# ================================================ 모르는 키는 로드 시점에 거부
+
+
+def test_an_unknown_top_level_key_is_refused(tmp_path, catalog):
+    path = _write_mapping(
+        tmp_path,
+        {
+            "technique": "T1505.003",
+            "artifacts": [{"name": "$MFT", "tier": 1, "rationale": "x"}],
+            "artefacts": [],  # 철자 오타
+        },
+        "T1505.003.yaml",
+    )
+    with pytest.raises(mapping_loader.MappingError, match="artefacts"):
+        mapping_loader.load_mapping(path, catalog)
+
+
+def test_the_scope_key_that_was_silently_dropped_is_refused(tmp_path, catalog):
+    """실제로 물린 자리다 (2026-08-31).
+
+    ``T1059.001`` 과 ``T1105`` 가 ``scope_template`` 대신 ``scope:`` 를 썼다.
+    로더가 모르는 키를 조용히 버려 ``event_ids`` 가 통째로 사라졌고,
+    ``evtx:Sysmon`` 이 **채널 전량 요청**이 됐다 — EID 1(프로세스 생성)이
+    전부 후보가 되어 05단계 쿼터를 혼자 태운다. **좁히려고 적은 것이
+    넓히는 결과가 됐다.**
+    """
+    path = _write_mapping(
+        tmp_path,
+        {
+            "technique": "T1505.003",
+            "artifacts": [
+                {
+                    "name": "evtx:Sysmon",
+                    "tier": 1,
+                    "rationale": "x",
+                    "scope": {"event_ids": [1, 3]},
+                }
+            ],
+        },
+        "T1505.003.yaml",
+    )
+    with pytest.raises(mapping_loader.MappingError, match="scope"):
+        mapping_loader.load_mapping(path, catalog)
+
+
+def test_an_unknown_scope_template_key_is_refused(tmp_path, catalog):
+    """``name_pattern`` 이 그랬다 (2026-09-01).
+
+    ``Scope`` 에도 ``merge_scopes`` 의 ``UNION_KEYS`` 에도 없어 프리패치를
+    좁히지 못했다. 매핑에는 좁혔다고 적혀 있고 실제로는 폴더 전체가
+    요청됐다 — 산출물만 봐서는 알 수 없는 어긋남이다.
+    """
+    path = _write_mapping(
+        tmp_path,
+        {
+            "technique": "T1505.003",
+            "artifacts": [
+                {
+                    "name": "prefetch",
+                    "tier": 1,
+                    "rationale": "x",
+                    "scope_template": {"name_pattern": ["CERTUTIL.EXE"]},
+                }
+            ],
+        },
+        "T1505.003.yaml",
+    )
+    with pytest.raises(mapping_loader.MappingError, match="name_pattern"):
+        mapping_loader.load_mapping(path, catalog)
+
+
+def test_time_range_may_not_be_authored_in_a_scope_template(tmp_path, catalog):
+    """적어도 무시되는 것이 아니라 **덮어쓰인다.**
+
+    ``scope_resolver.resolve`` 가 시나리오의 시간 범위를 항상 마지막에
+    붙입니다. 매핑에 적으면 뜻이 있는 것처럼 보이는데 아무 일도 하지
+    않습니다 — 시간 범위는 매핑이 아니라 02단계가 정합니다.
+    """
+    path = _write_mapping(
+        tmp_path,
+        {
+            "technique": "T1505.003",
+            "artifacts": [
+                {"name": "$MFT", "tier": 1, "rationale": "x", "scope_template": {"time_range": True}}
+            ],
+        },
+        "T1505.003.yaml",
+    )
+    with pytest.raises(mapping_loader.MappingError, match="time_range"):
+        mapping_loader.load_mapping(path, catalog)
+
+
+def test_followups_may_use_their_own_two_keys(tmp_path, catalog):
+    """``followups`` 는 ``technique``·``artifact`` 를 직접 적는다.
+
+    ``artifacts[]`` 의 어휘로 검사하면 이 둘이 모르는 키로 걸린다.
+    거부가 과하면 정상 매핑이 안 들어오므로 양쪽을 함께 고정한다.
+    """
+    path = _write_mapping(
+        tmp_path,
+        {
+            "technique": "T1505.003",
+            "artifacts": [{"name": "$MFT", "tier": 1, "rationale": "x"}],
+            "followups": [
+                {
+                    "technique": "T1059.003",
+                    "artifact": "evtx:Security",
+                    "tier": 2,
+                    "trigger": "웹셸이 확인되면",
+                    "rationale": "셸 실행 흔적",
+                }
+            ],
+        },
+        "T1505.003.yaml",
+    )
+    mapping = mapping_loader.load_mapping(path, catalog)
+    assert {r.technique for r in mapping.requests} == {"T1505.003", "T1059.003"}
+
+
+def test_every_shipped_mapping_only_uses_known_keys(mappings):
+    """40개가 전부 통과한다는 사실 자체를 고정한다.
+
+    새 매핑이 오타를 들고 오면 여기서 먼저 걸린다 — ``mappings`` 픽스처가
+    ``load_all`` 이라 로드 자체가 실패한다.
+    """
+    assert mappings

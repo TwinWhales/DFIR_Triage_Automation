@@ -13,12 +13,22 @@ artifacts:
     scope_template: { path_prefix: ["C:\\Users\\*\\AppData\\LocalLow\\Microsoft\\CryptnetUrlCache"] }
     rationale: "certutil -urlcache가 남기는 캐시 사본(다운로드 URL·바이트 확증) — certutil 다운로드의 결정적 흔적"
 
+  # 원래 `name_pattern: [CERTUTIL.EXE, POWERSHELL.EXE]` 로 좁히려 했는데
+  # **그런 키가 없다.** Scope 도 merge_scopes 도 모르는 이름이라 조용히
+  # 버려졌고, 실제로는 프리패치 폴더 전체가 요청되고 있었다 — 좁혔다고
+  # 적힌 채 안 좁혀진 상태였다. 뜻이 없는 키를 지워 실제 동작과 맞춘다.
+  #
+  # 이름으로 좁히는 축은 지금 표현할 수단이 없다. path_prefix 로
+  # System32\certutil.exe 를 못박을 수는 있지만, 그러면 다른 자리에
+  # 복사해 둔 powershell.exe 를 놓친다 — T1105 가 겨냥하는 것이 바로
+  # 그런 실행이다. docs/limitations.md 에 남겼다.
   - name: "prefetch"
     tier: 1
-    scope_template: { name_pattern: ["CERTUTIL.EXE", "POWERSHELL.EXE"] }
     rationale: "certutil·powershell 실행 횟수·최근 실행시각"
-    
+
+  # time_range 는 적지 않는다. scope_resolver 가 시나리오의 값으로 항상
+  # 덮어쓰므로, 적으면 뜻이 있는 것처럼 보이는데 아무 일도 하지 않는다.
   - name: "$MFT"
     tier: 1
-    scope_template: { path_prefix: ["C:\\Users\\*\\AppData\\Local\\Temp"], extensions: [".ps1"], time_range: true }
+    scope_template: { path_prefix: ["C:\\Users\\*\\AppData\\Local\\Temp"], extensions: [".ps1"] }
     rationale: "드롭된 페이로드 s.ps1 생성 흔적"
