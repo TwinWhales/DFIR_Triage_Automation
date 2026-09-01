@@ -346,6 +346,16 @@ def parse_artifact(
         # 구간 수(parse_errors)만으로는 규모를 알 수 없다. 구간 1곳이
         # 8바이트인 것과 500KB인 것은 판단이 다르다.
         entry["unreadable_bytes"] = int(stats["unreadable_bytes"])
+    if stats.get("unsupported_version"):
+        # **손상이 아니라 우리가 못 읽는 것이다.** `$UsnJrnl` v3/v4 처럼
+        # 실재하는 버전인데 파서가 아직 안 읽는 레코드다.
+        #
+        # parse_errors 에 합치지 않는다 — 조치가 갈린다. 앞은 저널이 더러운
+        # 것이고 이것은 파서를 넓혀야 하는 것이다. 그리고 단위도 다르다
+        # (parse_errors 는 구간 수, 이것은 레코드 수).
+        #
+        # 0이면 키를 만들지 않는다(``unreadable_bytes`` 와 같은 규약).
+        entry["unsupported_version"] = int(stats["unsupported_version"])
     if prune:
         # 대형 아티팩트라 시간 범위 밖 레코드를 하드 컷했다는 사실 자체를
         # 남긴다. 0건을 뺐어도 "이번 실행은 하드 컷 모드였다"는 정보다 —
@@ -518,8 +528,8 @@ def main(argv: "list[str] | None" = None) -> int:
         skipped.append({"artifact": artifact, "reason": reason, "message": message})
         print(f"[{STAGE}] {label} — {message}", file=sys.stderr)
 
-    def note_parse_errors(artifact: str, entry: dict[str, Any]) -> None:
-        """읽다가 실패한 구간을 ``errors.jsonl`` 에도 남긴다.
+    def note_unread_records(artifact: str, entry: dict[str, Any]) -> None:
+        """읽지 못한 레코드를 ``errors.jsonl`` 에도 남긴다.
 
         예전에는 ``_manifest.json`` 의 ``parse_errors`` 에만 남았습니다.
         그 결과 **아티팩트 하나가 100% 실패해도 단계가 정상 종료하고,
@@ -533,22 +543,48 @@ def main(argv: "list[str] | None" = None) -> int:
         ``errors.jsonl`` 은 전 단계가 공유하는 집계용이고 매니페스트는
         이 단계의 산출물입니다.
 
+        **미지원 버전도 여기로 옵니다.** ``$UsnJrnl`` v3/v4 를 만나면 파서가
+        레코드를 건너뛰고 ``stats["unsupported_version"]`` 만 올렸는데, 그
+        값이 **매니페스트에도 이 로그에도 실리지 않았습니다.** V3 를 쓰는
+        볼륨이면 저널이 통째로 비는데 결산은 "정상"이라고 말합니다 — 위
+        프리패치와 **같은 부류가 다른 파서에 남아 있던 것**입니다.
+
+        어휘는 ``parse_error`` 그대로 씁니다. ``ERROR_TYPES`` 는
+        ``src/common/`` 이라 새 유형을 만드는 것이 전체 공지 대상이고,
+        "읽지 못한 레코드가 있다"는 사실은 같기 때문입니다. 손상과 지원
+        범위 밖의 구분은 ``detail`` 의 두 수와 문장이 집니다.
+
         **파일마다 한 줄씩 쓰지 않습니다.** 프리패치 192건이면 192줄이
         되어 다른 단계의 실패가 묻힙니다. 아티팩트당 한 줄에 규모를 담고,
         어느 파일이 왜 실패했는지는 파서가 이미 stderr 로 말합니다.
+        **둘이 함께 있어도 줄을 나누지 않습니다.**
         """
-        count = entry["parse_errors"]
-        if not count:
+        failed = entry["parse_errors"]
+        unsupported = entry.get("unsupported_version", 0)
+        if not failed and not unsupported:
             return
 
         # **전량 실패와 일부 실패를 가른다.** 9,606건을 내면서 192구간을
         # 건너뛴 것과, 192건을 읽어 한 건도 못 낸 것은 조치가 다르다.
         # 앞은 로그가 더러운 것이고 뒤는 그 아티팩트가 죽은 것이다.
         total_failure = entry["record_count"] == 0
+        happened = ", ".join(
+            part
+            for part in (
+                f"{failed}건을 읽지 못했습니다" if failed else "",
+                (
+                    f"지원하지 않는 레코드 버전 {unsupported}건을 건너뛰었습니다"
+                    " (손상이 아니라 지원 범위 밖입니다)"
+                )
+                if unsupported
+                else "",
+            )
+            if part
+        )
         message = (
-            f"{artifact}: {count}건을 읽지 못해 레코드가 한 건도 나오지 않았습니다"
+            f"{artifact}: 레코드가 한 건도 나오지 않았습니다 — {happened}"
             if total_failure
-            else f"{artifact}: {entry['record_count']}건을 냈고 {count}건을 읽지 못했습니다"
+            else f"{artifact}: {entry['record_count']}건을 냈고 {happened}"
         )
         log.record(
             STAGE,
@@ -557,7 +593,8 @@ def main(argv: "list[str] | None" = None) -> int:
                 "field": "selected[].artifact",
                 "value": artifact,
                 "message": message,
-                "parse_errors": count,
+                "parse_errors": failed,
+                "unsupported_version": unsupported,
                 "record_count": entry["record_count"],
                 "total_failure": total_failure,
             },
@@ -614,7 +651,7 @@ def main(argv: "list[str] | None" = None) -> int:
             log.abort(STAGE, "parse_error", {"value": artifact, "message": str(e)})
 
         files.append(entry)
-        note_parse_errors(artifact, entry)
+        note_unread_records(artifact, entry)
         pruned_note = (
             f", 시간범위 하드컷 {entry['time_range_pruned_count']}건 제외"
             if "time_range_pruned_count" in entry
@@ -623,9 +660,17 @@ def main(argv: "list[str] | None" = None) -> int:
         error_note = (
             f", 파싱 실패 {entry['parse_errors']}건" if entry["parse_errors"] else ""
         )
+        # 이 줄에 없으면 "0건"의 이유가 화면 어디에도 없다. 프리패치가
+        # 그랬듯 미지원 버전도 같은 자리에서 보여야 한다.
+        unsupported_note = (
+            f", 미지원 버전 {entry['unsupported_version']}건"
+            if entry.get("unsupported_version")
+            else ""
+        )
         print(
             f"  {artifact}: {entry['record_count']}건 "
-            f"(플래그 {entry['flagged_count']}건{pruned_note}{error_note}) → {entry['path']}"
+            f"(플래그 {entry['flagged_count']}건{pruned_note}{error_note}"
+            f"{unsupported_note}) → {entry['path']}"
         )
 
     if not files:

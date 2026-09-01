@@ -579,3 +579,160 @@ def test_an_artifact_that_fails_completely_is_written_to_the_error_log(tmp_path,
     # 화면에서도 소리를 내야 한다. 실측에서 이 실패가 evtx 청크 복구 경고
     # 215줄 사이에 묻혔다.
     assert "전량 실패" in capsys.readouterr().err
+
+
+# ============================ 미지원 버전이 결산에 도달하는가
+
+
+def _usn_record(*, name: str, usn: int, major_version: int = 2) -> bytes:
+    """``USN_RECORD`` 하나. ``major_version`` 만 바꿔 v3 를 만든다.
+
+    v3 는 **손상이 아니라 실재하는 버전**입니다. 파서는 그것을 알아보고
+    레코드 하나를 통째로 건너뛰며 ``stats["unsupported_version"]`` 을
+    올립니다 — 8바이트씩 걸어 들어가면 본문을 레코드로 오해해 가짜 손상이
+    잡히기 때문입니다.
+    """
+    import struct
+
+    from src.stage04_parse.structs import usn_record as u
+
+    encoded = name.encode("utf-16-le")
+    unpadded = u.V2_HEADER_SIZE + len(encoded)
+    padded = (unpadded + u.RECORD_ALIGNMENT - 1) // u.RECORD_ALIGNMENT * u.RECORD_ALIGNMENT
+    # 2026-07-20T03:14:22Z 를 FILETIME 으로.
+    filetime = 133_662_296_620_000_000
+    header = struct.pack(
+        "<IHHQQQQIIIIHH",
+        padded,
+        major_version,
+        0,
+        (1 << 48) | 100,
+        (5 << 48) | 5,
+        usn,
+        filetime,
+        int(u.UsnReason.FILE_CREATE),
+        0,
+        0,
+        0x20,  # FILE_ATTRIBUTE_ARCHIVE
+        len(encoded),
+        u.V2_HEADER_SIZE,
+    )
+    return header + encoded + b"\x00" * (padded - unpadded)
+
+
+def _journal_evidence(root: Path, records: list[bytes]) -> Path:
+    """``$Extend/$UsnJrnl$J`` 하나만 있는 증거 폴더."""
+    extend = root / "$Extend"
+    extend.mkdir(parents=True)
+    (extend / "$UsnJrnl$J").write_bytes(b"".join(records))
+    return root
+
+
+def _usn_selection(path: Path, case_id: str) -> Path:
+    io.write_json(
+        path,
+        {
+            "case_id": case_id,
+            "stage": "03_select",
+            "schema_version": "1.0",
+            "generated_at": "2026-09-01T00:00:00Z",
+            "generator": "test",
+            "mapping_table_version": "1.2",
+            "selected": [
+                {
+                    "artifact": "$UsnJrnl",
+                    "tier": 1,
+                    "priority": 1,
+                    "scope": {},
+                    "reason": {"technique": "T1070.004", "rationale": "파일 삭제 흔적"},
+                }
+            ],
+            "deferred": [],
+            "excluded": [],
+            "stats": {"selected_count": 1, "deferred_count": 0, "excluded_count": 0},
+        },
+    )
+    return path
+
+
+def test_a_journal_we_cannot_read_the_version_of_is_not_reported_as_clean(tmp_path, capsys):
+    """**미지원 버전이 04단계 밖으로 나오지 않았다.**
+
+    파서는 ``$UsnJrnl`` v3/v4 를 알아보고 따로 세는데, 그 집계가
+    ``_manifest.json`` 에도 ``errors.jsonl`` 에도 실리지 않았습니다.
+    남는 것은 레코드마다 찍히는 stderr 경고뿐이었고, 그 경고는 2026-09-01
+    실측에서 evtx 청크 복구 경고 215줄 사이에 묻힌 전례가 있습니다.
+
+    결과가 이랬습니다 — **저널이 통째로 비는데 결산은 "정상"이라고 말한다.**
+    2026-09-01 에 고친 프리패치 전량 실패와 같은 부류입니다.
+    """
+    evidence_dir = _journal_evidence(
+        tmp_path / "evidence",
+        [
+            _usn_record(name=f"v3-{i}.dll", usn=i * 80, major_version=3)
+            for i in range(3)
+        ],
+    )
+
+    code = parse_mod.main(
+        [
+            "--in", str(_usn_selection(tmp_path / "03_selection.json", "USN-V3")),
+            "--out", str(tmp_path / "04_parsed"),
+            "--evidence", str(evidence_dir),
+        ]
+    )
+    assert code == 0, "읽을 파일은 있었으므로 단계 자체는 성공한다"
+
+    manifest = io.read_json(tmp_path / "04_parsed" / "_manifest.json")
+    entry = next(f for f in manifest["files"] if f["artifact"] == "$UsnJrnl")
+    assert entry["record_count"] == 0
+    assert entry["unsupported_version"] == 3
+    assert entry["parse_errors"] == 0, "손상이 아니다 — 두 수를 합치면 조치가 갈리지 않는다"
+
+    logged = [e for e in io.read_jsonl(tmp_path / "errors.jsonl") if e["type"] == "parse_error"]
+    assert len(logged) == 1, "아티팩트당 한 줄이다"
+    detail = logged[0]["detail"]
+    assert detail["value"] == "$UsnJrnl"
+    assert detail["unsupported_version"] == 3
+    assert detail["parse_errors"] == 0
+    assert detail["total_failure"] is True
+    assert "지원 범위 밖" in detail["message"], "손상과 구분되는 문장이어야 한다"
+
+    assert "전량 실패" in capsys.readouterr().err
+
+
+def test_a_journal_that_is_only_partly_unreadable_still_says_so(tmp_path, capsys):
+    """일부만 미지원이면 전량 실패가 아니다 — 그래도 남아야 한다.
+
+    레코드가 나왔다는 사실이 "다 읽었다"는 뜻이 아닙니다. 저널의 절반이
+    빠졌는데 결산이 조용하면, 없는 것과 못 읽은 것이 구분되지 않습니다.
+    """
+    evidence_dir = _journal_evidence(
+        tmp_path / "evidence",
+        [
+            _usn_record(name="kept.txt", usn=0),
+            _usn_record(name="skipped.dll", usn=80, major_version=3),
+        ],
+    )
+
+    parse_mod.main(
+        [
+            "--in", str(_usn_selection(tmp_path / "03_selection.json", "USN-MIX")),
+            "--out", str(tmp_path / "04_parsed"),
+            "--evidence", str(evidence_dir),
+        ]
+    )
+
+    manifest = io.read_json(tmp_path / "04_parsed" / "_manifest.json")
+    entry = next(f for f in manifest["files"] if f["artifact"] == "$UsnJrnl")
+    assert entry["record_count"] == 1
+    assert entry["unsupported_version"] == 1
+
+    detail = [
+        e for e in io.read_jsonl(tmp_path / "errors.jsonl") if e["type"] == "parse_error"
+    ][0]["detail"]
+    assert detail["total_failure"] is False
+    assert detail["record_count"] == 1
+
+    out = capsys.readouterr().out
+    assert "미지원 버전 1건" in out, "요약 줄에 없으면 화면에서 0건의 이유를 알 수 없다"
