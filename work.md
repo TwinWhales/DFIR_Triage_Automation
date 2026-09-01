@@ -1,52 +1,51 @@
 # work.md — 다음에 할 일
 
-2026-08-26 실측(K-001 랩 환경 대비 완성도 점검)에서 나온 작업 큐다.
+2026-08-26 실측(K-001 랩 환경 대비 완성도 점검)에서 시작한 작업 큐다.
 **설계 근거와 데이터 형식은 여기 옮겨 적지 않는다** — 각 항목에 붙은 문서가
 권위다. 여기 있는 것은 "무엇을, 어디서, 어떻게 확인하며" 뿐이다.
 
 끝낸 항목은 지우고, 그 사실은 `docs/limitations.md`에 남긴다.
 
-**2026-08-26 처리됨** — `run_pipeline.sh` 의 `--volume` 통로,
-02·05단계의 실패 응답 원문 보존, Sysmon 세 룰의 EID 제약,
-프리패치 장치 경로 두 번째 형태, 05단계 토큰 예산과 레코드 다이어트.
-전부 `docs/limitations.md` 에 있다.
+## 지금 순서 (2026-09-01)
 
-**2026-08-27 처리됨** — 프리패치 적재 경로 변환과 프롬프트 keep 목록(옛 1번).
-`_to_drive()` 를 `fields.loaded_files` 에도 걸었고(실물 10,109건 전량 변환,
-`tools/scan_prefetch.py` 대조 불일치 0건), keep 어휘를 `_flags.yaml` 의
-`prompt_keep_paths` 로 선언했다. **"0번 이미지를 기다린다" 는 유보를
-풀었다** — 섀도 카피 안전성은 `path` 가 예전부터 쓰던 그 함수의 성질이라
-새 가정이 아니고, 실물 대조는 0번 목록으로 옮겼다. 남은 것과 안 넣은 것은
-`docs/limitations.md` 의 같은 날 절에 있다.
+**번호는 이름이고 순서가 아니다.** 다른 문서가 "`work.md` 0번"으로 가리키므로
+번호를 다시 매기지 않는다. 집는 순서는 이렇다.
 
-**2026-08-27 처리됨** — Amcache 숫자 값 이름(옛 2번). 대응표를 공개 자료가
-아니라 같은 이미지 안의 조인으로 얻었고, 그 과정에서 `PATH_FIELDS` 에
-`lowercaselongpath` 가 없어 Amcache 인용 문장이 **전량** 기각되던 것이
-함께 드러나 닫혔다. `validator_check.py` 가 40/40, 아는 구멍 0건.
-기록은 `docs/artifact-notes.md` 2026-08-27 절과 `docs/limitations.md`.
+| 순 | 항목 | 착수 조건 |
+|---|---|---|
+| 1 | **1번 — 윈도우 버전 축** | 없다. 목록을 만드는 데까지는 새 이미지가 필요 없다 |
+| 2 | **8번 — 벤치마크 정답 데이터** (팀원에게 넘긴다) | 넘기기 전에 우리가 정할 것 둘 |
+| 3 | 0번 — 키오스크 스냅샷으로 무엇이 닫혔는지 센다 | 스냅샷 A 가 어디 있는지부터 |
+| 4 | 7번 — 02단계 경로 환각 가드 | 없다. 무엇이 환각인지 사람이 먼저 정해야 한다 |
+| 이후 | 3번 Wazuh · 5번 GUI · 2번 파서 셋 · 4번 설계 판단 · 6번 evtx 엔진 | |
 
-**2026-08-28 처리됨** — SRUM 파서(옛 2-1)와 **04단계 성능**. SRUM 은
-`dissect.esedb` 어댑터로 붙었고 세 공급자를 읽는다(PR #25). 성능은 세
-군데였다 — flagging 이 레코드마다 걸릴 리 없는 룰 26개를 다 돌던 것,
-`analyzeMFT` 의 `WindowsTime` 이 만들고 우리가 버리던 시각 문자열,
-허프만 심볼 하나에 비트를 15번 읽던 것. **두 이미지 모두 18.7% 줄었고
-산출물 646,879건이 바이트 단위로 같다**(PR #27). `$MFT` 를 처음으로 다른
-구현(`dissect.ntfs`)과 맞춰 본 것도 함께 들어갔다 —
-`tools/compare_mft_dissect.py`. 기록은 `docs/artifact-notes.md`
-2026-08-27·28 절과 `docs/limitations.md`.
+**1번이 앞인 이유.** 2026-09-01 에 실물 스냅샷 하나에서 **프리패치 축이 통째로
+죽어 있었다.** 표에 없는 조합이라 조용히 틀리지 않고 시끄럽게 실패했고 고쳤지만,
+그 표 여덟 줄 중 **실측은 셋뿐이다.** 나머지 다섯은 "안 틀린 것"이 아니라
+"확인 안 한 것"이고, 이번 실측이 그중 한 줄의 적용 범위를 반증했다 — 명세는
+"1903 이상 = 216" 이라 말하는데 19045 는 212 였다.
 
-**2026-08-30 처리됨** — `tools/hexdump_record.py`. 동결 스키마가 `offset`
-설명에서 6주째 가리키고 있던 0바이트 파일이다. 실물 이미지에서 **10종
-357건을 되짚었고 어긋남 0건**이다. 파서로 다시 파싱해 비교하는 것이 아니라
-레코드가 자기 안에 들고 있는 식별자로 대조한다 — `$MFT` 는 업데이트
-시퀀스까지 본다. 성질상 남는 것 둘(SRUM 은 페이지까지만, 프리패치는
-`offset` 이 항상 `0x0`)은 `docs/limitations.md` 의 같은 절에 있다.
+**8번을 2순위에 두는 이유.** 밖(팀원·수집본)을 기다리는 구간이 있다. 넘기는
+문서를 먼저 쓰고 1번을 이어서 잡으면 두 트랙이 겹쳐 돈다. 다만 **넘기기 전에
+우리가 정할 것 둘**이 있고 (8번 첫 절), 둘 다 반나절이 안 걸린다.
 
-**2026-08-30 처리됨** — `tools/inspect_jsonl.py`. 스캐폴드가 만든 마지막
-0바이트 자리다. 04 산출물 요약과 조회인데, 요약이 **매니페스트를 믿지 않고
-파일을 세어 맞춰 본다** — `record_count`(07단계 보고서가 싣는 값)·`ref`
-유일성·`record_num`=`ref`·레코드의 `artifact`가 그 파일의 것인가 넷이다.
-앞의 둘은 05·06단계에 가서야 터지던 것이고 셋째는 스키마가 보지 않는다.
+**처리됨** — 전부 `docs/limitations.md` 에 있다.
+
+- **2026-08-26** — `--volume` 통로, 02·05 실패 응답 원문 보존, Sysmon 세 룰의
+  EID 제약, 프리패치 장치 경로 두 번째 형태, 05단계 토큰 예산·레코드 다이어트
+- **2026-08-27** — 프리패치 적재 경로 변환과 프롬프트 keep 목록, Amcache 숫자
+  값 이름(대응표를 공개 자료가 아니라 같은 이미지 안의 조인으로 얻었다)
+- **2026-08-28** — SRUM 파서, 04단계 성능 18.7% 단축(산출물 646,879건 바이트
+  단위 동일), `$MFT` × `dissect.ntfs` 최초 대조
+- **2026-08-30** — `tools/hexdump_record.py`(10종 357건 되짚기, 어긋남 0건),
+  `tools/inspect_jsonl.py`(매니페스트를 믿지 않고 파일을 세어 맞춘다)
+- **2026-08-31** — `tools/live_check.py`(목업 없이 실물로 관통시키며 11개
+  관문을 판정한다), 모델 출력 상한 `num_predict`(타임아웃 3회·906.7초 →
+  37.7초), 제약 디코딩(`format`), HID/BadUSB 매핑을 카탈로그·flags·스키마에
+  이음, `benchmark/` 레이아웃 재편(`fixtures/` 는 손으로 쓴 것,
+  `golden/` 은 재생성 대상)
+- **2026-09-01** — 프리패치 `(30, 212)` 실측(0건 → 192건), 파서 실패를
+  `errors.jsonl` 에도 남김, 매핑이 모르는 키를 로드 시점에 거부
 
 ---
 
@@ -64,43 +63,74 @@
 | 06 검증 | **환각률 100%** — 그런데 진짜 환각은 1건 |
 
 실측 전체는 `docs/limitations.md`의 2026-08-26 절 셋에 있다. **먼저 읽는다.**
+05단계가 멈추던 원인은 2026-08-31 에 닫혔다 — 출력 상한이 없어 안 끝나는
+응답을 타임아웃으로만 잡고 있었다.
 
-### 재현용 케이스 만들기
+### 지금 다시 돌리는 방법 — 단계를 손으로 잇지 않는다
 
-`cases/`는 gitignore라 K-ALERT가 남아 있지 않다. 다시 만들려면:
-
-```bash
-# 01_input.json 을 source_type: "edr_alert" 로 손으로 쓴다.
-# raw 에 들어갈 모양은 src/stage02_normalize/alert_adapter.py 의 convert() 참고
-#   필수: mitre[], severity, detected_at   선택: host, user, process{}, paths[], ips[]
-.venv/Scripts/python.exe -m src.stage02_normalize.normalize \
-  --in cases/K-ALERT/01_input.json --out cases/K-ALERT/02_scenario.json
-.venv/Scripts/python.exe -m src.stage03_select.select \
-  --in cases/K-ALERT/02_scenario.json --out cases/K-ALERT/03_selection.json --mappings mappings/
-.venv/Scripts/python.exe -m src.stage04_parse.parse \
-  --in cases/K-ALERT/03_selection.json --out cases/K-ALERT/04_parsed/ \
-  --evidence evidence/0824test.001 --volume 1
-```
-
-`--volume 1`이 필수다. 이 이미지는 NTFS가 둘(0.4GiB 복구 + 59.4GiB 시스템)이다.
-`win10_sysmon_testimage.001`도 같은 레이아웃이고, **그쪽에만 Sysmon이 있다.**
-
-관통 스크립트로 돌릴 때는 `VOLUME`으로 넘긴다:
+`cases/`는 gitignore라 그때 케이스가 남아 있지 않다. 2026-08-31 부터는
+`tools/live_check.py` 가 01→07 을 실물로 관통시키며 단계마다 판정한다.
+스텁을 받는 인자가 **없다** — 목업이 한 군데라도 섞이면 나머지 판정이 무의미
+해지므로, 마지막에 산출물의 `generator` 문자열과 매니페스트 시각으로 "정말
+안 섞였나"를 다시 확인한다.
 
 ```bash
-VOLUME=1 PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh \
-  K-ALERT evidence/win10_sysmon_testimage.001
+.venv/Scripts/python.exe tools/live_check.py \
+  --case-id LC-01 --evidence evidence/win10_sysmon_testimage.001 --volume 1 \
+  --model qwen2.5:latest --raw "<알럿 서술>" --force
 ```
+
+`--volume 1`이 필수다. 이 이미지는 NTFS가 둘(0.4GiB 복구 + 59.4GiB 시스템)이고,
+안 주면 04단계가 **후보를 보여 주고 멈춘다.** 그것이 정상 동작이므로
+`live_check` 는 그 자리를 FAIL 로 적고 뒤 단계를 건너뛴다.
+
+판정·시간·측정치는 `cases/<id>/live_check.json` 과
+`benchmark/results/<id>-<시각>.json` 에 남아 실행끼리 diff 된다. 누적을 표로
+보는 것은 `benchmark/collect.py` 다.
+
+단계 하나만 돌리는 명령과 대조 도구는 `CLAUDE.md` 에 있다.
 
 ---
 
-## 0. 코드 작업이 아닌 것 — 먼저 걸어 둔다
+## 0. 키오스크 스냅샷 — 왔는데 무엇이 닫혔는지 세지 않았다
 
-**Assigned Access 를 켠 스냅샷 하나.** `win10_sysmon_testimage.001`
-(2026-08-26)로 Sysmon 쪽은 절반이 닫혔다. 남은 것은 **키오스크 모드와
-USB·RDP** 다. 침해하지 않아도 된다 — 정상 상태로 충분하다.
+### 키오스크 스냅샷 A 는 이미 있다
 
-닫힌 것:
+2026-08-31 에 키오스크 스냅샷 하나를 KAPE 로 수집했다
+(`KAPE_Results/KIOSK_snapshotA_20260831T094536`, Windows 10 Home 빌드
+**19045.6466**). 그것으로 닫힌 것은 지금까지 **프리패치 자리 하나**다 —
+192건 전량이 `UnknownLayout` 이었고 `(30, 212)` 를 실측으로 채웠다
+(`docs/artifact-notes.md` 2026-09-01).
+
+**먼저 할 일은 그 수집본을 찾는 것이다.** 이 기계의 `evidence/` 에 없다
+(`week10.E01`·`win10_sysmon_testimage.001` 둘뿐). 다른 기계에서 수집한
+것이면 어디 있는지를 이 자리에 적고, 없어졌으면 다시 뜬다 — 아래 확인이
+전부 그 수집본 하나로 끝나는 일이다.
+
+### 다섯 채널 — 있었는지 없었는지 아무도 세지 않았다
+
+`AssignedAccess` 3종·`DriverFrameworks`·`RDPConnection` 이 그 수집본에
+있었는지가 어디에도 적혀 있지 않다. 파일 목록 한 번이면 시작된다.
+
+```bash
+ls "<수집본>/C/Windows/System32/winevt/Logs" | grep -iE "assignedaccess|driverframeworks|rdp|terminal"
+```
+
+**다만 수집본에서 안 보이는 것은 답이 아니다.** KAPE 는 자기 타깃 목록으로
+거르므로 "그 버전에 없다 / KAPE 가 안 뽑았다 / 우리 경로가 틀렸다" 셋이
+구분되지 않는다(1-2 절). 안 보이면 KAPE 타깃 목록을 함께 보거나, **그 VM 의
+디스크를 직접 열어** 확인한다.
+
+- 그 다섯의 **파일 경로 문자열**이 맞는가
+  (`src/stage04_parse/evidence.py`의 `FILE_LAYOUT`)
+- 그 채널들의 **event_id 추정값**이 맞는가 (`mappings/_flags.yaml`)
+- `kiosk_restriction_event`가 "로그가 작다"는 전제대로인가 — 수만 건이면
+  05단계 쿼터를 혼자 태운다
+- `unexpected_parent_process`가 `explorer.exe`를 이상으로 보는 가정 —
+  **Home 에디션이면 이것은 스냅샷 A 로도 못 잰다.** Assigned Access 를 실제로
+  켠 상태여야 한다. 침해할 필요는 없고 정상 상태로 충분하다
+
+### 2026-08-26 Sysmon 이미지로 닫힌 것
 
 - ~~`evtx:Sysmon` 의 파일 경로 문자열~~ — 맞았다
 - ~~`shell_spawned` 목록이 정상 운영 중 몇 건이나 뜨는가~~ — 5.5분에 5건.
@@ -108,31 +138,191 @@ USB·RDP** 다. 침해하지 않아도 된다 — 정상 상태로 충분하다.
 - ~~`execution_from_unusual_path`~~ — 3건, 전부 `C:\Windows\Temp\{GUID}\DismHost.exe`
 - 덤으로 **세 룰이 EID 5 도 잡던 버그**가 드러나 고쳤다
 
-**여전히 미검증인 것 넷.** 이 다섯 채널은 이미지에 파일 자체가 없었다
-(`AssignedAccess` 3종·`DriverFrameworks`·`RDPConnection`).
+### 같은 수집본으로 함께 닫히는 것 둘
 
-- 그 다섯의 **파일 경로 문자열**이 맞는가
-  (`src/stage04_parse/evidence.py`의 `FILE_LAYOUT`)
-- 그 채널들의 **event_id 추정값**이 맞는가 (`mappings/_flags.yaml`)
-- `kiosk_restriction_event`가 "로그가 작다"는 전제대로인가 — 수만 건이면
-  05단계 쿼터를 혼자 태운다
-- `unexpected_parent_process`가 `explorer.exe`를 이상으로 보는 가정이
-  맞는가. **이번 이미지로는 못 쟀다** — Assigned Access 를 안 켠 일반
-  Win10 이라 explorer 가 정상 셸이다
+**섀도 카피.** 프리패치 적재 경로 변환이 섀도 카피 참조를 그대로 두는지는
+지금 합성 테스트로만 확인돼 있다(디스크의 두 이미지 모두 섀도 참조 0건).
+섀도 카피가 있는 스냅샷이면 `tools/scan_prefetch.py` 대조 한 번으로 실물
+확인이 된다 — `docs/limitations.md` "프리패치 적재 경로와 프롬프트 keep 목록".
 
-덤으로 **Stage 0 베이스라인**의 시작이기도 하다.
+**keep 어휘.** `prompt_keep_paths` 는 정상 운영 이미지의 분포로만 골랐다
+(적중 9.81%, `max_items: 12`). 악성 DLL 이 드롭 자리에 실제로 있는 이미지에서
+다시 재야 한다.
 
-**섀도 카피가 있는 상태로 뜨면 하나 더 닫힌다.** 프리패치 적재 경로 변환이
-섀도 카피 참조를 그대로 두는지는 지금 합성 테스트로만 확인돼 있다(디스크의
-두 이미지 모두 섀도 참조 0건). 스냅샷에 섀도 카피가 있으면
-`tools/scan_prefetch.py` 대조 한 번으로 실물 확인이 된다 —
-`docs/limitations.md` "프리패치 적재 경로와 프롬프트 keep 목록".
+덤으로 **Stage 0 베이스라인**(4번 절)의 시작이기도 하다.
 
-**keep 어휘도 그 이미지로 잰다.** `prompt_keep_paths` 는 정상 운영 이미지의
-분포로만 골랐다(적중 9.81%, `max_items: 12`). 악성 DLL 이 드롭 자리에 실제로
-있는 이미지에서 다시 재야 한다.
+---
 
-실측 전체는 `docs/limitations.md` 의 "실측 — Sysmon 을 켠 실물 이미지".
+## 1. 윈도우 버전 축 — 표 여덟 줄 중 실측은 셋이다
+
+2026-09-01 에 실물 하나로 드러난 결함이고, **지금 큐에서 가장 먼저 집는다.**
+
+### 무엇이 일어났나
+
+키오스크 스냅샷의 프리패치 **192건이 전부** `UnknownLayout` 이었다. Windows 10
+19045.6466 의 파일 정보 블록이 212바이트인데 `FILE_INFORMATION` 표에 버전 30 의
+216·220·224 만 있었다. 세 가지가 함께 보였다.
+
+- **표에 없으면 추측하지 않고 실패하는 설계가 일했다.** 자리를 잘못 잡으면
+  예외도 경고도 없이 "3회 실행됨"이 보고서에 실린다. 실제로 후보 여섯 중
+  `0x78` 은 **73/112** 로 그럴듯하게 틀렸고, `plausible_run_count` 도 그 정도
+  오답은 못 걸렀을 것이다
+- **그 실패가 결산에서 안 보였다** — 닫혔다(파서 실패가 이제 `errors.jsonl`
+  에도 남고 전량 실패는 stderr 에 따로 한 줄 난다)
+- **명세를 옮긴 줄이 실물에 반증됐다.** [LIBSCCA] 는 "1903 이상 = 216" 이라고
+  말하는데 19045 는 212 였다
+
+세 번째가 이 절의 이유다. 나머지 명세 줄들은 *안 틀린 것*이 아니라
+*확인 안 한 것*이다.
+
+| (버전, 블록 크기) | 출처 | 대응 |
+|---|---|---|
+| (17, 68) | [LIBSCCA] | XP/2003 — **대상 아님** |
+| (23, 156) | **실측** `evidence/[root]` 73건 | Win7 |
+| (26, 224) | [LIBSCCA] | Win8.1 |
+| (30, 224) | [LIBSCCA] | Win10 1809 이하 |
+| (30, 220) | **실측** `0824test.001` 137건 | Win10 1703 |
+| (30, 216) | [LIBSCCA] | "1903 이상" — **19045 가 212 였으므로 이 줄이 가장 의심스럽다** |
+| (30, 212) | **실측** 키오스크 스냅샷 192건 | Win10 19045.6466 |
+| (31, 224) | [LIBSCCA] | Win11 |
+
+### 1-1. 버전에 따라 움직이는 자리 목록을 만든다 — 새 이미지 없이 된다
+
+**이미지를 모으는 것보다 이것이 먼저다.** 목록이 없으면 어느 수집본이 무엇을
+닫는지 모르는 채로 용량만 쓴다. 아래가 지금까지 눈에 띈 자리이고, 이 절의
+첫 산출물은 **이 표를 확인해 채우는 것**이다.
+
+가르는 기준은 하나다 — **어긋났을 때 시끄러운가, 조용한가.**
+
+| 자리 | 지금 | 어긋나면 |
+|---|---|---|
+| 프리패치 `FILE_INFORMATION` | 실측 3 / 명세 5 | **시끄럽다** — `UnknownLayout`, 이제 `errors.jsonl` 에도 남는다 |
+| `$UsnJrnl` 레코드 버전 (`usn_record.py`) | v2 만 지원. v3·v4 는 이름은 알지만 거부 | **시끄럽다** — 다만 v3 를 실물로 본 적이 없다 |
+| `osinfo` 빌드 → `family` | win7·win10 실측. win8·win81·win11 **미확인** | 조용하다 — 판정 실패는 "안 거른다"로 막혀 있으나, **잘못 판정하는** 경우는 안 막힌다 |
+| `osinfo.AVAILABILITY` (Amcache·RecentFileCache·SRUM) | 경계 빌드가 9200·7601 | 조용하다 — 잘못 거르면 **있는 증거를 안 읽는다** |
+| `evidence.FILE_LAYOUT` 파일 경로 | 채널 다섯 미확인 (0번) | 조용하다 — `artifact_not_found` 로 보여 "수집 누락"과 구분이 안 된다 |
+| 매핑의 `event_ids` | **버전 조건이 없다** | **조용하다** — 구버전 0건이 "그 버전엔 없는 이벤트"와 "탐지 실패"로 갈리지 않는다 |
+| Amcache 값 이름 대응표 | Win10 이미지 하나의 조인으로 얻음 | 반쯤 정직하다 — 모르는 이름은 숫자로 남는다. 다만 **세대가 다르면 키 구조 자체가 다르다** |
+| 레지스트리 바이너리 블롭 (Shimcache·UserAssist·BAM) | 미착수. 매핑에도 없다 | 해당 없음 — 애초에 안 읽는다 |
+
+**함께 고칠 것 하나** — `docs/limitations.md` 의 버전 절이 아직 "섹터 크기가
+512로 박혀 있습니다"라고 적고 있다. 2026-08-28 에 레코드에서 유도하도록 고쳤다
+(`sector_size_of`). 문서가 코드보다 늦은 자리다.
+
+### 1-2. 무엇을 모을 것인가 — 기본은 이미지다
+
+VM 이 손에 있으면 **디스크를 그대로 연다.** 게스트에 KAPE 를 넣고 돌리고
+꺼내는 세 단계가 통째로 없어지고, `open_source()` 는 파일이면 이미지 경로로
+간다(`Target.open`).
+
+**단계 수보다 중요한 이유가 있다 — 수집본으로는 못 재는 것이 이 축에 있다.**
+KAPE 수집본은 **KAPE 의 경로 목록으로 걸러진 결과**다. 그런데 이 축이 재려는
+것 중 하나가 *"우리 `FILE_LAYOUT` 경로가 그 버전에서 맞는가"* 이고, 수집본
+에서는 셋이 구분되지 않는다.
+
+```
+그 버전에 그 파일이 없다 / 있는데 KAPE 타깃이 안 뽑았다 / 뽑혔는데 우리 경로가 틀렸다
+```
+
+이미지면 아무 데나 `ls` 할 수 있어 셋이 갈린다. **0번의 다섯 채널이 지금
+미검증으로 남아 있는 것이 정확히 이 부류다.** 같은 이유로 `$UsnJrnl` 의 ADS
+이름(`$Extend/$UsnJrnl:$J`, 콜론)·`$LogFile`·미할당·VSS 는 수집본에서 뭉개지거나
+아예 없다 — `VOLUME_PATH_OVERRIDES` 가 존재하는 이유가 그것이다.
+
+**수집본으로 충분한 것은 하나다 — 파일 하나하나의 내부 구조.** `(30, 212)` 를
+192건 전량 대조로 잡은 것이 그 증거다. 그러니 이미지가 있으면 손해가 없고,
+없을 때 수집본으로 내려가도 그 부분은 잃지 않는다.
+
+**수집본이 여전히 유일한 답인 때 둘** — ① 운영 중이라 끌 수 없는 실물 키오스크
+(K-001 운영 흐름 자체가 KAPE 우선이다, 3번 절) ② 이미 수집본으로만 받은 증거.
+
+**남는 대가는 용량 하나다.** 버전 다섯을 동시에 들고 있지 않는다 — 하나 붙여
+재고 지운다. vmdk 를 그 자리에서 열면 복사본 자체가 없다.
+
+#### 재 봤다 (2026-09-01) — E01 은 열린다. vmdk 는 아직이다
+
+`evidence/week10.E01` 로 확인했다.
+
+```
+Target.open  →  EwfContainer, 21,474,836,480 바이트, 파티션 3개
+volumes      →  0.00GiB / 0.50GiB(mkfs.fat = EFI) / 19.50GiB(ext4, magic 0xEF53)
+filesystems  →  0.  open_source() 는 "NTFS 파일시스템을 찾지 못했습니다"로 멈춘다
+```
+
+**E01 디코딩은 된다.** `EwfContainer` 로 열려 파티션 테이블까지 읽었다.
+`docs/limitations.md` 의 E01 항목을 이 실측으로 고쳤다(**부분 해결**). 남은
+것은 **Windows NTFS 가 담긴 E01 로 04단계를 관통시키는 것**이다 — `RunlistStream`
+재읽기처럼 스트림의 성질에 기대는 자리를 EWF 위에서 다시 봐야 한다.
+
+**그리고 이 이미지는 Windows 가 아니다** — EFI + ext4, 리눅스다. 04단계가
+멈춘 것은 결함이 아니라 정상 동작이고, 버전 축의 증거로는 쓸 수 없다.
+
+**vmdk 는 아직 안 재 봤다.** 스냅샷 델타(`-000001.vmdk`)와 분할 vmdk 가 걸릴
+수 있는 자리다. 같은 한 줄로 확인한다.
+
+```bash
+.venv/Scripts/python.exe -c "from dissect.target import Target; t=Target.open(r'<경로>'); print(len(list(t.filesystems)))"
+```
+
+키오스크 기준 우선순위:
+
+| 순 | 무엇 | 왜 |
+|---|---|---|
+| 1 | Win10 **LTSC** (17763 / 19044) | 키오스크는 LTSC 로 깔리는 일이 많다. `(30, 224)`·`(30, 220)` 구간을 실물로 가른다 |
+| 2 | Win11 (22000+ / 26100) | `(31, 224)` 가 명세뿐. `osinfo` 의 win11 판정도 미확인이다 |
+| 3 | Win10 1903~1909 (18362 / 18363) | 명세가 216 이라 말하는 구간. 19045 가 212 였으므로 **여기가 가장 의심스럽다** |
+| 4 | Win8.1 (9600) | `(26, 224)` 명세뿐. `osinfo` win81 과 Amcache 세대가 함께 걸린다 |
+| 5 | Win7 (7601) | 이미 실측. 회귀용으로만 |
+
+**증거마다 적을 것** — 어디서 났는가 · `CurrentBuildNumber` 와 `UBR` · 에디션 ·
+이미지인가 수집본인가(수집본이면 도구와 대상). 빌드를 안 적은 증거는 이 축에서
+쓸 수 없고, **수집본이면 "무엇이 안 뽑혔는지"를 모른다는 것도 함께 적는다.**
+
+### 1-3. 문서는 어디에 적나 — 새 문서를 만들지 않는다
+
+"윈도우 버전별 아티팩트 기록 방식" 문서를 따로 쓰면 진실이 셋이 된다.
+자리는 이미 둘 있고 역할이 다르다.
+
+| 무엇 | 어디 | 성격 |
+|---|---|---|
+| 값 (오프셋·크기·경계 빌드) | 코드의 표 — `FILE_INFORMATION`, `AVAILABILITY`, `FILE_LAYOUT` | 파서가 실제로 쓰는 것. 각 줄에 `source`(실측인가 명세인가)를 단다 |
+| **무엇을 어떤 방법으로 확인했나** | `docs/artifact-notes.md` | 버전별 절. 대조 명령과 건수까지 |
+| 지금 못 보는 것 | `docs/limitations.md` | 미확인으로 남은 줄 |
+
+**명세를 옮겨 적지 않는다.** `(30, 212)` 에서 값어치가 드러난 방식이 기준이다 —
+실행 횟수 자리를 "1~7회 실행된 파일에서 유효 시각 개수 == 그 값" 으로 정해
+112/112 를 맞췄다. 새 버전을 채울 때도 같은 방법을 쓴다.
+
+### 1-4. 외부 도구가 이 기계에 이미 있다
+
+`C:\Users\user\Desktop\Tools` 에 있다 — `Prefetch/PECmd/PECmd.exe`,
+`Mft/MFTECmd/MFTECmd.exe`, `EvtxECmd/EvtxECmd.exe`, `Registry/RECmd/RECmd.exe`,
+`SrumECmd/SrumECmd.exe`, `TimelineExplorer`.
+
+2026-09-01 기록은 *"이 기계에 libscca 계열이 없어 `tools/scan_prefetch.py` 로
+대신했다"* 인데, **PECmd 는 그것과 다른 구현이다.** 우리 두 경로는 공통 오해가
+있으면 같은 방향으로 틀린다. `(30, 212)` 를 PECmd 로 한 번 더 맞추는 것이
+이 절에서 가장 싼 작업이고, `docs/limitations.md` 의 "외부 도구 대조가
+부분적이다"를 그만큼 좁힌다.
+
+### 확인 방법
+
+**도구를 새로 만들기 전에, 수집본을 04단계에 그대로 넣는다.** 표에 없으면
+실패하는 성질이 곧 탐지기다.
+
+```bash
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
+  --in <03 선별 결과> --out cases/<케이스>/04_parsed/ --evidence <수집본>/C
+.venv/Scripts/python.exe tools/inspect_jsonl.py --parsed cases/<케이스>/04_parsed
+```
+
+보는 것은 셋이다 — `_manifest.json` 의 `parse_errors`, `errors.jsonl` 의
+`detail.total_failure`, 매니페스트의 `windows` 판정. 이것으로 "무엇이 표에
+없었는지"까지 안 보이면 그때 스윕 도구를 만든다.
+
+**고친 뒤에는 되돌려 확인한다.** 새 줄을 표에 넣었으면 값을 일부러 틀려
+시험이 실제로 잡는지 본다 — `(30, 212)` 때 `run_count_offset` 을 `0x7C` 로
+바꿔 두 시험이 잡는 것을 확인했다.
 
 ---
 
@@ -520,11 +710,187 @@ K-002  entities.paths ← C:\Program Files\BankingApp\  입력 서술에 없음
 
 ---
 
+## 8. 벤치마크 정답 데이터 — 팀원에게 넘기는 작업
+
+### 왜 필요한가 — 지금 수치는 자기채점이다
+
+하나뿐인 데이터셋(`C-001-webshell`)의 정답이 **스펙 문서 예시에서 역산한
+것**이다. 파일 자신이 그렇게 적고 있다.
+
+```
+"authored_by": "spec-example (docs/pipeline-io-spec.md 예시에서 역산.
+                실제 증거를 분석해 정한 정답이 아니므로 채점에 쓸 수 없음)"
+```
+
+`evaluate.py` 도 결과 끝에 *"정답을 사람이 만들지 않은 케이스가 1건 있습니다.
+그 수치는 자기채점이라 발표에 쓸 수 없습니다"* 를 찍는다. **재현율 100% 는
+지금 아무 뜻이 없다.** 이 절이 그것을 뜻 있게 만드는 작업이다.
+
+### 넘기기 전에 우리가 정할 것 둘 — 둘 다 반나절이 안 걸린다
+
+안 정하고 넘기면 팀원이 쓴 정답이 스키마에서 튕기거나 수치에서 경고로 뜬다.
+
+**① `authored_by` 어휘.** `evaluate.py` 는 이 값이 **정확히 문자열 `human`**
+인지로 본다. 팀원이 자기 이름을 적으면 그 케이스는 "정답을 사람이 만들지
+않은 케이스"로 집계된다. 어휘를 `human` 하나로 못박든, 판정을 "역산 표시가
+없으면 사람"으로 바꾸든 **한 줄로 정하고 스키마 설명에 적는다.**
+
+**② `required_refs` 의 접두어.** 스키마가 여섯 종만 받는다 —
+`MFT`·`USN`·`EVTX-SEC`·`EVTX-SYS`·`REG-SYS`·`REG-SW`. 그런데 키오스크 정답의
+핵심 증거는 프리패치(`PF#`)·Sysmon(`SYSMON#`)·Amcache(`AMCACHE#`)다.
+**적을 자리가 없다.** 원본은 `src/common/refs.py` 의 `ARTIFACT_PREFIX` 이고
+스키마가 그 부분집합이므로, 스키마를 원본에서 생성하거나 최소한 맞춘다
+(`benchmark/README.md` 의 과제 5).
+
+### 아래부터가 팀원에게 그대로 주는 절차다
+
+---
+
+#### 0. 시작 전에 읽을 것
+
+- `benchmark/README.md` — 무엇을 재는 도구가 어디 있는지
+- `benchmark/ground_truth_schema.json` — 정답 파일의 형식. **이것이 권위다**
+- `benchmark/datasets/C-001-webshell/ground_truth.json` — 모양 참고용.
+  **내용은 따라 하지 않는다.** 이것이 바로 "쓸 수 없는 정답"의 예다
+
+파이썬은 반드시 `.venv/Scripts/python.exe` 를 부른다. 맨 `python` 은 이
+프로젝트의 것이 아니다.
+
+#### 1. 케이스 하나를 고른다
+
+**증거가 손에 있는 것만.** 이미지나 KAPE 수집본이 없으면 정답을 만들 수 없다.
+케이스 ID 는 영숫자로 시작하고 영숫자·`-`·`_` 만 쓴다 (예: `K-001-kiosk`).
+
+만들 폴더는 하나다.
+
+```
+benchmark/datasets/<케이스ID>/
+  input.json         ← 파이프라인에 넣을 입력
+  ground_truth.json  ← 정답
+```
+
+#### 2. 파이프라인을 돌리지 않는다. 사람이 먼저 본다
+
+**이 순서가 이 작업의 전부다.** 파이프라인 결과를 보고 정답을 쓰면 채점이
+아니라 자기 답안지 베끼기가 된다. 도구는 `C:\Users\user\Desktop\Tools` 에 있다.
+
+| 무엇을 보나 | 도구 | 명령 |
+|---|---|---|
+| 무엇이 언제 몇 번 실행됐나 | PECmd | `PECmd.exe -d "<수집본>\C\Windows\Prefetch" --csv <출력폴더>` |
+| 파일 생성·삭제·시각 조작 | MFTECmd | `MFTECmd.exe -f "<수집본>\C\$MFT" --csv <출력폴더>` |
+| 계정 생성·서비스 설치·PowerShell | EvtxECmd | `EvtxECmd.exe -d "<수집본>\C\Windows\System32\winevt\Logs" --csv <출력폴더>` |
+| Run 키·서비스·USB 흔적 | RECmd / RegistryExplorer | `RECmd.exe --d "<수집본>\C\Windows\System32\config" --bn BatchExamples\<배치>.reb --csv <출력폴더>` |
+| SRUM (앱별 네트워크 사용량) | SrumECmd | `SrumECmd.exe -f "<수집본>\C\Windows\System32\sru\SRUDB.dat" --csv <출력폴더>` |
+| 위 CSV 를 한 줄에 놓고 시간순 | TimelineExplorer | CSV 를 끌어다 놓는다 |
+
+CSV 는 수집본 옆에 두고 **커밋하지 않는다.** 정답 파일에 남는 것은
+"무엇을 보고 그렇게 판단했나" 한 문장씩이다.
+
+#### 3. 사건 서사를 문장으로 적는다
+
+5~10줄이면 된다. **신고자가 알 만한 것만 적는다** — 레코드 번호나 정확한
+경로를 여기 적으면 파이프라인에게 답을 알려 주는 것이 된다.
+
+이 문장이 `input.json` 의 `raw` 가 된다.
+
+#### 4. `input.json` 을 쓴다
+
+`benchmark/datasets/C-001-webshell/input.json` 과 같은 모양이다. 채우는 것은
+`case_id`·`raw`·`evidence` 셋이고 나머지는 그대로 둔다.
+
+#### 5. `ground_truth.json` 을 쓴다 — 필드마다 규칙이 있다
+
+| 필드 | 무엇을 적나 | 틀리기 쉬운 자리 |
+|---|---|---|
+| `expected_techniques` | 실제로 일어난 ATT&CK 기법 | **우리 매핑(`mappings/`)에 있는 것만 골라 적지 않는다.** 그러면 재현율이 항상 높게 나온다. 매핑에 없는 기법이 정답에 있는 것은 정상이고, 그 차이가 곧 측정값이다 |
+| `required_artifacts` | 증거가 실제로 담긴 아티팩트 | 이름은 `mappings/_artifacts.yaml` 의 것 **그대로** (`$MFT`·`evtx:Security`·`prefetch`). 오타는 "도구가 모르는 아티팩트"로 따로 집계된다 |
+| `acceptable_artifacts` | 선별돼도 오탐으로 안 치는 것 | 분모에 들어가지 않는다 |
+| `required_refs` | 반드시 찾아야 할 **개별 레코드** | 아래 별도 설명 |
+| `expected_time_range` | 사건이 실제로 일어난 범위 | **UTC 로 통일한다.** 도구 출력 열 머리글이 로컬 시각인지 확인한다 |
+| `authored_by` | (위에서 정한 어휘) | |
+| `notes` | 비운 자리와 그 이유 | |
+
+**`required_refs` 를 얻는 법.** 형식은 `<접두어>#<레코드번호>` 이고,
+번호는 **외부 도구가 보여 주는 식별자**다.
+
+- `$MFT` → MFTECmd CSV 의 `Entry Number` 열 → `MFT#12345`
+- evtx → EvtxECmd CSV 의 `RecordNumber`(EventRecordID) → `EVTX-SEC#40912`
+- 레지스트리·프리패치 → **외부 도구가 같은 식별자를 주지 않는다**
+
+마지막 줄이 중요하다. 우리 산출물을 열어 번호를 베껴 오면 **"우리가 파싱한
+것만 정답이 되어" 파싱 재현율이 영원히 100%** 다. 그런 아티팩트는
+`required_refs` 를 **비우고** `required_artifacts` 로만 채점한다. 비우는 것이
+지어내는 것보다 낫다 — 그 사실을 `notes` 에 적는다.
+
+`why` 는 한 문장으로 "이 레코드가 왜 증거인가"다. 놓쳤을 때 무엇을 놓친
+것인지 보고서에 그대로 쓸 수 있어야 한다.
+
+#### 6. 형식을 검사한다 — 파이프라인을 돌리기 전에
+
+```bash
+.venv/Scripts/python.exe -c "import json,jsonschema; d='benchmark/datasets/<케이스ID>'; jsonschema.validate(json.load(open(d+'/ground_truth.json',encoding='utf-8')), json.load(open('benchmark/ground_truth_schema.json',encoding='utf-8'))); print('ok')"
+```
+
+`ok` 가 나와야 다음으로 간다.
+
+#### 7. 이제 파이프라인을 돌리고 채점한다
+
+```bash
+.venv/Scripts/python.exe tools/live_check.py --case-id <케이스ID> \
+  --evidence <이미지 또는 수집본> --volume <N> --model qwen2.5:latest \
+  --raw "<3에서 쓴 서술>" --force
+
+.venv/Scripts/python.exe benchmark/evaluate.py \
+  --dataset benchmark/datasets/<케이스ID>
+```
+
+`evaluate.py` 는 정답 레코드마다 **파싱 → 전달 → 인용 → 검증통과** 네 단계를
+따로 센다. 어디서 끊겼는지가 고칠 곳을 가리킨다.
+
+| 끊긴 자리 | 고칠 곳 |
+|---|---|
+| 기법을 식별 못 함 | 02 프롬프트 또는 모델 |
+| 기법은 맞는데 미선별 | 매핑 테이블 (`mappings/`) |
+| 선별은 됐는데 미파싱 | 파서 또는 `scope` 범위 |
+| 파싱은 됐는데 미인용 | 05 프롬프트 또는 `record_filter` 상한 |
+
+**수치가 나쁘게 나오는 것이 정상이다.** 처음부터 100% 가 나오면 정답을
+파이프라인 산출물에서 역산했는지 의심한다.
+
+#### 완료 기준 — 이것들을 내면 끝이다
+
+1. `benchmark/datasets/<케이스ID>/` 의 `input.json`·`ground_truth.json`
+2. 6번 스키마 검사 통과
+3. `evaluate.py` 결과 한 부
+4. **정답을 어떻게 정했는지 한 페이지** — 어느 도구로 무엇을 봤고, 어느
+   레코드를 왜 증거로 골랐고, 무엇을 비웠는지
+
+4번이 없으면 정답이 아니라 의견이다.
+
+#### 둘 이상이 나눠 맡을 때
+
+**케이스 단위로 나눈다.** 한 케이스를 둘이 쪼개면 "왜 그 값인가"가 갈린다.
+한 사람이 한 케이스를 분석부터 정답까지 끝낸다.
+
+검토는 서로 바꿔서 한다 — **상대 정답의 `why` 만 읽고** "이 근거로 이 결론이
+나오나"를 본다. 증거를 다시 보지 않고도 판단이 서면 그 `why` 는 잘 쓰인 것이다.
+
+---
+
+### 이 트랙의 하위 목록
+
+`benchmark/README.md` 의 과제 1~10 이 그대로 이 절의 뒷줄이다. 사람이 증거를
+봐야 푸는 것(과제 1·2·5)이 위 절차이고, 나머지(과제 3·4·6~10)는 코드 작업이라
+넘기지 않고 우리가 집는다.
+
+---
+
 ## 참고 문서
 
 | 주제 | 문서 |
 |---|---|
 | **지금 안 되는 것과 그 이유** | `docs/limitations.md` |
+| 벤치마크 구조·지표·남은 과제 | `benchmark/README.md` |
 | 새 파서 추가 절차 | `.claude/skills/add-parser/SKILL.md` |
 | 새 시나리오 대응 절차 (관문 넷) | `.claude/skills/add-scenario/SKILL.md` |
 | 매핑 작성 규칙, flags 어휘 | `docs/mapping-guide.md` |
