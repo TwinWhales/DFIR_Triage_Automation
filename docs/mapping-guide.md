@@ -96,6 +96,29 @@ Tier 2의 핵심은 "언제 보게 되는가"입니다. 조건 없는 유예는 
 `웹셸 파일 생성 흔적`처럼 **무엇을 찾으려는지**를 쓰고, `중요함` 같은
 평가어는 쓰지 마세요.
 
+### 쓸 수 있는 키 — 그 밖은 로드가 실패합니다
+
+로더가 모르는 키를 **거부합니다**(`mapping_loader` 의 `MAPPING_KEYS`·
+`REQUEST_KEYS`·`SCOPE_KEYS`). 예전에는 조용히 버렸고 그래서 두 번 물렸습니다.
+
+| 자리 | 쓸 수 있는 키 |
+|---|---|
+| 최상위 | `technique` `name` `os` `artifacts` `defaults` `followups` |
+| `artifacts[]` | `name` `tier` `priority` `rationale` `scope_template` `trigger` |
+| `followups[]` | 위 + `technique` `artifact` |
+| `scope_template` | `path_prefix` `extensions` `event_ids` |
+
+**`scope_template` 에 `time_range` 를 적지 마세요.** 무시되는 것이 아니라
+`scope_resolver` 가 시나리오의 값으로 **항상 덮어씁니다** — 적으면 뜻이
+있어 보이는데 아무 일도 하지 않습니다. 시간 범위는 매핑이 아니라 02단계가
+정합니다.
+
+**이름으로 좁히는 축은 없습니다.** `name_pattern` 같은 키를 만들어 써도
+받아 주지 않습니다. 실행 파일 하나를 겨냥하려면 `path_prefix` 에 전체
+경로를 적으십시오 — `Scope.matches_prefix` 가 정확히 일치하는 경로도
+받습니다(`C:\Windows\System32\sethc.exe`). 다만 공격자가 다른 자리에 복사해
+둔 실행 파일은 그렇게 못 잡습니다(`docs/limitations.md`).
+
 ### scope_template 변수
 
 `{변수명}` 형태로 씁니다. 값은 두 곳에서 옵니다.

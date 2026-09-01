@@ -110,6 +110,44 @@ PRIORITIES = (1, 2, 3)
 DEFAULT_PRIORITY = 2
 
 
+#: 매핑 YAML 이 쓸 수 있는 키. **여기 없는 키는 로드 시점에 거부한다.**
+#:
+#: 예전에는 모르는 키를 조용히 버렸고, 그래서 두 번 물렸다(2026-08-31·09-01).
+#:
+#: - ``T1059.001``·``T1105`` 가 ``scope_template`` 대신 ``scope:`` 를 썼다.
+#:   적어 둔 ``event_ids`` 가 통째로 사라져 ``evtx:Sysmon`` 이 **채널 전량
+#:   요청**이 됐다 — 좁히려고 적은 것이 넓히는 결과가 됐다.
+#: - ``T1105`` 의 ``name_pattern`` 은 ``Scope`` 에도 ``merge_scopes`` 에도
+#:   없어 프리패치를 좁히지 못했다.
+#:
+#: 매핑은 데이터라 오타가 조용히 흘러간다. 문법 오류가 아니라 **의미가
+#: 없는 키**이므로 YAML 파서도 스키마도 잡지 못한다. 여기서 잡는다.
+MAPPING_KEYS = frozenset({"technique", "name", "os", "artifacts", "defaults", "followups"})
+
+#: ``artifacts[]`` 의 키. ``followups[]`` 는 여기에 ``technique``·``artifact``
+#: 를 더한다(그쪽은 어느 기법의 무엇인지를 직접 적는다).
+REQUEST_KEYS = frozenset({"name", "tier", "priority", "rationale", "scope_template", "trigger"})
+FOLLOWUP_KEYS = REQUEST_KEYS | {"technique", "artifact"}
+
+#: ``scope_template`` 의 키. ``Scope.from_selection`` 이 읽는 것과 같아야 한다.
+#:
+#: **``time_range`` 는 여기 없다.** 적어도 무시되는 것이 아니라
+#: ``scope_resolver.resolve`` 가 시나리오의 값으로 **항상 덮어쓴다** — 적으면
+#: 뜻이 있는 것처럼 보이는데 아무 일도 하지 않는다. 시간 범위는 매핑이
+#: 정하는 것이 아니라 02단계가 정한다.
+SCOPE_KEYS = frozenset({"path_prefix", "extensions", "event_ids"})
+
+
+def _reject_unknown_keys(entry: dict[str, Any], allowed: frozenset[str], where: str) -> None:
+    """모르는 키가 있으면 멈춘다. 무엇을 쓸 수 있는지 함께 말한다."""
+    unknown = sorted(set(entry) - allowed)
+    if unknown:
+        raise MappingError(
+            f"{where}: 모르는 키 {', '.join(repr(k) for k in unknown)} — "
+            f"쓸 수 있는 것: {', '.join(sorted(allowed))}"
+        )
+
+
 @dataclass(frozen=True)
 class ArtifactRequest:
     """매핑이 요청한 아티팩트 하나."""
@@ -185,6 +223,8 @@ def load_mapping(path: str | Path, catalog: Catalog) -> Mapping:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     where = str(path)
 
+    _reject_unknown_keys(data, MAPPING_KEYS, where)
+
     technique = str(_require(data, "technique", where))
     if not attack.is_valid_format(technique):
         raise MappingError(f"{where}: ATT&CK ID 형식 위반 — {technique!r}")
@@ -201,6 +241,7 @@ def load_mapping(path: str | Path, catalog: Catalog) -> Mapping:
             _build_request(entry, technique=technique, catalog=catalog, where=where, kind="artifacts")
         )
     for entry in data.get("followups") or []:
+        _reject_unknown_keys(entry, FOLLOWUP_KEYS, f"{where} followups")
         followup_technique = str(_require(entry, "technique", f"{where} followups"))
         if not attack.is_valid_format(followup_technique):
             raise MappingError(f"{where}: followups의 ATT&CK ID 형식 위반 — {followup_technique!r}")
@@ -229,8 +270,17 @@ def load_mapping(path: str | Path, catalog: Catalog) -> Mapping:
 def _build_request(
     entry: dict[str, Any], *, technique: str, catalog: Catalog, where: str, kind: str
 ) -> ArtifactRequest:
+    if kind == "artifacts":
+        # followups 는 위에서 자기 어휘로 이미 봤다. 여기서 다시 보면
+        # technique·artifact 가 모르는 키로 걸린다.
+        _reject_unknown_keys(entry, REQUEST_KEYS, f"{where} {kind}")
+
     name = str(_require(entry, "name", f"{where} {kind}"))
     catalog[name]  # 카탈로그에 없으면 여기서 MappingError
+
+    _reject_unknown_keys(
+        entry.get("scope_template") or {}, SCOPE_KEYS, f"{where} {kind}[{name}].scope_template"
+    )
 
     tier = _require(entry, "tier", f"{where} {kind}[{name}]")
     if tier not in (1, 2):
