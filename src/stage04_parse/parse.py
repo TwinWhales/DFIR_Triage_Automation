@@ -518,6 +518,56 @@ def main(argv: "list[str] | None" = None) -> int:
         skipped.append({"artifact": artifact, "reason": reason, "message": message})
         print(f"[{STAGE}] {label} — {message}", file=sys.stderr)
 
+    def note_parse_errors(artifact: str, entry: dict[str, Any]) -> None:
+        """읽다가 실패한 구간을 ``errors.jsonl`` 에도 남긴다.
+
+        예전에는 ``_manifest.json`` 의 ``parse_errors`` 에만 남았습니다.
+        그 결과 **아티팩트 하나가 100% 실패해도 단계가 정상 종료하고,
+        `errors.jsonl` 이 아예 안 만들어졌습니다** — 실측에서 프리패치
+        192건이 전부 `UnknownLayout` 이었는데 `tools/live_check.py` 가
+        "재시도·실패 0건, 모든 단계가 첫 시도에 통과"로 결산했습니다
+        (`docs/limitations.md` 2026-09-01 절). 같은 리포트가 위쪽에서는
+        "파싱 오류 192건"을 찍고 있었습니다.
+
+        ``note_skip`` 이 두 곳에 남기는 것과 같은 이유입니다 —
+        ``errors.jsonl`` 은 전 단계가 공유하는 집계용이고 매니페스트는
+        이 단계의 산출물입니다.
+
+        **파일마다 한 줄씩 쓰지 않습니다.** 프리패치 192건이면 192줄이
+        되어 다른 단계의 실패가 묻힙니다. 아티팩트당 한 줄에 규모를 담고,
+        어느 파일이 왜 실패했는지는 파서가 이미 stderr 로 말합니다.
+        """
+        count = entry["parse_errors"]
+        if not count:
+            return
+
+        # **전량 실패와 일부 실패를 가른다.** 9,606건을 내면서 192구간을
+        # 건너뛴 것과, 192건을 읽어 한 건도 못 낸 것은 조치가 다르다.
+        # 앞은 로그가 더러운 것이고 뒤는 그 아티팩트가 죽은 것이다.
+        total_failure = entry["record_count"] == 0
+        message = (
+            f"{artifact}: {count}건을 읽지 못해 레코드가 한 건도 나오지 않았습니다"
+            if total_failure
+            else f"{artifact}: {entry['record_count']}건을 냈고 {count}건을 읽지 못했습니다"
+        )
+        log.record(
+            STAGE,
+            "parse_error",
+            {
+                "field": "selected[].artifact",
+                "value": artifact,
+                "message": message,
+                "parse_errors": count,
+                "record_count": entry["record_count"],
+                "total_failure": total_failure,
+            },
+            action="skip",
+        )
+        if total_failure:
+            # 이 한 줄이 없어서 프리패치 실패가 evtx 청크 복구 경고
+            # 215줄 사이에 묻혔다. 전량 실패는 따로 소리를 낸다.
+            print(f"[{STAGE}] 전량 실패 — {message}", file=sys.stderr)
+
     large_artifact_bytes = int(args.large_artifact_mb * 1024 * 1024)
     for artifact, scope_dict in sorted(targets.items()):
         # **증거를 열기 전에** 판정한다. 이 버전에 존재할 수 없는
@@ -564,14 +614,18 @@ def main(argv: "list[str] | None" = None) -> int:
             log.abort(STAGE, "parse_error", {"value": artifact, "message": str(e)})
 
         files.append(entry)
+        note_parse_errors(artifact, entry)
         pruned_note = (
             f", 시간범위 하드컷 {entry['time_range_pruned_count']}건 제외"
             if "time_range_pruned_count" in entry
             else ""
         )
+        error_note = (
+            f", 파싱 실패 {entry['parse_errors']}건" if entry["parse_errors"] else ""
+        )
         print(
             f"  {artifact}: {entry['record_count']}건 "
-            f"(플래그 {entry['flagged_count']}건{pruned_note}) → {entry['path']}"
+            f"(플래그 {entry['flagged_count']}건{pruned_note}{error_note}) → {entry['path']}"
         )
 
     if not files:
