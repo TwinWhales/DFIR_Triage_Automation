@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io as _io
+import logging
 import struct
 
 import pytest
@@ -337,6 +338,75 @@ def test_a_nonempty_stream_still_sees_its_first_record():
     records = parse(data)
     assert [r["name"] for r in records] == ["first.txt"]
     assert records[0]["offset"] == "0x0"
+
+
+def test_a_run_of_unsupported_records_is_logged_once(caplog):
+    """**경고 단위 회귀.**
+
+    미지원 레코드마다 경고를 찍으면 v3 를 쓰는 볼륨에서 저널 전체가
+    미지원이라 레코드 수만큼 쏟아진다. 그러면 04단계 요약 줄과
+    ``errors.jsonl`` 한 줄이 그 사이에 묻힌다 — 2026-09-01 실측에서
+    evtx 청크 복구 경고 215줄이 프리패치 전량 실패를 덮은 것과 같은
+    일이다. 집계는 레코드 단위로 남기고 **로그만 구간으로 묶는다.**
+    """
+    data = build_journal(
+        [
+            build_usn_record(usn=i * 80, name=f"v3-{i}.dll", major_version=3)
+            for i in range(5)
+        ]
+    )
+
+    parser = usnjrnl.UsnJrnlParser()
+    with caplog.at_level(logging.WARNING):
+        records = list(parser.parse(_io.BytesIO(data), Scope()))
+
+    assert records == []
+    assert parser.stats["unsupported_version"] == 5, "집계는 레코드 단위 그대로다"
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, "연속된 미지원은 한 구간이다"
+    assert "5건" in warnings[0].getMessage(), "규모가 그 한 줄에 있어야 한다"
+    assert "v3.0" in warnings[0].getMessage(), "어느 버전인지 없으면 조치를 못 정한다"
+
+
+def test_unsupported_runs_are_split_by_version(caplog):
+    """v3 와 v4 를 한 줄에 묶으면 어느 쪽이 몇 건인지 말할 수 없다."""
+    data = build_journal(
+        [
+            build_usn_record(usn=0, name="a.dll", major_version=3),
+            build_usn_record(usn=80, name="b.dll", major_version=3),
+            build_usn_record(usn=160, name="c.dll", major_version=4),
+            build_usn_record(usn=240, name="d.dll", major_version=4),
+        ]
+    )
+
+    parser = usnjrnl.UsnJrnlParser()
+    with caplog.at_level(logging.WARNING):
+        list(parser.parse(_io.BytesIO(data), Scope()))
+
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(messages) == 2
+    assert any("v3.0" in m for m in messages) and any("v4.0" in m for m in messages)
+
+
+def test_a_normal_record_between_two_unsupported_runs_splits_them(caplog):
+    """정상 레코드를 만나면 구간이 끊긴다 — 손상 구간과 같은 규약이다."""
+    data = build_journal(
+        [
+            build_usn_record(usn=0, name="a.dll", major_version=3),
+            build_usn_record(usn=80, name="b.dll", major_version=3),
+            build_usn_record(usn=160, name="kept.txt"),
+            build_usn_record(usn=240, name="c.dll", major_version=3),
+            build_usn_record(usn=320, name="d.dll", major_version=3),
+        ]
+    )
+
+    parser = usnjrnl.UsnJrnlParser()
+    with caplog.at_level(logging.WARNING):
+        records = list(parser.parse(_io.BytesIO(data), Scope()))
+
+    assert [r["name"] for r in records] == ["kept.txt"]
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 2
 
 
 def test_a_v3_record_is_counted_separately_from_corruption():

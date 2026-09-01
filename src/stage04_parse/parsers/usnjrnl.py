@@ -199,6 +199,14 @@ class UsnJrnlParser:
         bad_start = -1
         bad_end = -1
 
+        # 미지원 버전 구간. 위와 같은 규약이되 **집계는 레코드 단위로
+        # 남긴다** — 매니페스트와 ``errors.jsonl`` 이 싣는 수가 그것이다.
+        # 구간으로 묶는 것은 로그뿐이다.
+        unsupported_start = -1
+        unsupported_end = -1
+        unsupported_run = 0
+        unsupported_reason = ""
+
         def close_bad_run() -> None:
             """열려 있던 구간을 로그로 남긴다.
 
@@ -216,6 +224,37 @@ class UsnJrnlParser:
             )
             bad_start = -1
 
+        def close_unsupported_run() -> None:
+            """열려 있던 미지원 구간을 **한 줄로** 남긴다.
+
+            레코드마다 찍으면 v3 를 쓰는 볼륨에서 저널 전체가 미지원이라
+            경고가 레코드 수만큼 쏟아집니다. 그것이 04단계 요약 줄과
+            ``errors.jsonl`` 한 줄을 도로 덮습니다 — 2026-09-01 실측에서
+            evtx 청크 복구 경고 215줄이 프리패치 전량 실패를 덮은 것과
+            같은 일입니다(``docs/limitations.md``).
+
+            **버전이 달라지면 다른 구간으로 봅니다.** v3 와 v4 를 한 줄에
+            묶으면 어느 쪽이 몇 건인지 말할 수 없습니다.
+            """
+            nonlocal unsupported_start, unsupported_run
+            if unsupported_start < 0:
+                return
+            _log.warning(
+                "%s: @0x%X 부터 %d바이트에서 %s — 레코드 %d건을 건너뛰었습니다",
+                self.artifact,
+                unsupported_start,
+                unsupported_end - unsupported_start,
+                unsupported_reason,
+                unsupported_run,
+            )
+            unsupported_start = -1
+            unsupported_run = 0
+
+        def close_runs() -> None:
+            """정상 레코드를 만났거나 저널이 끝났다 — 열린 구간을 다 닫는다."""
+            close_bad_run()
+            close_unsupported_run()
+
         while True:
             # 소비한 앞부분을 버리고 뒤를 채운다.
             if cursor:
@@ -229,19 +268,23 @@ class UsnJrnlParser:
                 else:
                     eof = True
             if not buf:
+                # 저널이 여기서 끝난다. **열린 구간을 닫고 나간다** — 마지막
+                # 레코드가 손상이거나 미지원이면 이 경로로 빠지므로, 안 닫으면
+                # 그 구간의 로그 한 줄이 통째로 사라진다.
+                close_runs()
                 return
 
             progressed = False
             while cursor < len(buf):
                 if len(buf) - cursor < structs.V2_HEADER_SIZE:
                     if eof:
-                        close_bad_run()
+                        close_runs()
                         return  # 헤더도 안 되는 꼬리 조각
                     break  # 더 읽어 와서 이어 붙인다
 
                 # 0 구간 — 스파스 홀이거나 정렬 패딩이다. 구분할 필요 없다.
                 if not int.from_bytes(buf[cursor : cursor + 4], "little"):
-                    close_bad_run()
+                    close_runs()
                     cursor = self._skip_zeros(buf, base, cursor)
                     progressed = True
                     continue
@@ -254,8 +297,15 @@ class UsnJrnlParser:
                     # 들어가면 본문을 레코드로 오해해 가짜 손상이 잡힌다.
                     close_bad_run()
                     self.stats["unsupported_version"] += 1
-                    _log.warning("%s @ 0x%X: %s", self.artifact, base + cursor, e)
+                    reason = str(e)
+                    if unsupported_end != base + cursor or reason != unsupported_reason:
+                        # 떨어져 있거나 버전이 다르면 다른 구간이다.
+                        close_unsupported_run()
+                        unsupported_start = base + cursor
+                        unsupported_reason = reason
+                    unsupported_run += 1
                     cursor += max(e.record_length, structs.RECORD_ALIGNMENT)
+                    unsupported_end = base + cursor
                     progressed = True
                     continue
                 except structs.StructError:
@@ -264,6 +314,7 @@ class UsnJrnlParser:
                     # **집계는 구간 단위다.** 직전 위치도 실패였다면 같은
                     # 구간이 이어지는 것이므로 건수를 올리지 않고 바이트만
                     # 더한다. 새 구간일 때만 parse_errors 가 1 오른다.
+                    close_unsupported_run()
                     if bad_end != base + cursor:
                         self.stats["parse_errors"] += 1
                         bad_start = base + cursor
@@ -275,18 +326,18 @@ class UsnJrnlParser:
 
                 if len(buf) - cursor < record.record_length:
                     if eof:
-                        close_bad_run()
+                        close_runs()
                         return  # 잘린 마지막 레코드
                     break  # 뒷부분을 더 읽어 온다
 
-                # 유효한 레코드를 만났으므로 못 읽던 구간이 여기서 끝난다.
-                close_bad_run()
+                # 유효한 레코드를 만났으므로 열려 있던 구간이 여기서 끝난다.
+                close_runs()
                 yield base + cursor, record
                 cursor += record.record_length
                 progressed = True
 
             if eof and not progressed:
-                close_bad_run()
+                close_runs()
                 return
 
     def _skip_zeros(self, buf: bytearray, base: int, cursor: int) -> int:
