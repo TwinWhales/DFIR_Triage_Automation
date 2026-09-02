@@ -493,10 +493,20 @@ def test_srum_rejects_a_page_past_the_end_and_a_non_ese_file():
     )
 
 
+#: 어느 파서의 접두어도 아닌 이름. 아래 테스트가 쓴다.
+UNKNOWN_ARTIFACT = "browsercache:Edge"
+
+
 def test_unknown_artifact_is_not_silently_passed():
-    """아티팩트가 늘었는데 대조를 안 넣은 경우. 통과시키면 거짓말이 된다."""
-    row = {"ref": "X#1", "artifact": "sqlite:POS", "record_num": 1, "offset": "0x0", "flags": []}
-    assert "대조" in hard_failures(verify(row, window_for("sqlite:POS", 0, b"\x00" * 16)))
+    """아티팩트가 늘었는데 대조를 안 넣은 경우. 통과시키면 거짓말이 된다.
+
+    예시로 쓰던 ``sqlite:POS`` 는 2026-09-02 에 ``sqlite:`` 파서가 생기며
+    더 이상 미지원이 아니게 됐다. **카탈로그를 늘리면 "미지원이란 이런
+    것"의 예시가 조용히 무효가 된다** — 여기서 쓰는 이름은 어느 파서의
+    접두어도 아닌 것이어야 한다.
+    """
+    row = {"ref": "X#1", "artifact": UNKNOWN_ARTIFACT, "record_num": 1, "offset": "0x0", "flags": []}
+    assert "대조" in hard_failures(verify(row, window_for(UNKNOWN_ARTIFACT, 0, b"\x00" * 16)))
 
 
 # =============================================================== 부속

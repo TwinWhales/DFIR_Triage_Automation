@@ -51,3 +51,25 @@ artifacts:
     priority: 2
     trigger: Tier1에서 악성 실행 파일의 생성·삭제·이동 이력을 추가로 확인해야 하는 경우
     rationale: 실행 파일의 생성·삭제·이동 이력
+  # ── UWP 앱의 실행·설치 흔적 (2026-09-02) ─────────────────────────────
+  #
+  # **프리패치와 Amcache 가 UWP 앱을 잘 말해 주지 않는다.** 위 다섯은
+  # 전부 Win32 실행 파일을 겨냥한 자리이고, 키오스크에서 Assigned Access
+  # 가 지정하는 것은 UWP 앱이다. 그 축을 이 둘이 메운다.
+  #
+  # 매핑 자리는 잠정이다 — 키오스크 기법 목록이 확정되면 다시 본다
+  # (work.md 0번). 지금 여기 둔 이유는 "무엇이 실행됐나"를 묻는 기법이
+  # 이것 하나뿐이기 때문이다.
+  - name: sqlite:StateRepository
+    tier: 2
+    priority: 3
+    trigger: Tier1 에서 UWP 앱(패키지)이 관련된 정황이 보이거나, 프리패치·Amcache 에 실행 흔적이 없는 경우
+    scope_template: {}
+    rationale: UWP 패키지의 설치 시각·설치 위치·실행 파일 (PackageUser.InstallTime)
+
+  - name: sqlite:Notifications
+    tier: 2
+    priority: 3
+    trigger: Tier1 에서 실행 시각을 좁히지 못했고, 해당 앱이 알림을 쓰는 경우
+    scope_template: {}
+    rationale: 알림이 도착한 시각 — 그 앱이 그때 살아 있었다는 근거 (Notification.ArrivalTime)

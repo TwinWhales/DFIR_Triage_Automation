@@ -91,6 +91,14 @@ ARTIFACT_PREFIX: dict[str, str] = {
     "srum:NetworkUsage": "SRUM-NET",
     "srum:AppResourceUsage": "SRUM-APP",
     "srum:NetworkConnectivity": "SRUM-CONN",
+
+    # SQLite DB. 한 파서가 DB 마다 인스턴스를 따로 갖는다 — SRUM 과 같은
+    # 이유다. 레코드 번호는 **셀의 파일 내 절대 오프셋**이다. SQLite 에
+    # 파일 전역 일련번호가 없고 rowid 는 테이블 안에서만 유일해서, 한
+    # 접두어로 묶으면 서로 다른 테이블의 1번이 같은 ref 가 된다.
+    # 레지스트리(NK 오프셋)·프리패치(경로 해시)와 같은 논리다.
+    "sqlite:StateRepository": "SQLITE-SR",
+    "sqlite:Notifications": "SQLITE-WPN",
 }
 
 #: 역방향. ref만 보고 어느 파서가 만든 레코드인지 되짚을 때 쓴다.
@@ -103,7 +111,8 @@ REF_PATTERN = re.compile(
     r"|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF"
     r"|SYSMON|EVTX-DRV|EVTX-PNP|EVTX-AAOP|EVTX-AAADM|EVTX-AABRK|EVTX-RDPCM|EVTX-RDPLSM|EVTX-APP"
     r"|EVTX-DEF|EVTX-PS"
-    r"|SRUM-NET|SRUM-APP|SRUM-CONN)#(?P<num>0|[1-9]\d*)$"
+    r"|SRUM-NET|SRUM-APP|SRUM-CONN"
+    r"|SQLITE-SR|SQLITE-WPN)#(?P<num>0|[1-9]\d*)$"
 )
 
 

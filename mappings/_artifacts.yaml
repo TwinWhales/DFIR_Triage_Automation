@@ -16,7 +16,7 @@
 # 카탈로그와 파서 등록소가 어긋나면 tests/test_pipeline_e2e.py 가 잡는다.
 # supported: true 인데 파서가 없거나, 파서가 있는데 여기 없거나 둘 다.
 
-mapping_table_version: "1.2"
+mapping_table_version: "1.3"
 
 artifacts:
   $MFT:
@@ -306,6 +306,31 @@ artifacts:
     supported: true
     signal_source: scope
     description: SRUM 네트워크 연결 이력. 인터페이스별 접속 시각과 지속 시간. Windows 8 이상.
+
+  # ── SQLite DB (2026-09-02) ──────────────────────────────────────────
+  # 파서 하나가 DB 여럿을 맡는다. 엔진은 범용이고(structs/sqlite_page.py)
+  # DB 마다 다른 것 — 어느 테이블이 증거인가, 어느 컬럼이 시각인가 — 만
+  # parsers/sqlite.py 의 PROFILES 에 적는다. 새 DB(거래 DB 등)는 여기
+  # 한 줄과 프로파일 몇 줄로 붙는다.
+  #
+  # signal_source 는 레지스트리·프리패치와 같다. 04단계가 붙일 플래그가
+  # 없다 — 어느 DB 의 어느 테이블을 볼지는 이미 선별이 정했고, 그 안의
+  # 모든 행에 붙는 플래그는 필터 역할을 못 한다.
+  sqlite:StateRepository:
+    parser: sqlite
+    os: [windows]
+    supported: true
+    signal_source: scope
+    description: StateRepository-Machine.srd. UWP 앱·패키지 인벤토리 — 설치 위치·설치 시각·실행 파일. Windows 10 이상.
+
+  # 사용자 프로필마다 있는 아티팩트다. 프로필이 여럿이면 04단계가 하나를
+  # 고르고 나머지는 매니페스트에 남긴다(evidence.ArtifactLocation.user_paths).
+  sqlite:Notifications:
+    parser: sqlite
+    os: [windows]
+    supported: true
+    signal_source: scope
+    description: wpndatabase.db. 토스트 알림 — 어느 앱이 언제 알림을 등록·수신했나. Windows 8 이상.
 
   $LogFile:
     parser: null
