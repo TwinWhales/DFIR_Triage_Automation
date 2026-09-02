@@ -141,6 +141,15 @@ MAX_DIRECTORY_FILES = 4096
 #: 볼륨으로 보이는 폴더 이름. ``C``, ``C:``, ``C%3A``, ``C_``.
 _VOLUME_DIR = re.compile(r"^[A-Za-z](:|%3[Aa]|_)?$")
 
+#: 사용자 프로필이 모여 있는 폴더. ``user_paths`` 가 이 아래를 훑는다.
+#: Vista 이후로 ``Users`` 하나이고, XP 의 ``Documents and Settings`` 는
+#: 이 도구의 대상이 아니다.
+USER_ROOT = "Users"
+
+#: 프로필 폴더 중 사용자 것이 아닌 자리. 훑을 때 뺀다 — 여기 있는 DB 는
+#: 사람이 만든 흔적이 아니라 서비스가 만든 것이라 다른 이야기를 한다.
+_NON_USER_PROFILES = frozenset({"public", "default", "default user", "all users"})
+
 #: 볼륨 루트 여부를 판정할 때 훑을 하위 폴더 수 상한.
 _MAX_ROOT_ENTRIES = 200
 
@@ -165,10 +174,27 @@ class ArtifactLocation:
     directory_paths: tuple[str, ...] = ()
     #: 그 폴더에서 아티팩트로 볼 파일의 확장자(소문자).
     directory_suffix: str = ""
+    #: **사용자 프로필 기준** 경로. ``Users/<사용자>/`` 뒤에 붙는다.
+    #:
+    #: 브라우저 DB·알림 DB 처럼 경로에 사용자 이름이 박히는 아티팩트를
+    #: 위한 것입니다. ``relative_paths`` 는 고정 문자열이라 표현할 수
+    #: 없습니다.
+    #:
+    #: **프로필이 여럿이면 하나를 고르고 나머지는 ``alternates`` 에
+    #: 남깁니다.** 전부 읽지 않는 이유는 ``ref`` 입니다 — SQLite 의 레코드
+    #: 번호는 셀의 파일 내 오프셋이라 파일이 둘이면 같은 번호가 두 번
+    #: 나옵니다. 프리패치는 헤더의 경로 해시라는 파일별 고유값이 있어서
+    #: 폴더 전체를 한 아티팩트로 묶을 수 있었지만, SQLite 에는 그런 값이
+    #: 없습니다. 고르지 않은 프로필은 매니페스트에 실려 되짚을 수 있습니다.
+    user_paths: tuple[str, ...] = ()
 
     @property
     def is_directory(self) -> bool:
         return bool(self.directory_suffix)
+
+    @property
+    def is_user_scoped(self) -> bool:
+        return bool(self.user_paths)
 
 
 #: 아티팩트 이름 → 있어야 할 자리.
@@ -367,6 +393,22 @@ FILE_LAYOUT: dict[str, ArtifactLocation] = {
         )
         for _srum in ("srum:NetworkUsage", "srum:AppResourceUsage", "srum:NetworkConnectivity")
     },
+    # SQLite DB 둘. 경로의 성격이 서로 달라 나란히 두면 대비가 보인다 —
+    # 앞은 기계 하나에 하나뿐인 고정 경로이고, 뒤는 **사용자 프로필마다**
+    # 있다(user_paths).
+    #
+    # 확장자가 .srd 라 이름만 보고는 SQLite 인 줄 모른다. 헤더 매직으로
+    # 확인했다(docs/artifact-notes.md 2026-09-02).
+    "sqlite:StateRepository": ArtifactLocation(
+        relative_paths=(
+            "ProgramData/Microsoft/Windows/AppRepository/StateRepository-Machine.srd",
+        ),
+        filenames=("StateRepository-Machine.srd",),
+    ),
+    "sqlite:Notifications": ArtifactLocation(
+        user_paths=("AppData/Local/Microsoft/Windows/Notifications/wpndatabase.db",),
+        filenames=("wpndatabase.db",),
+    ),
 }
 
 #: ``VolumeSource``에서만 쓰는 대체 경로. ``FILE_LAYOUT.relative_paths``는
@@ -378,6 +420,11 @@ FILE_LAYOUT: dict[str, ArtifactLocation] = {
 VOLUME_PATH_OVERRIDES: dict[str, tuple[str, ...]] = {
     "$UsnJrnl": ("$Extend/$UsnJrnl:$J",),
 }
+
+
+def _user_expectations(location: ArtifactLocation) -> "tuple[str, ...]":
+    """``user_paths`` 를 사람이 읽을 기대 위치로. 못 찾았을 때 메시지에 쓴다."""
+    return tuple(f"{USER_ROOT}/<사용자>/{relative}" for relative in location.user_paths)
 
 
 @dataclass(frozen=True)
@@ -594,7 +641,7 @@ class FileSource:
         elif location.is_directory:
             expected = ", ".join(f"{d}/*{location.directory_suffix}" for d in location.directory_paths)
         else:
-            expected = ", ".join(location.relative_paths)
+            expected = ", ".join(location.relative_paths + _user_expectations(location))
         raise ArtifactNotFound(f"{artifact}: {self.root} 에서 찾지 못함 (기대 위치: {expected})")
 
     def available(self) -> list[str]:
@@ -659,6 +706,11 @@ class FileSource:
                 continue
             return (Located(path=found, method="volume_path", empty_candidates=tuple(empties)),)
 
+        if location.user_paths:
+            chosen = self._probe_user(location, empties)
+            if chosen is not None:
+                return (chosen,)
+
         for filename in location.filenames:
             found = _resolve(self.root, filename)
             if found is None or found in empties:
@@ -672,6 +724,40 @@ class FileSource:
         # 여기서는 빈 값을 내되, 무엇이 비었는지는 남긴다.
         self._empties[artifact] = tuple(empties)
         return ()
+
+    def _probe_user(
+        self, location: ArtifactLocation, empties: "list[Path]"
+    ) -> "Located | None":
+        """사용자 프로필마다 있는 아티팩트를 찾는다.
+
+        **이름순으로 고정하고 하나만 고릅니다.** 나머지는 ``alternates``
+        에 담겨 매니페스트에 실립니다 — 왜 하나만 읽는지는
+        ``ArtifactLocation.user_paths`` 에 적혀 있습니다.
+        """
+        users = _resolve_directory(self.root, USER_ROOT)
+        if users is None:
+            return None
+        matches: "list[Path]" = []
+        for profile in sorted(users.iterdir(), key=lambda p: p.name.lower()):
+            if not profile.is_dir() or profile.name.lower() in _NON_USER_PROFILES:
+                continue
+            for relative in location.user_paths:
+                found = _resolve(profile, relative)
+                if found is None:
+                    continue
+                if _is_empty(found):
+                    empties.append(found)
+                    continue
+                matches.append(found)
+                break
+        if not matches:
+            return None
+        return Located(
+            path=matches[0],
+            method="user_path",
+            alternates=tuple(matches[1:]),
+            empty_candidates=tuple(empties),
+        )
 
     def _probe_directory(
         self, artifact: str, location: ArtifactLocation
@@ -866,6 +952,38 @@ class VolumeSource:
                 continue
         return None
 
+    def _resolve_user(self, location: ArtifactLocation) -> "Located | None":
+        """볼륨의 ``Users/<사용자>/`` 아래에서 찾는다.
+
+        ``FileSource._probe_user`` 와 같은 규약입니다 — 이름순으로 고정하고
+        하나를 고르며, 나머지는 ``alternates`` 에 남깁니다.
+        """
+        try:
+            users = self.filesystem.path(USER_ROOT)
+            if not users.exists() or not users.is_dir():
+                return None
+            profiles = sorted(users.iterdir(), key=lambda p: p.name.lower())
+        except Exception:  # noqa: BLE001 - 손상 볼륨에서 무엇이 나올지 모른다
+            return None
+
+        matches: "list[Any]" = []
+        for profile in profiles:
+            try:
+                if not profile.is_dir() or profile.name.lower() in _NON_USER_PROFILES:
+                    continue
+                for relative in location.user_paths:
+                    entry = profile.joinpath(relative)
+                    if entry.exists() and not entry.is_dir():
+                        matches.append(entry)
+                        break
+            except Exception:  # noqa: BLE001
+                continue
+        if not matches:
+            return None
+        return Located(
+            path=matches[0], method="user_path", alternates=tuple(matches[1:])
+        )
+
     def _resolve_directory(
         self, location: ArtifactLocation
     ) -> "tuple[Any | None, tuple[Located, ...]]":
@@ -916,7 +1034,10 @@ class VolumeSource:
             self._files[artifact] = files
             return
         entry = self._resolve(artifact)
-        located = Located(path=entry, method="volume_path") if entry is not None else None
+        if entry is None and location is not None and location.user_paths:
+            located = self._resolve_user(location)
+        else:
+            located = Located(path=entry, method="volume_path") if entry is not None else None
         self._cache[artifact] = located
         self._files[artifact] = (located,) if located is not None else ()
 
@@ -941,7 +1062,7 @@ class VolumeSource:
                 f"{d}/*{location.directory_suffix}" for d in location.directory_paths
             )
         else:
-            expected = ", ".join(location.relative_paths)
+            expected = ", ".join(location.relative_paths + _user_expectations(location))
         raise ArtifactNotFound(
             f"{artifact}: {self.description} 에서 찾지 못함 (기대 위치: {expected})"
         )

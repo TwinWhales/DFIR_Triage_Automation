@@ -1859,3 +1859,183 @@ Home 빌드 **19045.6466**)의 프리패치 **192건이 전부** `UnknownLayout`
   --dir "evidence/KAPE_Results/KIOSK_snapshotA_20260831T094536/C/Windows/Prefetch" \
   --ours cases/<케이스>/04_parsed/prefetch.jsonl
 ```
+
+---
+
+## 2026-09-02 · SQLite 엔진 × `sqlite3` — 이미지 둘의 실물 64개 전수 대조
+
+SQLite 파서를 만들기로 하고(`work.md` 2-3), 페이지·셀을 직접 걷는 엔진을
+먼저 넣었습니다(`src/stage04_parse/structs/sqlite_page.py`). **대조 상대가
+표준 라이브러리입니다** — 프리패치·RecentFileCache 때는 정답지를 만들어야
+했는데 여기서는 `sqlite3` 가 그 자리를 그대로 맡습니다.
+
+`tools/scan_sqlite.py` 가 같은 파일을 양쪽으로 읽어 테이블·컬럼 이름·행을
+rowid 로 맞춰 봅니다. `immutable=1` 로 열어 **WAL 을 읽지 않게** 합니다 —
+우리 엔진도 본 DB 만 보므로 같은 조건이어야 합니다(증거에 쓰지 않는다는
+뜻이기도 합니다).
+
+### 대조 대상을 먼저 셌다
+
+이름이 아니라 **헤더 매직**으로 판정했습니다. 브라우저 `History` 처럼
+확장자가 없는 것이 많아 이름으로 찾으면 놓칩니다.
+
+| 이미지 | 훑은 파일 | SQLite | 비고 |
+|---|---|---|---|
+| `0824test.001` (Win10) | 113,523 | **22** | 브라우저 History·`ActivitiesCache.db` 는 없다 |
+| `windows7_testimage.001` | 78,546 | **42** | 전부 HP 프린터 `.vdf` (DriverStore/winsxs 사본) |
+
+Win10 쪽에서 나온 것 — `wpndatabase.db`(알림), `StateRepository-*.srd`(앱·
+패키지 상태), OneDrive 동기화 DB 14개, `configuration.sqlite`(utf-16le),
+Photos `MediaDb.v1.sqlite`.
+
+### 결과 — 전수 일치
+
+```
+파일 64개 · 테이블 2,368개 · 행 209,393건 · 어긋남 0건
+페이지 크기 512 / 1024 / 4096 / 32768   인코딩 utf-8 / utf-16-le
+```
+
+같은 파일을 다른 구현으로 읽어 값이 전부 같으므로, 넘침 계산·serial type
+크기·`INTEGER PRIMARY KEY` 채워 넣기·컬럼 이름 추출이 **동시에** 지지됩니다.
+
+### 실물이 잡아 준 것 넷 — 전부 조용히 틀리는 부류였다
+
+합성 픽스처는 통과하는데 실물에서 드러난 것들입니다.
+
+1. **`GENERATED ALWAYS AS (...) VIRTUAL` 컬럼은 레코드에 저장되지 않는다.**
+   세면 그 뒤 컬럼 이름이 **전부 한 칸씩 밀립니다** — 값은 멀쩡하고 이름만
+   남의 것이 붙으므로 눈으로는 안 걸립니다. `STORED` 는 저장되므로 셉니다.
+   (`Microsoft.LocalContent.db` 의 `WatchedRootFolders.FullPath`)
+2. **키워드와 대괄호 사이에 공백이 없는 SQL 을 Windows 가 쓴다** —
+   `CONSTRAINT[] PRIMARY KEY([Key])`, `UNIQUE([Id])`. 공백으로 잘라 첫
+   토큰을 보면 걸러지지 않아 제약이 컬럼으로 둔갑합니다.
+   (`wpndatabase.db` 의 테이블 6개 전부)
+3. **`CREATE TABLE` 안에 `--` 주석이 있다.** 주석 한 줄이 이름 없는 컬럼이
+   되고, 같은 조각에 붙어 있던 `PRIMARY KEY(...)` 가 제약으로 인식되지
+   않습니다. (`Microsoft.LocalContent.db` 의 `PathPeriodicRetry`)
+4. **헤더의 페이지 수가 0인 파일이 실재한다.** Win7 의 `.vdf` 42건이
+   그렇습니다. 변경 카운터(`0x18`)와 `0x5C` 가 다르면 헤더 값이 낡은
+   것이므로 파일 크기로 셉니다.
+
+대조 도구 자신도 한 번 틀렸습니다 — `text_factory=bytes` 로 받으면 텍스트와
+BLOB 의 구별이 사라져 BLOB 을 UTF-8 로 풀어 놓고 "값이 다르다"고 말했습니다.
+기본값을 그대로 쓰면 `str`/`bytes` 가 우리 엔진의 표현과 그대로 맞습니다.
+
+### 양쪽이 다르게 보는 자리 하나 — 어느 쪽도 틀린 게 아니다
+
+`ALTER TABLE ADD COLUMN` 으로 컬럼이 늘기 **전에** 쓰인 레코드는 뒤 컬럼이
+디스크에 아예 없습니다. `sqlite3` 는 그 자리를 컬럼 기본값으로 채워 주고,
+우리 엔진은 디스크에 있는 것만 냅니다. 대조에서는 `PRAGMA table_info` 의
+`dflt_value` 로 채워 비교합니다 — 기본값이 `NULL` 이라고 가정하면 안 됩니다
+(`SyncEngineDatabase.db` 에 기본값이 `''` 인 컬럼이 있었습니다).
+
+### 재현
+
+```bash
+# 이미지에 SQLite 가 어디 있는지부터 (헤더 매직으로 판정)
+# — 일회성 조사 스크립트는 scratchpad 에 있고 저장소에 두지 않았다
+
+# 파일 하나 대조
+.venv/Scripts/python.exe tools/scan_sqlite.py \
+  --evidence evidence/0824test.001 --volume 1 \
+  --path "/Users/kisec/AppData/Local/Microsoft/Windows/Notifications/wpndatabase.db"
+
+# 로컬 파일
+.venv/Scripts/python.exe tools/scan_sqlite.py --db some.db
+```
+
+---
+
+## 2026-09-02 · SQLite 파서 — 아티팩트 둘을 실물로 관통시켰다
+
+엔진 위에 파서를 얹고 `sqlite:StateRepository`·`sqlite:Notifications` 를
+등재했습니다. `0824test.001`(Windows 10 Pro, 빌드 15063) 볼륨 1 로 04단계를
+돌렸습니다.
+
+```
+sqlite:StateRepository   875건   (Package 152 · PackageUser 152 ·
+                                  PackageLocation 152 · Application 73 ·
+                                  ApplicationExtension 346)
+sqlite:Notifications     129건   (NotificationHandler 114 · Notification 15)
+합계                   1,004건   파싱 실패 0
+```
+
+`tools/inspect_jsonl.py` 네 관문 통과(매니페스트 건수·`ref` 유일성·
+`record_num` 대조·아티팩트 일치), `tools/hexdump_record.py` **60/60건**
+되짚기 성공.
+
+### 되짚는 방법 — 시그니처가 없는 아티팩트다
+
+SQLite 셀에는 `nk`·`FILE` 같은 표지가 없습니다. 대신 **셀이 스스로 말하는
+두 값**을 레코드가 든 값과 맞춥니다.
+
+* 셀 헤더의 rowid varint = `fields.sqlite_rowid`
+* 오프셋 = `record_num` (레코드 번호가 곧 셀의 절대 오프셋이다)
+
+`hexdump_record.py` 는 `structs` 를 부르지 않고 바이트에서 직접 varint 를
+셉니다 — 같은 코드를 두 번 부르면 대조가 아닙니다. 오프셋이 한 바이트만
+어긋나도 varint 해석이 통째로 달라져 우연히 맞기 어렵습니다.
+
+### 시각 인코딩을 실물로 정했다
+
+| 아티팩트 | 컬럼 | 인코딩 | 실측 |
+|---|---|---|---|
+| StateRepository | `PackageUser.InstallTime` | FILETIME | 152/152행 채워짐 |
+| StateRepository | `Package._Created`·`_Modified` | — | **전부 0. 쓰지 않는다** |
+| Notifications | `Notification.ArrivalTime` | FILETIME | 15/15행 |
+| Notifications | `NotificationHandler.CreatedTime` | 텍스트 | `'2022-10-24 15:32:53'` |
+
+**한 DB 안에서 인코딩이 갈립니다.** 프로파일이 필요한 이유가 이것입니다.
+
+`Package._Created` 는 컬럼이 있는데 값이 0 입니다. 있다고 믿고 적으면
+1601년이 타임라인에 실립니다 — 컬럼의 존재가 아니라 **값을 봐야** 합니다.
+
+### 텍스트 시각이 UTC 라는 근거 — 두 인코딩이 서로를 지지한다
+
+`NotificationHandler.CreatedTime` 은 시간대 표기가 없습니다. 같은 DB 의
+`Notification.ArrivalTime` 은 FILETIME 이라 정의상 UTC 인데, 실측에서
+텍스트가 `15:32:53`, 이웃한 FILETIME 이 `15:34:00` 이었습니다. **1분
+차이**입니다 — 텍스트가 현지 시각(KST)이었다면 9시간이 어긋납니다.
+SRUM 의 OLE/FILETIME 대조와 같은 논리입니다.
+
+### 참조를 풀지 않으면 한 줄로는 쓸모가 없다
+
+`PackageUser` 가 설치 시각을 들고 있고 무엇이 설치됐는지는 `Package` 에
+있습니다. **05단계는 레코드를 한 건씩 모델에 보내므로 조인을 그때 할 수
+없습니다.** SRUM 이 `AppId` 를 `SruDbIdMapTable` 로 풀었던 것과 같은
+처리를 넣었습니다.
+
+```
+풀기 전: PackageUser.Package = 182, InstallTime = 133110991735785285
+풀은 뒤: Microsoft.AAD.BrokerPlugin_1000.15063.0.0_neutral_neutral_cw5n1h2txyewy
+         2022-10-24T15:32:53Z
+```
+
+알림도 같습니다 — `Notification.HandlerId` 를 풀면
+`microsoft.windowscommunicationsapps...!microsoft.windowslive.mail` 이
+`2022-10-24T15:34:00Z` 에 알림을 띄웠다가 한 줄로 읽힙니다.
+
+실물에서 **1,004건 전부 `name` 이 채워졌습니다**(풀지 못한 참조 0건).
+
+### 사용자 프로필 경로 — `relative_paths` 로는 표현할 수 없었다
+
+`wpndatabase.db` 는 `Users/<사용자>/AppData/...` 에 있습니다. 고정 문자열
+경로로는 못 잡아 `ArtifactLocation.user_paths` 를 넣었습니다.
+
+**프로필이 여럿이면 하나를 고르고 나머지는 `alternates` 로 매니페스트에
+남깁니다.** 전부 읽지 않는 이유는 `ref` 입니다 — 레코드 번호가 셀의 파일 내
+오프셋이라 파일이 둘이면 같은 번호가 두 번 나옵니다. 프리패치는 헤더의
+경로 해시라는 파일별 고유값이 있어 폴더 전체를 한 아티팩트로 묶을 수
+있었지만, SQLite 에는 그런 값이 없습니다.
+
+### 재현
+
+```bash
+# 아티팩트 둘을 요청하는 03_selection.json 을 만든 뒤
+.venv/Scripts/python.exe -m src.stage04_parse.parse \
+  --in <선별>.json --out <출력>/ --evidence evidence/0824test.001 --volume 1
+
+.venv/Scripts/python.exe tools/inspect_jsonl.py --parsed <출력>
+.venv/Scripts/python.exe tools/hexdump_record.py --sample 30 \
+  --parsed <출력> --evidence evidence/0824test.001 --volume 1
+```

@@ -84,6 +84,10 @@ def test_catalog_loads_every_artifact(catalog):
         # 남게 하려는 것이다.
         "evtx:Defender",
         "evtx:PowerShell",
+        # SQLite DB (2026-09-02). 파서 하나가 DB 여럿을 맡고, 엔진이
+        # 범용이라 새 DB 는 카탈로그 한 줄과 프로파일 몇 줄로 늘어난다.
+        "sqlite:StateRepository",
+        "sqlite:Notifications",
         "kiosk_app_config",
         "cryptnet_urlcache",
         "psreadline_history",
@@ -91,7 +95,7 @@ def test_catalog_loads_every_artifact(catalog):
     # 목록이나 아티팩트의 성질(signal_source)이 바뀌면 이 값도 올린다.
     # 03_selection.json 에 실려 나가므로 산출물만 보고 어느 카탈로그로
     # 돌렸는지 되짚을 수 있어야 한다.
-    assert catalog.mapping_table_version == "1.2"
+    assert catalog.mapping_table_version == "1.3"
 
 
 def test_unsupported_artifacts_carry_a_reason(catalog):
