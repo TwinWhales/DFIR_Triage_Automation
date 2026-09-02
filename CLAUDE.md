@@ -73,6 +73,7 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 | **수치가 어디서 나오나**, 픽스처와 골든의 차이 | `benchmark/README.md` |
 | 단계별 입출력 계약 | `docs/pipeline-io-spec.md` |
 | **지금 안 되는 것과 그 이유** | `docs/limitations.md` |
+| 그건 언제 어떻게 고쳤나 (해결된 것의 기록) | `docs/limitations-log.md` |
 | 온디스크 구조, 외부 도구 대조 기록 | `docs/artifact-notes.md` |
 | 매핑 YAML 작성 규칙, flags 어휘·룰 작성법 | `docs/mapping-guide.md` |
 | flags 어휘와 판정 룰 자체 | `mappings/_flags.yaml` |
@@ -115,7 +116,9 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
   `docs/artifact-notes.md`에 남긴다. 대조 없는 파서 변경은 "조용히 틀리는" 쪽이다.
 - **라이브러리를 우회했으면 왜 우회했는지 `docs/limitations.md`에 적는다.**
   선례: 레지스트리 값 3건(한글 절단, `MULTI_SZ` 종결자, 타임스탬프 반올림).
-- **못 고친 것은 감추지 말고 `docs/limitations.md`에 적는다.** 이 프로젝트에서
+- **못 고친 것은 감추지 말고 `docs/limitations.md`에 적는다.** 고쳤으면 그
+  기록은 `docs/limitations-log.md`로 옮긴다 — 두 문서를 가르는 기준은 날짜가
+  아니라 **지금도 참인가**다. 이 프로젝트에서
   한계 기록은 감점이 아니라 성숙도의 지표다.
 
 ## 자주 하는 실수
