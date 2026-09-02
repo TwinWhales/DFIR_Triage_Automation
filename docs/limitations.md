@@ -134,6 +134,7 @@ VOLUME=1 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh K-ALERT evidence/0824
 | `recentfilecache` | 구현 — 전부 자체 구현. **Windows 7 전용.** 실물 1건 대조 완료, 아래 단서 참조 |
 | `prefetch` | 구현 — 전부 자체 구현 (압축 해제 포함). 아래 단서 참조 |
 | `srum:NetworkUsage` / `srum:AppResourceUsage` / `srum:NetworkConnectivity` | 구현 — dissect.esedb 기반 어댑터. **Windows 8 이상에만 존재.** 아래 단서 참조 |
+| `sqlite:StateRepository` / `sqlite:Notifications` | 구현 — 전부 자체 구현(페이지·셀 엔진). `sqlite3` 와 전수 일치. **`WITHOUT ROWID`·WAL·삭제 레코드는 범위 밖**, 아래 2026-09-02 절 참조 |
 | `$LogFile` | 미지원 (카탈로그에서 제외 처리) |
 
 **카탈로그의 아티팩트는 전부 파서가 있습니다.** 어긋나면
@@ -2288,9 +2289,9 @@ API 어디에도 레코드 오프셋이 없습니다(`Event.template_offset` 은
 이렇게 적혀 있습니다 — *"원본 바이트 위치. 기존 파서를 쓰지 않고 직접 구현하는
 이유가 이 필드다."* `work-guide.md` 3.1 도 같은 말을 합니다:
 
-> 직접 구현의 이유는 성능이 아니라 **설계 요구**다. 기존 파서는 파싱된
-> 값만 반환하고 원본 오프셋을 주지 않아, 본 프로젝트의 근거 추적 구조가
-> 성립하지 않는다.
+> 직접 구현의 이유는 성능이 아니라 **설계 요구**다. 대부분의 기존 파서는
+> 파싱된 값만 반환하고 원본 오프셋을 주지 않아, 본 프로젝트의 근거 추적
+> 구조가 성립하지 않는다.
 
 그리고 `work-guide.md` 원칙 4가 *"모든 분석 문장은 원본 오프셋을
 참조한다"* 입니다. 07단계도 `report.py` 에서 `offset` 을 읽습니다.
