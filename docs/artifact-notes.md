@@ -1859,3 +1859,87 @@ Home 빌드 **19045.6466**)의 프리패치 **192건이 전부** `UnknownLayout`
   --dir "evidence/KAPE_Results/KIOSK_snapshotA_20260831T094536/C/Windows/Prefetch" \
   --ours cases/<케이스>/04_parsed/prefetch.jsonl
 ```
+
+---
+
+## 2026-09-02 · SQLite 엔진 × `sqlite3` — 이미지 둘의 실물 64개 전수 대조
+
+SQLite 파서를 만들기로 하고(`work.md` 2-3), 페이지·셀을 직접 걷는 엔진을
+먼저 넣었습니다(`src/stage04_parse/structs/sqlite_page.py`). **대조 상대가
+표준 라이브러리입니다** — 프리패치·RecentFileCache 때는 정답지를 만들어야
+했는데 여기서는 `sqlite3` 가 그 자리를 그대로 맡습니다.
+
+`tools/scan_sqlite.py` 가 같은 파일을 양쪽으로 읽어 테이블·컬럼 이름·행을
+rowid 로 맞춰 봅니다. `immutable=1` 로 열어 **WAL 을 읽지 않게** 합니다 —
+우리 엔진도 본 DB 만 보므로 같은 조건이어야 합니다(증거에 쓰지 않는다는
+뜻이기도 합니다).
+
+### 대조 대상을 먼저 셌다
+
+이름이 아니라 **헤더 매직**으로 판정했습니다. 브라우저 `History` 처럼
+확장자가 없는 것이 많아 이름으로 찾으면 놓칩니다.
+
+| 이미지 | 훑은 파일 | SQLite | 비고 |
+|---|---|---|---|
+| `0824test.001` (Win10) | 113,523 | **22** | 브라우저 History·`ActivitiesCache.db` 는 없다 |
+| `windows7_testimage.001` | 78,546 | **42** | 전부 HP 프린터 `.vdf` (DriverStore/winsxs 사본) |
+
+Win10 쪽에서 나온 것 — `wpndatabase.db`(알림), `StateRepository-*.srd`(앱·
+패키지 상태), OneDrive 동기화 DB 14개, `configuration.sqlite`(utf-16le),
+Photos `MediaDb.v1.sqlite`.
+
+### 결과 — 전수 일치
+
+```
+파일 64개 · 테이블 2,368개 · 행 209,393건 · 어긋남 0건
+페이지 크기 512 / 1024 / 4096 / 32768   인코딩 utf-8 / utf-16-le
+```
+
+같은 파일을 다른 구현으로 읽어 값이 전부 같으므로, 넘침 계산·serial type
+크기·`INTEGER PRIMARY KEY` 채워 넣기·컬럼 이름 추출이 **동시에** 지지됩니다.
+
+### 실물이 잡아 준 것 넷 — 전부 조용히 틀리는 부류였다
+
+합성 픽스처는 통과하는데 실물에서 드러난 것들입니다.
+
+1. **`GENERATED ALWAYS AS (...) VIRTUAL` 컬럼은 레코드에 저장되지 않는다.**
+   세면 그 뒤 컬럼 이름이 **전부 한 칸씩 밀립니다** — 값은 멀쩡하고 이름만
+   남의 것이 붙으므로 눈으로는 안 걸립니다. `STORED` 는 저장되므로 셉니다.
+   (`Microsoft.LocalContent.db` 의 `WatchedRootFolders.FullPath`)
+2. **키워드와 대괄호 사이에 공백이 없는 SQL 을 Windows 가 쓴다** —
+   `CONSTRAINT[] PRIMARY KEY([Key])`, `UNIQUE([Id])`. 공백으로 잘라 첫
+   토큰을 보면 걸러지지 않아 제약이 컬럼으로 둔갑합니다.
+   (`wpndatabase.db` 의 테이블 6개 전부)
+3. **`CREATE TABLE` 안에 `--` 주석이 있다.** 주석 한 줄이 이름 없는 컬럼이
+   되고, 같은 조각에 붙어 있던 `PRIMARY KEY(...)` 가 제약으로 인식되지
+   않습니다. (`Microsoft.LocalContent.db` 의 `PathPeriodicRetry`)
+4. **헤더의 페이지 수가 0인 파일이 실재한다.** Win7 의 `.vdf` 42건이
+   그렇습니다. 변경 카운터(`0x18`)와 `0x5C` 가 다르면 헤더 값이 낡은
+   것이므로 파일 크기로 셉니다.
+
+대조 도구 자신도 한 번 틀렸습니다 — `text_factory=bytes` 로 받으면 텍스트와
+BLOB 의 구별이 사라져 BLOB 을 UTF-8 로 풀어 놓고 "값이 다르다"고 말했습니다.
+기본값을 그대로 쓰면 `str`/`bytes` 가 우리 엔진의 표현과 그대로 맞습니다.
+
+### 양쪽이 다르게 보는 자리 하나 — 어느 쪽도 틀린 게 아니다
+
+`ALTER TABLE ADD COLUMN` 으로 컬럼이 늘기 **전에** 쓰인 레코드는 뒤 컬럼이
+디스크에 아예 없습니다. `sqlite3` 는 그 자리를 컬럼 기본값으로 채워 주고,
+우리 엔진은 디스크에 있는 것만 냅니다. 대조에서는 `PRAGMA table_info` 의
+`dflt_value` 로 채워 비교합니다 — 기본값이 `NULL` 이라고 가정하면 안 됩니다
+(`SyncEngineDatabase.db` 에 기본값이 `''` 인 컬럼이 있었습니다).
+
+### 재현
+
+```bash
+# 이미지에 SQLite 가 어디 있는지부터 (헤더 매직으로 판정)
+# — 일회성 조사 스크립트는 scratchpad 에 있고 저장소에 두지 않았다
+
+# 파일 하나 대조
+.venv/Scripts/python.exe tools/scan_sqlite.py \
+  --evidence evidence/0824test.001 --volume 1 \
+  --path "/Users/kisec/AppData/Local/Microsoft/Windows/Notifications/wpndatabase.db"
+
+# 로컬 파일
+.venv/Scripts/python.exe tools/scan_sqlite.py --db some.db
+```
