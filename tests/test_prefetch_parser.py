@@ -771,3 +771,241 @@ def test_a_single_volume_still_filters_normally(parser):
     assert run(parser, build_pf(), scope) == []
     assert parser.stats["out_of_scope"] == 1
     assert parser.stats["scope_undecidable"] == 0
+
+
+# ================================================== PECmd 대조 (tools/compare_prefetch.py)
+#
+# 저 도구는 PECmd 가 있어야 돌지만, **짝을 짓고 채점하는 규칙 자체**는
+# 여기서 고정한다. 열 이름이 하나 바뀌었을 때 "짝지은 0건 전부 일치" 라는
+# 무의미한 통과가 나오지 않는지가 핵심이다.
+
+
+def our_record(**overrides) -> dict:
+    """우리 prefetch.jsonl 한 줄. 파서가 내는 모양 그대로."""
+    fields = {
+        "prefetch_file": "CMD.EXE-4A81B364.pf",
+        "format_version": 30,
+        "path_hash": "4A81B364",
+        "run_count": 3,
+        "run_times": [
+            "2026-09-01T10:00:00.0000000Z",
+            "2026-08-31T09:00:00.0000000Z",
+        ],
+        "loaded_file_count": 2,
+        "loaded_files": ["C:\\WINDOWS\\SYSTEM32\\CMD.EXE", "C:\\WINDOWS\\SYSTEM32\\NTDLL.DLL"],
+        "volumes": [
+            {
+                "device_path": DEVICE,
+                "serial_number": "2EC87543",
+                "directory_count": 4,
+                "created": "2019-01-10T00:00:00.0000000Z",
+            }
+        ],
+    }
+    fields.update(overrides.pop("fields", {}))
+    record = {
+        "ref": "PF#1250981220",
+        "artifact": "prefetch",
+        "record_num": 0x4A81B364,
+        "offset": "0x0",
+        "name": "CMD.EXE",
+        "path": "C:\\WINDOWS\\SYSTEM32\\CMD.EXE",
+        "timestamp": "2026-09-01T10:00:00.0000000Z",
+        "fields": fields,
+    }
+    record.update(overrides)
+    return record
+
+
+PECMD_COLUMNS = [
+    "SourceFilename",
+    "ExecutableName",
+    "Hash",
+    "Size",
+    "Version",
+    "RunCount",
+    "LastRun",
+    *[f"PreviousRun{n}" for n in range(7)],
+    "Volume0Name",
+    "Volume0Serial",
+    "Volume0Created",
+    "FilesLoaded",
+]
+
+
+def pecmd_row(record: dict) -> dict:
+    """같은 사실을 PECmd 가 내는 모양으로. 시각은 초 단위 표기다."""
+    fields = record["fields"]
+    times = [t.replace("T", " ")[:19] for t in fields["run_times"]]
+    row = {name: "" for name in PECMD_COLUMNS}
+    row.update(
+        {
+            "SourceFilename": "C:\\KAPE\\C\\Windows\\Prefetch\\" + fields["prefetch_file"],
+            "ExecutableName": record["name"],
+            "Hash": fields["path_hash"],
+            "Version": "Win10OrWin11",
+            "RunCount": str(fields["run_count"]),
+            "LastRun": times[0] if times else "",
+            "Volume0Serial": fields["volumes"][0]["serial_number"],
+            "Volume0Created": fields["volumes"][0]["created"].replace("T", " ")[:19],
+            "FilesLoaded": ", ".join(fields["loaded_files"]),
+        }
+    )
+    for n, moment in enumerate(times[1:]):
+        row[f"PreviousRun{n}"] = moment
+    return row
+
+
+def write_pair(tmp_path: Path, records: list, rows=None, columns=None):
+    """(우리 jsonl, PECmd csv) 를 쓴다. rows 를 주면 그것을 CSV 로 쓴다."""
+    import csv as _csv
+
+    from src.common import io as _common_io
+
+    ours = tmp_path / "prefetch.jsonl"
+    _common_io.write_jsonl(ours, records)
+
+    csv_path = tmp_path / "20260902_PECmd_Output.csv"
+    names = columns or PECMD_COLUMNS
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = _csv.DictWriter(handle, fieldnames=names)
+        writer.writeheader()
+        for row in rows if rows is not None else [pecmd_row(r) for r in records]:
+            writer.writerow({name: row.get(name, "") for name in names})
+    return ours, csv_path
+
+
+def grade(tmp_path: Path, records: list, rows=None, columns=None, **kwargs):
+    from tools import compare_prefetch
+
+    ours, csv_path = write_pair(tmp_path, records, rows, columns)
+    theirs, absent = compare_prefetch.load_pecmd(csv_path)
+    return compare_prefetch.compare(
+        compare_prefetch.load_ours(ours), theirs, ungraded=absent, **kwargs
+    )
+
+
+def test_the_same_facts_in_both_shapes_agree(tmp_path):
+    """같은 사실을 우리 모양과 PECmd 모양으로 쓰면 전건 일치해야 한다.
+
+    표기가 다르다(초 단위 vs 100ns, 전체 경로 vs 파일명, 16진 해시).
+    그 차이를 도구가 흡수하지 못하면 실물에서 전건 불일치가 난다.
+    """
+    report = grade(tmp_path, [our_record()], full=True)
+    assert report.passed(), report.summary()
+    assert report.mismatches == []
+    assert report.ungraded == ()
+
+
+def test_a_wrong_run_count_is_caught(tmp_path):
+    """실행 횟수는 FILE_INFORMATION 안에서 버전마다 자리가 달라지는 값이다.
+
+    빌드가 바뀌었을 때 가장 먼저 어긋나는 자리라 이 도구의 존재 이유다.
+    """
+    record = our_record()
+    rows = [pecmd_row(record)]
+    record["fields"]["run_count"] = 7
+
+    report = grade(tmp_path, [record], rows=rows)
+    assert not report.passed()
+    assert [m.field for m in report.mismatches] == ["run_count"]
+
+
+def test_a_missing_run_time_slot_is_caught_by_the_count(tmp_path):
+    """시각은 개수와 순서까지 본다. 자리를 잘못 잡으면 값보다 개수가 먼저 어긋난다."""
+    record = our_record()
+    rows = [pecmd_row(record)]
+    record["fields"]["run_times"] = record["fields"]["run_times"][:1]
+
+    report = grade(tmp_path, [record], rows=rows)
+    assert [m.field for m in report.mismatches] == ["run_times"]
+
+
+def test_a_column_pecmd_did_not_write_is_not_graded_but_is_named(tmp_path):
+    """도구 버전의 차이를 파서의 오류로 세지 않는다. 대신 조용히 넘기지도 않는다."""
+    columns = [name for name in PECMD_COLUMNS if name != "Hash"]
+    record = our_record()
+    rows = [pecmd_row(record)]
+    # 저쪽이 안 낸 열이니, 우리 값이 무엇이든 채점 대상이 아니다.
+    record["fields"]["path_hash"] = "DEADBEEF"
+
+    report = grade(tmp_path, [record], rows=rows, columns=columns)
+    assert report.passed(), report.summary()
+    assert "Hash" in report.ungraded
+
+
+def test_a_missing_required_column_stops_with_the_real_header(tmp_path):
+    """짝을 못 지으면 멈춘다. '짝지은 0건 전부 일치' 는 통과가 아니다."""
+    from tools import compare_prefetch
+
+    columns = [name for name in PECMD_COLUMNS if name != "RunCount"]
+    _, csv_path = write_pair(tmp_path, [our_record()], columns=columns)
+
+    with pytest.raises(ValueError) as caught:
+        compare_prefetch.load_pecmd(csv_path)
+    assert "RunCount" in str(caught.value)
+    assert "ExecutableName" in str(caught.value)  # 실제 열 목록을 보여 준다
+
+
+def test_records_are_paired_by_filename_not_by_hash(tmp_path):
+    """헤더 해시와 파일명이 다른 .pf 는 이 파서의 관심사다.
+
+    해시로 짝을 지으면 바로 그 경우에 짝이 안 지어져, 불일치가 아니라
+    '저쪽에만 있음' 으로 둔갑한다.
+    """
+    record = our_record()
+    rows = [pecmd_row(record)]
+    rows[0]["Hash"] = "FFFFFFFF"
+
+    report = grade(tmp_path, [record], rows=rows, full=True)
+    assert report.missing_from_ours == []
+    assert report.extra_in_ours == []
+    assert [m.field for m in report.mismatches] == ["path_hash"]
+
+
+def test_a_record_only_we_have_always_fails(tmp_path):
+    """없는 것을 지어낸 쪽은 범위와 무관하게 오류다."""
+    report = grade(tmp_path, [our_record()], rows=[])
+    assert not report.passed()
+    assert report.extra_in_ours == ["cmd.exe-4a81b364.pf"]
+
+
+def test_a_record_only_pecmd_has_is_an_error_only_with_full(tmp_path):
+    """우리 파서는 선별된 범위만 낸다. --full 이 아니면 정상이다."""
+    rows = [pecmd_row(our_record())]
+    assert grade(tmp_path, [], rows=rows).passed()
+    assert not grade(tmp_path, [], rows=rows, full=True).passed()
+
+
+def test_the_version_pair_is_counted_not_graded(tmp_path):
+    """PECmd 의 Version 표기가 바뀐 것을 우리 파서의 오류로 세지 않는다."""
+    report = grade(tmp_path, [our_record()])
+    assert report.passed()
+    assert report.versions == {("30", "Win10OrWin11"): 1}
+
+
+def test_a_jsonl_without_prefetch_file_stops(tmp_path):
+    """열쇠가 없으면 멈춘다. 짝을 못 지은 채로 통과를 내면 안 된다."""
+    from src.common import io as _common_io
+    from tools import compare_prefetch
+
+    record = our_record()
+    del record["fields"]["prefetch_file"]
+    path = tmp_path / "prefetch.jsonl"
+    _common_io.write_jsonl(path, [record])
+
+    with pytest.raises(ValueError, match="prefetch_file"):
+        compare_prefetch.load_ours(path)
+
+
+def test_the_timeline_csv_is_not_picked_up(tmp_path):
+    """_Timeline.csv 는 실행 시각을 한 줄씩 편 것이라 레코드 대조에 쓸 수 없다."""
+    from tools import compare_prefetch
+
+    (tmp_path / "20260902_PECmd_Output_Timeline.csv").write_text("x\n", encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="PECmd_Output.csv"):
+        compare_prefetch.find_csv(tmp_path)
+
+    wanted = tmp_path / "20260902_PECmd_Output.csv"
+    wanted.write_text("x\n", encoding="utf-8")
+    assert compare_prefetch.find_csv(tmp_path) == wanted

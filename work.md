@@ -252,6 +252,23 @@ ls "<수집본>/C/Windows/System32/winevt/Logs" | grep -iE "assignedaccess|drive
 로 잡았는데 **그것은 우리 구현과 공통 오해를 공유한다.** PECmd 로 한 번 더
 맞추는 것이 이 절에서 가장 싼 작업이다.
 
+대조 도구는 `tools/compare_prefetch.py` 로 만들어 뒀다 — **아직 실물에 돌린
+적이 없다.** 짝은 .pf 파일 이름으로 짓고, 실행 횟수·실행 시각(개수와 순서)·
+경로 해시·볼륨 0 을 채점한다. 버전은 채점하지 않고 교차표로만 인쇄한다
+(PECmd 의 표기가 바뀐 것을 우리 오류로 세지 않으려고). 적재 파일은 개수만
+본다 — 경로 문자열은 우리가 드라이브 문자로 바꿔 싣는 쪽이라 내용 대조는
+`scan_prefetch.py` 몫이다.
+
+```bash
+PECmd.exe -d "<수집본>\C\Windows\Prefetch" --csv C:\temp\pecmd_out
+.venv/Scripts/python.exe tools/compare_prefetch.py \
+  --ours cases/<케이스>/04_parsed/prefetch.jsonl \
+  --pecmd C:\temp\pecmd_out --full
+```
+
+`--full` 은 **범위를 비우고 뽑은 04 출력**에만 붙인다. 선별된 출력에 붙이면
+"PECmd 에만 있음"이 잔뜩 나오는데 그것은 파서의 오류가 아니다.
+
 ### 확인 방법
 
 **도구를 새로 만들기 전에, 수집본을 04단계에 그대로 넣는다.** 표에 없으면
