@@ -26,6 +26,10 @@ MFTECmd를 설치하지 않아도 되고 ``pytest`` 안에서 돌아가므로, �
 
 **우리 파서는 선별된 범위만 냅니다.** 레코드 수까지 대조하려면 범위를
 비우고(``scope`` 없이) 돌린 결과를 쓰고 ``--full``을 붙이십시오.
+
+**MFTECmd 쪽 ADS 행은 제외하고 대조합니다**(``ADS_COLUMN`` 참조). 요약에
+제외 건수가 나오므로, 기록을 남길 때 그 줄을 함께 붙이십시오 — 조건이
+빠지면 같은 CSV 로 다른 숫자가 나옵니다.
 """
 
 from __future__ import annotations
@@ -42,7 +46,16 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.common import io  # noqa: E402
 
-__all__ = ["Record", "Mismatch", "Report", "load_ours", "load_mftecmd", "compare", "main"]
+__all__ = [
+    "Record",
+    "Mismatch",
+    "Report",
+    "Loaded",
+    "load_ours",
+    "load_mftecmd",
+    "compare",
+    "main",
+]
 
 #: 우리 필드 → MFTECmd CSV 열 이름.
 #:
@@ -61,6 +74,25 @@ TIMESTAMP_COLUMNS: dict[str, str] = {
 
 #: 대조할 타임스탬프. work-guide 3.2가 "타임스탬프 4종"을 요구합니다.
 COMPARED_TIMESTAMPS = ("si_btime", "si_mtime", "si_ctime", "si_atime")
+
+#: ADS(대체 데이터 스트림) 행을 가려내는 열.
+#:
+#: **MFTECmd 는 스트림마다 한 행을 냅니다.** ``Sysmon.exe`` 와
+#: ``Sysmon.exe:Zone.Identifier`` 가 **같은 EntryNumber 의 두 행**입니다.
+#: 우리 파서는 이름 없는 ``$DATA`` 만 보므로(``parsers/mft.py`` 의
+#: ``_data_size``) 레코드당 한 건입니다. ADS 는 범위 밖입니다
+#: (``work-guide.md`` 3.3).
+#:
+#: 걸러 내지 않으면 **레코드 수로는 아무것도 드러나지 않습니다** — 두 행이
+#: 같은 키를 쓰므로 나중 행이 앞 행을 덮어쓸 뿐입니다. 그러면 경로가
+#: ``Sysmon.exe:Zone.Identifier`` 로 바뀌어 ADS 를 가진 파일 수만큼 경로
+#: 불일치가 쏟아지고, 타임스탬프도 본체가 아닌 행과 대조하게 됩니다.
+ADS_COLUMN = "IsAds"
+
+#: ``IsAds`` 가 가질 수 있는 값. 모르는 값은 조용히 넘기지 않습니다 —
+#: MFTECmd 가 표기를 바꿨다는 뜻이고, 그것을 False 로 읽으면 ADS 행이
+#: 대조에 섞여 들어옵니다.
+BOOLEAN_VALUES: dict[str, bool] = {"true": True, "false": False, "1": True, "0": False}
 
 DEFAULT_TOLERANCE_SECONDS = 1.0
 
@@ -82,12 +114,27 @@ class Mismatch:
     theirs: object
 
 
+@dataclass(frozen=True)
+class Loaded:
+    """대조 상대를 읽은 결과. 레코드와 **대조 조건**을 함께 들고 있다.
+
+    제외한 행 수를 레코드와 나눠 둔 것은 그 수를 요약에 적기 위해서입니다.
+    조건이 빠진 기록은 재현되지 않습니다 — 같은 CSV 로 다른 숫자가 나옵니다.
+    """
+
+    records: dict[int, Record]
+    #: 제외한 ADS 행 수. ADS 개념이 없는 상대(참조 구현)는 ``None``.
+    ads_rows: int | None = None
+
+
 @dataclass
 class Report:
     ours_count: int = 0
     theirs_count: int = 0
     #: 대조 상대의 이름. 요약에 그대로 쓴다.
     against: str = "대조군"
+    #: 제외한 ADS 행 수. ``None`` 이면 해당 없음이라 요약에 적지 않는다.
+    ads_rows: int | None = None
     #: MFTECmd에는 있는데 우리에게 없는 레코드. ``--full``에서만 오류.
     missing_from_ours: list[int] = field(default_factory=list)
     #: 우리에게만 있는 레코드. **항상 오류** — 없는 것을 지어낸 것이다.
@@ -109,6 +156,13 @@ class Report:
             f"- {self.against}에만 있는 레코드 {len(self.missing_from_ours)}건"
             + ("" if self.full else " (선별 범위 밖이면 정상)"),
         ]
+        # 조건을 요약 안에 넣는다. 붙여 넣은 기록만 보고도 무엇을 뺀
+        # 대조인지 알 수 있어야 한다.
+        if self.ads_rows is not None:
+            lines.append(
+                f"- 대조 조건: {self.against}의 ADS 행 {self.ads_rows}건 제외"
+                f" (`{ADS_COLUMN}` = True). 우리 파서는 이름 없는 `$DATA`만 낸다"
+            )
         by_field: dict[str, int] = {}
         for mismatch in self.mismatches:
             by_field[mismatch.field] = by_field.get(mismatch.field, 0) + 1
@@ -154,8 +208,14 @@ def load_ours(path: str | Path) -> dict[int, Record]:
     return records
 
 
-def load_mftecmd(path: str | Path) -> dict[int, Record]:
-    """MFTECmd CSV를 읽는다."""
+def load_mftecmd(path: str | Path) -> Loaded:
+    """MFTECmd CSV를 읽는다. **ADS 행은 제외한다** (``ADS_COLUMN`` 참조).
+
+    레코드 번호로 짝을 맞추므로 같은 번호가 두 번 나오면 하나가 조용히
+    사라집니다. ADS 를 걸러 낸 뒤에도 중복이 남으면 **중단합니다** —
+    덮어쓰면 어느 행과 대조했는지 알 수 없고, 그것이 이 도구가 막으려는
+    "조용히 틀리는 것"입니다.
+    """
     source = Path(path)
     with source.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -163,8 +223,16 @@ def load_mftecmd(path: str | Path) -> dict[int, Record]:
         _require_columns(columns, source)
 
         records: dict[int, Record] = {}
+        duplicates: list[int] = []
+        ads_rows = 0
         for row in reader:
             number = int(row["EntryNumber"])
+            if _is_ads(row, source, number):
+                ads_rows += 1
+                continue
+            if number in records:
+                duplicates.append(number)  # 먼저 읽은 것을 남긴다
+                continue
             parent = (row.get("ParentPath") or "").strip()
             name = (row.get("FileName") or "").strip()
             records[number] = Record(
@@ -175,7 +243,35 @@ def load_mftecmd(path: str | Path) -> dict[int, Record]:
                     for field_name, column in TIMESTAMP_COLUMNS.items()
                 },
             )
-    return records
+
+    if duplicates:
+        shown = ", ".join(str(number) for number in sorted(set(duplicates))[:10])
+        raise ValueError(
+            f"{source}: EntryNumber 가 중복입니다 — {len(duplicates)}건 ({shown})\n"
+            f"  ADS 행({ADS_COLUMN})은 이미 제외했으므로 다른 이유입니다. "
+            "하드링크나 MFTECmd 의 출력 단위 변경을 의심하십시오.\n"
+            "  덮어쓰면 어느 행과 대조했는지 알 수 없으므로 중단합니다."
+        )
+
+    return Loaded(records=records, ads_rows=ads_rows)
+
+
+def _is_ads(row: dict[str, str], source: Path, number: int) -> bool:
+    """이 행이 대체 데이터 스트림인가.
+
+    ``FileName`` 의 콜론으로도 가려낼 수 있지만(NTFS 파일 이름에는 콜론이
+    못 들어간다) 그것은 표기에 기대는 판정입니다. 열이 있으면 열을 봅니다.
+    """
+    raw = (row.get(ADS_COLUMN) or "").strip().lower()
+    if raw not in BOOLEAN_VALUES:
+        raise ValueError(
+            f"{source}: EntryNumber {number} 의 {ADS_COLUMN} 값을 읽을 수 없습니다"
+            f" — {raw!r}\n"
+            f"  아는 값: {', '.join(sorted(BOOLEAN_VALUES))}\n"
+            "  MFTECmd 가 표기를 바꿨다면 tools/compare_mft.py 의 BOOLEAN_VALUES 를 "
+            "고치십시오. 모르는 값을 False 로 넘기면 ADS 행이 대조에 섞입니다."
+        )
+    return BOOLEAN_VALUES[raw]
 
 
 def _require_columns(columns: list[str], source: Path) -> None:
@@ -190,6 +286,16 @@ def _require_columns(columns: list[str], source: Path) -> None:
             "  MFTECmd 버전에 따라 이름이 다릅니다. "
             "tools/compare_mft.py 의 TIMESTAMP_COLUMNS 를 고치십시오."
         )
+    # ADS 판정에 쓰는 열은 따로 본다. 없으면 폴백하지 않고 멈춘다 —
+    # 콜론으로 대신 가려내면 그 판정이 맞았는지 아무도 확인하지 않는다.
+    if ADS_COLUMN not in columns:
+        raise ValueError(
+            f"{source}: {ADS_COLUMN} 열이 없어 ADS 행을 가려낼 수 없습니다.\n"
+            f"  실제 열: {', '.join(columns)}\n"
+            "  MFTECmd 가 오래된 버전이면 올리십시오. 이 열 없이 대조하면 ADS 행이 "
+            "같은 EntryNumber 의 본체 행을 덮어써, ADS 를 가진 파일 수만큼 경로 "
+            "불일치가 나옵니다."
+        )
 
 
 def compare(
@@ -199,10 +305,19 @@ def compare(
     tolerance_seconds: float = DEFAULT_TOLERANCE_SECONDS,
     full: bool = False,
     against: str = "대조군",
+    ads_rows: int | None = None,
 ) -> Report:
-    """두 결과를 대조한다. 레코드 번호로 짝을 맞춘다."""
+    """두 결과를 대조한다. 레코드 번호로 짝을 맞춘다.
+
+    ``ads_rows`` 는 ``load_mftecmd`` 가 제외한 행 수입니다. 대조 조건이라
+    요약에 들어가야 합니다 — 그것 없이는 같은 CSV 로 다른 숫자가 나옵니다.
+    """
     report = Report(
-        ours_count=len(ours), theirs_count=len(theirs), full=full, against=against
+        ours_count=len(ours),
+        theirs_count=len(theirs),
+        full=full,
+        against=against,
+        ads_rows=ads_rows,
     )
     report.extra_in_ours = sorted(set(ours) - set(theirs))
     report.missing_from_ours = sorted(set(theirs) - set(ours))
@@ -246,13 +361,20 @@ def main(argv: "list[str] | None" = None) -> int:
 
     io.configure_console()
 
-    theirs = load_mftecmd(args.mftecmd) if args.mftecmd else load_ours(args.reference)
+    # 참조 구현은 우리 형식이라 ADS 개념이 없다. ads_rows 를 None 으로 둬야
+    # 요약에 "ADS 0건 제외"라는 없는 조건이 적히지 않는다.
+    if args.mftecmd:
+        loaded = load_mftecmd(args.mftecmd)
+    else:
+        loaded = Loaded(records=load_ours(args.reference))
+
     report = compare(
         load_ours(args.ours),
-        theirs,
+        loaded.records,
         tolerance_seconds=args.tolerance_seconds,
         full=args.full,
         against="MFTECmd" if args.mftecmd else "참조 구현",
+        ads_rows=loaded.ads_rows,
     )
 
     print(f"대조 상대: {args.mftecmd or args.reference}")
