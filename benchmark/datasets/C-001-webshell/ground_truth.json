@@ -2,7 +2,8 @@
   "case_id": "C-001",
   "schema_version": "1.0",
   "description": "웹셸 업로드를 통한 초기 침투 후 로컬 특권 계정 생성으로 지속성 확보",
-  "authored_by": "spec-example (docs/pipeline-io-spec.md 예시에서 역산. 실제 증거를 분석해 정한 정답이 아니므로 채점에 쓸 수 없음)",
+  "authored_by": "spec-example (docs/pipeline-io-spec.md 예시)",
+  "provenance": "derived_from_spec",
   "target_os": "windows",
   "expected_techniques": ["T1505.003", "T1136.001"],
   "expected_time_range": {

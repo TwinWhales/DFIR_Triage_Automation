@@ -193,15 +193,66 @@ def test_ground_truth_not_written_by_a_human_is_flagged(case_dir, truth, tmp_pat
     assert evaluate.aggregate([result])["cases_missing_human_ground_truth"] == 1
 
 
-def test_human_authored_ground_truth_is_not_flagged(case_dir, truth, tmp_path):
-    truth["authored_by"] = "human"
+def test_human_analysed_ground_truth_is_not_flagged(case_dir, truth, tmp_path):
+    truth["provenance"] = "human_analysis"
     result = evaluate.evaluate_case(_dataset_with(tmp_path, truth), case_dir)
     assert evaluate.aggregate([result])["cases_missing_human_ground_truth"] == 0
 
 
+def test_a_named_author_is_not_mistaken_for_self_scoring(case_dir, truth, tmp_path):
+    """**판정 회귀.**
+
+    예전에는 ``authored_by`` 가 정확히 ``"human"`` 인지로 갈랐다. 담당자가
+    자기 이름을 적으면 그 케이스가 "정답을 사람이 만들지 않았다"로 집계돼,
+    증거를 직접 보고 만든 정답이 자기채점 취급을 받는다. 넘겨받는 사람이
+    가장 먼저 밟을 자리다.
+    """
+    truth["authored_by"] = "홍길동 (2026-09-05, PECmd·EvtxECmd 로 직접 분석)"
+    truth["provenance"] = "human_analysis"
+    result = evaluate.evaluate_case(_dataset_with(tmp_path, truth), case_dir)
+    assert evaluate.aggregate([result])["cases_missing_human_ground_truth"] == 0
+
+
+def test_ground_truth_without_provenance_is_treated_as_self_scored(case_dir, truth, tmp_path):
+    """틀리는 방향이 "자기채점을 발표에 쓴다" 가 되면 안 된다."""
+    truth.pop("provenance", None)
+    result = evaluate.evaluate_case(_dataset_with(tmp_path, truth), case_dir)
+    assert evaluate.aggregate([result])["cases_missing_human_ground_truth"] == 1
+
+
 def test_the_shipped_dataset_admits_it_is_not_scorable():
     # 스펙 예시에서 역산한 정답이다. 자기채점이라 발표에 쓸 수 없다.
-    assert io.read_json(DATASET / "ground_truth.json")["authored_by"] != "human"
+    assert io.read_json(DATASET / "ground_truth.json")["provenance"] != "human_analysis"
+
+
+# --------------------------------------------------- ref 접두어 어휘
+
+
+def test_every_known_artifact_prefix_fits_the_schema():
+    """**스키마에 접두어 목록을 베껴 두지 않는다.**
+
+    예전 스키마는 여섯 종(``MFT``·``USN``·``EVTX-SEC``·``EVTX-SYS``·
+    ``REG-SYS``·``REG-SW``)만 받았다. 그래서 키오스크 정답의 핵심 증거인
+    프리패치(``PF``)·Sysmon·Amcache 는 **적을 자리가 없었다.** 지금 스키마는
+    모양만 보고 어휘는 ``refs.py`` 가 본다.
+    """
+    import re
+
+    from src.common import refs
+
+    schema = io.read_json(REPO_ROOT / "benchmark/ground_truth_schema.json")
+    pattern = re.compile(
+        schema["properties"]["required_refs"]["items"]["properties"]["ref"]["pattern"]
+    )
+    for prefix in sorted(set(refs.ARTIFACT_PREFIX.values())):
+        assert pattern.match(f"{prefix}#1"), f"{prefix} 를 정답에 적을 수 없다"
+
+
+def test_an_unknown_ref_prefix_is_refused_not_counted_as_missed(truth, tmp_path):
+    """오타를 조용히 넘기면 그 레코드는 영원히 "놓친 증거" 로 집계된다."""
+    truth["required_refs"] = [{"ref": "MTF#12345", "why": "오타"}]
+    with pytest.raises(ValueError, match="알 수 없는 ref"):
+        evaluate.evaluate_case(_dataset_with(tmp_path, truth))
 
 
 # ---------------------------------------------------------------- CLI
