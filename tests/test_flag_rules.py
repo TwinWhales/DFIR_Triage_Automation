@@ -55,6 +55,56 @@ def _restore_cache():
     yield
     flagging.load_vocabulary.cache_clear()
     flagging.privileged_groups.cache_clear()
+    flagging.prompt_drop_fields.cache_clear()
+
+
+# ============================================ 프롬프트에서 뺄 필드 (어휘)
+
+
+def _write_drop(directory: Path, value) -> str:
+    """``prompt_drop_fields`` 만 갈아 끼운다. ``None`` 이면 키를 지운다."""
+    path = directory / "_flags.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if value is None:
+        data.pop("prompt_drop_fields", None)
+    else:
+        data["prompt_drop_fields"] = value
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    flagging.prompt_drop_fields.cache_clear()
+    return str(directory)
+
+
+def test_the_drop_list_comes_from_the_yaml(flags_dir):
+    # 코드에 목록을 박으면 add-parser 로 새 파서가 붙을 때 고칠 자리를
+    # 놓치고, 그 결손은 아무 데도 안 남는다.
+    directory = _write_drop(flags_dir, ["Nonce", "AnotherOne"])
+
+    assert flagging.prompt_drop_fields(directory) == frozenset({"nonce", "anotherone"})
+
+
+def test_the_drop_list_ignores_case(flags_dir):
+    # 같은 뜻의 필드가 아티팩트마다 다른 표기로 오는 것을 놓치는 쪽이,
+    # 열거한 이름을 지우는 것보다 나쁘다.
+    directory = _write_drop(flags_dir, ["ProcessGuid"])
+
+    assert "processguid" in flagging.prompt_drop_fields(directory)
+
+
+def test_no_drop_key_means_the_feature_is_off(flags_dir):
+    # 키가 없을 때의 동작은 이 기능이 생기기 전과 같다 — 아무것도 빼지
+    # 않는다. 조용히 틀리는 자리가 아니다.
+    directory = _write_drop(flags_dir, None)
+
+    assert flagging.prompt_drop_fields(directory) == frozenset()
+
+
+@pytest.mark.parametrize("bad", ["Hashes", {"a": 1}, ["Hashes", 3]])
+def test_a_misshapen_drop_list_stops_instead_of_being_ignored(flags_dir, bad):
+    # 슬쩍 무시하면 "왜 그 필드가 프롬프트에 그대로 있지"를 되짚을 방법이 없다.
+    directory = _write_drop(flags_dir, bad)
+
+    with pytest.raises(flagging.VocabularyError, match="prompt_drop_fields"):
+        flagging.prompt_drop_fields(directory)
 
 
 # ================================================ YAML 만으로 어휘가 는다

@@ -61,7 +61,7 @@ from ..stage03_select.mapping_loader import (
     DEFAULT_SIGNAL_SOURCE,
     PRIORITIES,
 )
-from ..stage04_parse.flagging import KeepPaths, prompt_keep_paths
+from ..stage04_parse.flagging import KeepPaths, prompt_drop_fields, prompt_keep_paths
 from .record_filter import (
     DEFAULT_LIMIT,
     DEFAULT_WINDOW_SECONDS,
@@ -246,11 +246,25 @@ def for_prompt(
     record: dict[str, Any],
     max_list_items: int | None = MAX_LIST_ITEMS,
     keep: "KeepPaths | None" = None,
+    drop: "frozenset[str] | None" = None,
 ) -> dict[str, Any]:
     """레코드를 프롬프트에 실을 모양으로. ``04_parsed/``의 원본은 안 건드립니다.
 
-    ``fields`` 안의 긴 목록을 ``max_list_items``개까지만 남깁니다.
-    ``None``이면 자르지 않습니다.
+    두 가지를 합니다. **어느 필드를 뺄지**(``drop``,
+    ``mappings/_flags.yaml``의 ``prompt_drop_fields``)와 **남은 필드 안의 긴
+    목록을 몇 개까지 실을지**(``max_list_items``)입니다. 순서가 있습니다 —
+    뺄 것을 먼저 빼고 남은 것에서 목록을 자릅니다. 반대로 하면 어차피 뺄
+    필드의 목록을 자르느라 keep 어휘를 헛돌립니다.
+
+    ``max_list_items``가 ``None``이면 목록을 자르지 않고, ``drop``이 비면
+    필드를 하나도 빼지 않습니다.
+
+    **왜 필드를 빼나.** 해시·GUID·PE 버전 리소스처럼 **우리가 판단에 쓰지
+    않는** 값이 evtx:Sysmon 레코드의 4분의 1을 차지합니다(실측 1,043자 →
+    790자). 모델이 그 값으로 무언가를 말한다면 그것은 레코드가 아니라
+    학습된 지식에서 나온 것이라, 빼는 것이 프롬프트를 줄이는 동시에
+    환각의 입구를 하나 막습니다. 어느 필드가 그런지는 코드가 아니라 어휘에
+    적혀 있고, 근거도 거기 붙어 있습니다.
 
     **어느 것을 남기는가.** ``mappings/_flags.yaml``의
     ``prompt_keep_paths``에 적힌 자리(드롭 자리·사용자 폴더 등)에 걸리는
@@ -289,16 +303,27 @@ def for_prompt(
     맞지 않아 기각됩니다.
     """
     fields = record.get("fields")
-    if max_list_items is None or not isinstance(fields, dict):
+    if not isinstance(fields, dict):
         return record
 
-    keep = prompt_keep_paths() if keep is None else keep
-    trimmed = {
-        key: _trim_list(value, max_list_items, keep)
-        if isinstance(value, list) and len(value) > max_list_items
-        else value
-        for key, value in fields.items()
-    }
+    drop = prompt_drop_fields() if drop is None else drop
+    kept = (
+        {key: value for key, value in fields.items() if key.lower() not in drop}
+        if drop
+        else fields
+    )
+
+    if max_list_items is None:
+        trimmed = kept
+    else:
+        keep = prompt_keep_paths() if keep is None else keep
+        trimmed = {
+            key: _trim_list(value, max_list_items, keep)
+            if isinstance(value, list) and len(value) > max_list_items
+            else value
+            for key, value in kept.items()
+        }
+
     if trimmed == fields:
         return record
 
@@ -311,6 +336,7 @@ def record_chars(
     record: dict[str, Any],
     max_list_items: int | None = MAX_LIST_ITEMS,
     keep: "KeepPaths | None" = None,
+    drop: "frozenset[str] | None" = None,
 ) -> int:
     """레코드 하나가 프롬프트에서 차지할 글자 수.
 
@@ -319,7 +345,9 @@ def record_chars(
     잽니다.** 다르게 재면 예산이 맞아도 프롬프트가 넘칩니다. 줄바꿈 한
     글자를 더합니다.
     """
-    return len(json.dumps(for_prompt(record, max_list_items, keep), ensure_ascii=False)) + 1
+    return (
+        len(json.dumps(for_prompt(record, max_list_items, keep, drop), ensure_ascii=False)) + 1
+    )
 
 
 def prompt_token_budget(

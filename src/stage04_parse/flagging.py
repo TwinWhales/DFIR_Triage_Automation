@@ -54,6 +54,7 @@ __all__ = [
     "privileged_groups",
     "KeepPaths",
     "prompt_keep_paths",
+    "prompt_drop_fields",
     "apply",
     "apply_all",
 ]
@@ -685,6 +686,40 @@ def prompt_keep_paths(directory: str | None = None) -> KeepPaths:
         max_items=int(max_items),
         contains=tuple(c.lower() for c in contains),
     )
+
+
+@functools.lru_cache(maxsize=None)
+def prompt_drop_fields(directory: str | None = None) -> frozenset[str]:
+    """05단계가 프롬프트에 실을 때 ``fields`` 에서 통째로 뺄 필드 이름.
+
+    **소문자로 돌려줍니다.** 비교하는 쪽도 소문자로 맞춥니다 — 같은 뜻의
+    필드가 아티팩트마다 다른 표기로 오는 것을 놓치는 쪽이, 열거한 이름을
+    지우는 것보다 나쁘기 때문입니다.
+
+    ``prompt_keep_paths`` 와 같은 이유로 이 파일에서 읽습니다 — 플래그가
+    아니라 배분의 문제이지만 판단의 성격이 같습니다. 어느 필드로 판단할
+    것인가를 코드가 아니라 어휘로 정해 둡니다.
+
+    **키가 없으면 기능이 꺼집니다**(빈 집합). 그때의 동작은 이 기능이
+    생기기 전과 같아서 — 필드를 하나도 빼지 않습니다 — 조용히 틀리는
+    자리가 아닙니다.
+
+    **모양이 틀렸으면 멈춥니다.** 문자열 목록이 아니면 ``VocabularyError``
+    입니다. 슬쩍 무시하면 "왜 그 필드가 프롬프트에 그대로 있지"를 되짚을
+    방법이 없습니다.
+    """
+    path = Path(directory or mappings_dir()) / "_flags.yaml"
+    if not path.is_file():
+        return frozenset()
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    names = data.get("prompt_drop_fields")
+    if names is None:
+        return frozenset()
+    if not isinstance(names, list) or any(not isinstance(n, str) for n in names):
+        raise VocabularyError(f"{path}: prompt_drop_fields 는 문자열 목록이어야 함")
+
+    return frozenset(n.strip().lower() for n in names if n.strip())
 
 
 #: 고정 어휘. ``mappings/_flags.yaml`` 이 원본이고, 스키마 enum 은

@@ -16,6 +16,7 @@ from typing import Any
 
 from ..common import schema
 from ..common.llm import Backend, extract_json, output_schema
+from ..stage04_parse.flagging import prompt_drop_fields
 from .allocation import MAX_LIST_ITEMS, for_prompt
 
 __all__ = [
@@ -134,13 +135,23 @@ class InterpretClient:
         있다(``mappings/_flags.yaml`` 의 ``prompt_keep_paths``). 앞에서
         잘랐다고 말해 두면 모델이 "그 뒤는 못 봤다"를 잘못된 근거로 쓴다.
         """
-        if self.max_list_items is None:
-            return ""
-        return (
-            f". fields 안의 목록은 {self.max_list_items}개까지만 실려 있고 "
-            "원래 순서를 지킨 부분집합이니, 전체 개수는 함께 있는 개수 필드를 "
-            "보고 말하십시오"
-        )
+        notices = []
+        if self.max_list_items is not None:
+            notices.append(
+                f"fields 안의 목록은 {self.max_list_items}개까지만 실려 있고 "
+                "원래 순서를 지킨 부분집합이니, 전체 개수는 함께 있는 개수 필드를 "
+                "보고 말하십시오"
+            )
+        # 뺀 필드가 있으면 그 사실도 말한다. 같은 이유다 — 말하지 않으면
+        # 모델이 "해시 정보가 없다"를 근거로 쓴다. **어느 이름을 뺐는지까지는
+        # 적지 않는다.** 부류만 말하면 "못 본 것으로는 말하지 말라"가 되고,
+        # 이름을 열거하면 그 필드들을 두고 추측할 거리를 만들어 준다.
+        if prompt_drop_fields():
+            notices.append(
+                "해시·상관용 GUID·파일 버전 정보는 프롬프트에서 제외했으니, "
+                "그 값이 보이지 않는다는 사실 자체를 근거로 삼지 마십시오"
+            )
+        return (". " + ". ".join(notices)) if notices else ""
 
     def user_prompt(
         self,

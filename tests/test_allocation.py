@@ -691,6 +691,65 @@ def test_the_shipped_vocabulary_is_actually_loaded():
     assert not keep.matches("C:\\Windows\\System32\\ntdll.dll")
 
 
+DROP = frozenset({"hashes", "processguid"})
+
+
+def test_dropped_fields_do_not_reach_the_prompt():
+    record = {
+        "ref": "SYSMON#1",
+        "artifact": "evtx:Sysmon",
+        "flags": ["suspicious_process"],
+        "fields": {"Image": r"C:\x.exe", "Hashes": "SHA256=ab", "ProcessGuid": "{1}"},
+    }
+
+    slim = allocation.for_prompt(record, allocation.MAX_LIST_ITEMS, drop=DROP)
+
+    assert slim["fields"] == {"Image": r"C:\x.exe"}
+    # 04_parsed/ 의 원본은 안 건드린다. 06단계 검증이 그 원본을 읽는다.
+    assert set(record["fields"]) == {"Image", "Hashes", "ProcessGuid"}
+
+
+def test_dropping_ignores_case():
+    record = {"ref": "SYSMON#1", "artifact": "evtx:Sysmon", "flags": [],
+              "fields": {"HASHES": "ab", "Image": "x"}}
+
+    assert allocation.for_prompt(record, None, drop=DROP)["fields"] == {"Image": "x"}
+
+
+def test_dropping_happens_before_the_lists_are_trimmed():
+    """뺄 필드의 목록을 자르느라 keep 어휘를 헛돌리지 않는다."""
+    record = {"ref": "SYSMON#1", "artifact": "evtx:Sysmon", "flags": [],
+              "fields": {"Hashes": list(range(100)), "keep": [1, 2, 3]}}
+
+    slim = allocation.for_prompt(record, 2, KEEP, drop=DROP)
+
+    assert "Hashes" not in slim["fields"]
+
+
+def test_the_budget_measures_what_the_prompt_will_actually_carry():
+    # 재는 쪽과 싣는 쪽이 갈라지면 예산이 맞아도 프롬프트가 넘친다.
+    record = {"ref": "SYSMON#1", "artifact": "evtx:Sysmon", "flags": [],
+              "fields": {"Image": r"C:\x.exe", "Hashes": "SHA256=" + "a" * 500}}
+
+    measured = allocation.record_chars(record, allocation.MAX_LIST_ITEMS, drop=DROP)
+    shipped = allocation.for_prompt(record, allocation.MAX_LIST_ITEMS, drop=DROP)
+
+    assert measured == len(json.dumps(shipped, ensure_ascii=False)) + 1
+    assert measured < 200
+
+
+def test_the_shipped_drop_vocabulary_is_actually_loaded():
+    """어휘가 조용히 비면 이 기능이 있으나 마나가 된다."""
+    drop = flagging.prompt_drop_fields()
+
+    assert "hashes" in drop
+    assert "processguid" in drop
+    # 판단에 쓰는 필드는 빠지지 않았는가. 이것이 빠지면 05가 볼 것을 잃는다.
+    assert "commandline" not in drop
+    assert "targetfilename" not in drop
+    assert "reason" not in drop
+
+
 def test_trimming_lets_more_records_through_the_same_budget():
     # 이 작업의 논지다. 한 아티팩트의 목록 때문에 다른 아티팩트가 자리를
     # 잃는 것은 증거의 폭으로 보아 손해다.
