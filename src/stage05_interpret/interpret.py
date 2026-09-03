@@ -31,10 +31,15 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, llm, schema
-from ..common.llm import DEFAULT_NUM_CTX, DEFAULT_TIMEOUT
+from ..common.llm import DEFAULT_TIMEOUT
 from ..stage03_select import mapping_loader
 from . import allocation, record_filter
-from .llm_client import DEFAULT_MODEL, FINDINGS_BODY_FIELDS, InterpretClient
+from .llm_client import (
+    DEFAULT_MODEL,
+    DEFAULT_NUM_CTX,
+    FINDINGS_BODY_FIELDS,
+    InterpretClient,
+)
 
 __all__ = ["STAGE", "build_findings", "dump_raw", "interpret", "main"]
 
@@ -192,7 +197,7 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
     parser.add_argument(
         "--reserve-output-tokens",
         type=int,
-        default=allocation.RESERVE_OUTPUT_TOKENS,
+        default=allocation.RESERVE_FINDINGS_TOKENS,
         help=(
             "모델이 답을 쓸 자리로 남겨 둘 토큰. 기본 %(default)s. "
             "프롬프트가 창을 꽉 채우면 응답이 잘려 malformed_output 으로 온다. "
@@ -300,9 +305,12 @@ def main(argv: "list[str] | None" = None) -> int:
     client = InterpretClient(
         backend, max_list_items=max_list_items, constrain=not args.no_constrain
     )
+    # 프롬프트의 고정 부분을 **실제로 조립해서** 잰다. 아래 요약에서 한 번
+    # 더 쓰므로 이름을 붙여 둔다 — 두 번 재면 두 값이 갈라질 수 있다.
+    overhead_chars = client.prompt_overhead_chars(scenario)
     budget_chars = allocation.char_budget(
         args.num_ctx,
-        client.prompt_overhead_chars(scenario),
+        overhead_chars,
         reserve_output_tokens=args.reserve_output_tokens,
     )
 
@@ -359,6 +367,47 @@ def main(argv: "list[str] | None" = None) -> int:
             f"파싱 {quota.parsed}건 / 후보 {quota.candidates}건 / "
             f"전달 {quota.seats}건 ({short})"
         )
+    # 창을 얼마나 쓰고 있는지는 **늘** 말한다. 넘었는지는 사후에 알 방법이
+    # 없기 때문이다 — Ollama 는 창을 넘은 프롬프트를 거부하지 않고 앞을
+    # 잘라서 받는다. 잘린 실행은 오류 없이 끝나고 findings 만 얇아진다
+    # (`allocation.CHARS_PER_TOKEN` 의 실측 참조). 창을 좁히는 작업이
+    # 이어질 자리라, 남은 여유가 눈에 보여야 한다.
+    prompt_tokens = int((overhead_chars + budget.used_chars) / allocation.CHARS_PER_TOKEN)
+    budget_tokens = allocation.prompt_token_budget(
+        args.num_ctx, reserve_output_tokens=args.reserve_output_tokens
+    )
+    print(
+        f"  프롬프트 추정 {prompt_tokens:,}토큰 "
+        f"(쓸 수 있는 {budget_tokens:,}토큰의 {prompt_tokens * 100 // max(1, budget_tokens)}%, "
+        f"창 {args.num_ctx:,} − 출력 예약 {args.reserve_output_tokens:,})"
+    )
+
+    # 실제로 몇 토큰이었는지는 모델만 안다. 추정 옆에 놓아야 상수가 어긋난
+    # 것이 실행 중에 보인다 — 이 자리가 없어서 프롬프트가 잘리고 있다는
+    # 사실을 사람이 따로 재서야 찾아냈다(`limitations-log.md`, 2026-09-03).
+    actual_tokens = getattr(client.backend, "last_prompt_tokens", None)
+    if actual_tokens:
+        observed = (overhead_chars + budget.used_chars) / actual_tokens
+        print(
+            f"  프롬프트 실측 {actual_tokens:,}토큰 "
+            f"({observed:.2f}자/토큰, 예산이 쓴 값 {allocation.CHARS_PER_TOKEN})"
+        )
+        # 잘렸는지는 이 수로 직접 볼 수 없다. Ollama 가 앞을 자른 뒤의 수를
+        # 돌려주기 때문이다. 드러나는 것은 **비율**이다 — 절반이 잘리면
+        # 자·토큰 비가 두 배가 된다. 그래서 크게 벗어나면 말한다.
+        #
+        # **중단하지는 않는다.** 비율이 벗어나는 데는 잘림 말고 다른 이유도
+        # 있다(레코드 구성이 달라져 상수가 이 케이스에 안 맞는 경우). 증명
+        # 없이 중단하면 새로운 실패 모드를 만드는 것이라, 사람이 보게만 한다.
+        if observed > allocation.CHARS_PER_TOKEN * 1.5:
+            print(
+                f"[{STAGE}] 경고: 자·토큰 비가 예산의 가정({allocation.CHARS_PER_TOKEN})보다 "
+                f"{observed / allocation.CHARS_PER_TOKEN:.1f}배 큽니다. 프롬프트가 창을 넘어 "
+                f"앞이 잘렸을 수 있습니다 — 모델이 받은 것이 보낸 것보다 적으면 "
+                f"findings 는 조용히 얇아집니다. --num-ctx 를 올리거나 --limit 을 낮춰 "
+                f"다시 재 보십시오.",
+                file=sys.stderr,
+            )
     # 예산은 깎였을 때만 말한다. 안 깎였으면 --limit 이 그대로 상한이라
     # 위 배분 내역이 이미 전부를 말하고 있다.
     if budget.trimmed:

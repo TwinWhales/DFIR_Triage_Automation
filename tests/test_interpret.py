@@ -27,6 +27,9 @@ class FakeBackend:
         #: 호출마다 받은 ``fmt`` (``test_normalize.py`` 와 같은 규약).
         self.formats: list["dict | None"] = []
         self.name = "fake"
+        #: 모델이 실제로 평가한 프롬프트 토큰 수. 테스트가 값을 꽂아
+        #: "추정 대 실측"을 재현한다(``Backend`` 프로토콜).
+        self.last_prompt_tokens: "int | None" = None
 
     def complete(self, system: str, user: str, *, fmt: "dict | None" = None) -> str:
         self.calls.append((system, user))
@@ -335,7 +338,67 @@ def test_cli_ties_the_output_cap_to_the_reserved_budget(monkeypatch, tmp_path, r
         argv += ["--reserve-output-tokens", str(reserve)]
 
     assert interpret_mod.main(argv) == 0
-    assert captured["num_predict"] == (reserve or allocation.RESERVE_OUTPUT_TOKENS)
+    assert captured["num_predict"] == (reserve or allocation.RESERVE_FINDINGS_TOKENS)
+
+
+def _run_with_tokens(monkeypatch, tmp_path, prompt_tokens):
+    """실측 토큰 수를 꽂은 백엔드로 05를 한 번 돌리고 출력을 돌려준다."""
+    backend = FakeBackend((FIXTURES / "05_findings.json").read_text(encoding="utf-8"))
+    backend.last_prompt_tokens = prompt_tokens
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", lambda kind, **kw: backend)
+    assert (
+        interpret_mod.main(
+            [
+                "--in", str(PARSED),
+                "--scenario", str(FIXTURES / "02_scenario.json"),
+                "--out", str(tmp_path / "05_findings.json"),
+                "--llm", "ollama", "--model", "m",
+            ]
+        )
+        == 0
+    )
+
+
+def test_cli_puts_the_measured_token_count_next_to_the_estimate(
+    monkeypatch, tmp_path, capsys
+):
+    # 추정 옆에 실측이 없으면 상수가 어긋난 것이 실행 중에 보이지 않는다.
+    # 프롬프트가 창을 넘고 있다는 사실을 사람이 따로 재서야 찾아냈다.
+    _run_with_tokens(monkeypatch, tmp_path, 2000)
+
+    printed = capsys.readouterr()
+    assert "프롬프트 실측 2,000토큰" in printed.out
+    assert "경고" not in printed.err
+
+
+def test_cli_warns_when_the_ratio_says_the_prompt_was_cut(monkeypatch, tmp_path, capsys):
+    """자·토큰 비가 예산의 가정보다 훨씬 크면 앞이 잘렸을 수 있다.
+
+    잘림은 이 수로 직접 볼 수 없다 — Ollama 가 자른 뒤의 수를 돌려주기
+    때문이다. 절반이 잘리면 비가 두 배가 되고, 그것이 유일한 단서다.
+    """
+    # 레코드 넷의 프롬프트를 터무니없이 적은 토큰으로 평가했다고 말한다.
+    _run_with_tokens(monkeypatch, tmp_path, 50)
+
+    printed = capsys.readouterr()
+    assert "경고" in printed.err
+    assert "잘렸을 수 있습니다" in printed.err
+    # 중단하지는 않는다 — 비율이 벗어나는 데는 잘림 말고 다른 이유도 있다.
+    assert (tmp_path / "05_findings.json").is_file()
+
+
+def test_the_stub_backend_measures_nothing(tmp_path, capsys):
+    # 0 이 아니라 None 이라야 "0토큰이었다"와 "재지 않았다"가 갈린다.
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "stub",
+            "--replay", str(FIXTURES / "05_findings.json"),
+        ]
+    )
+    assert "프롬프트 실측" not in capsys.readouterr().out
 
 
 def test_cli_aborts_when_no_record_carries_a_signal(tmp_path):
@@ -392,8 +455,10 @@ def test_cli_says_so_when_the_budget_trims_seats(tmp_path, capsys):
             "--out", str(out),
             "--llm", "stub",
             "--replay", str(FIXTURES / "05_findings.json"),
-            # 레코드 넷 중 둘만 들어갈 만큼만 연다.
-            "--num-ctx", "5300",
+            # 레코드 넷 중 둘만 들어갈 만큼만 연다. 창에서 출력 예약을 빼고
+            # 남은 것이 1,056자다 — CHARS_PER_TOKEN 을 실측값으로 낮추면서
+            # 같은 예산이 나오도록 창을 함께 옮겼다(2026-09-03).
+            "--num-ctx", "5600",
             "--reserve-output-tokens", "4096",
         ]
     )

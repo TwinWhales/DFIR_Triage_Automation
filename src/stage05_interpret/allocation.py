@@ -74,11 +74,12 @@ from .record_filter import (
 __all__ = [
     "CHARS_PER_TOKEN",
     "MAX_LIST_ITEMS",
-    "RESERVE_OUTPUT_TOKENS",
+    "RESERVE_FINDINGS_TOKENS",
     "PRIORITY_WEIGHT",
     "Budget",
     "Quota",
     "char_budget",
+    "prompt_token_budget",
     "for_prompt",
     "record_chars",
     "priorities_from_selection",
@@ -86,24 +87,49 @@ __all__ = [
     "allocate_records",
 ]
 
-#: 글자 하나가 몇 토큰인가 — 의 역수. **토크나이저를 돌린 값이 아니라
-#: 추정치다.**
+#: 글자 하나가 몇 토큰인가 — 의 역수. **이제 실측값이다** (2026-09-03).
 #:
-#: 우리 레코드는 ASCII 경로가 대부분이고 한글이 섞인다. 순수 ASCII 는
-#: 토큰당 3~4자, 한글은 1~1.5자라 그 사이를 잡았다. 2026-08-26 실측에서
-#: 71,476자를 28,600토큰으로 환산할 때 쓴 값과 같다.
+#: 실제 05단계 프롬프트를 `qwen2.5:7b` 에 넣고 Ollama 가 돌려주는
+#: `prompt_eval_count` 로 쟀다 (`K-LIVE-0902-wide`, 프롬프트마다 난스를
+#: 앞에 붙여 KV 캐시 재사용을 깼다).
 #:
-#: **틀리는 방향이 중요하다.** 실제보다 크게 잡으면(글자를 적은 토큰으로
-#: 세면) 예산이 헐거워져 창을 넘고, 그러면 지금 고치는 증상 그대로다.
-#: 작게 잡으면 자리를 덜 쓸 뿐이다. 그래서 의심스러우면 낮춘다.
-CHARS_PER_TOKEN = 2.5
+#: .. code-block:: text
+#:
+#:     10건  10,122자 →  4,997토큰   2.03
+#:     20건  17,744자 →  8,679토큰   2.04
+#:     40건  37,863자 → 17,978토큰   2.11
+#:     55건  62,713자 → 29,910토큰   2.10
+#:
+#: 구간 전체에서 2.0~2.1 로 안정적이다. 경로 문자열이 대부분이라 ASCII 라도
+#: 토큰이 잘게 쪼개진다 — 역슬래시·확장자·레지스트리 키마다 경계가 생긴다.
+#: "순수 ASCII 는 토큰당 3~4자"라는 일반론은 우리 데이터에 맞지 않았다.
+#:
+#: **예전 값 2.5 는 안전한 쪽으로 틀리지 않았다.** 여기 적혀 있던 "작게
+#: 잡으면 자리를 덜 쓸 뿐"이 거꾸로였다 — 2.5 는 같은 글자를 **적은** 토큰
+#: 으로 세므로 예산이 실제보다 19% 헐거웠고, 그만큼 프롬프트가 창을 넘었다.
+#: 같은 케이스 60건(69,875자)이 32,768 창에서 16,386토큰만 평가됐다. 보낸
+#: 것의 절반이다 — 넘은 프롬프트는 거부되지 않고 **조용히 앞이 잘린다**
+#: (`docs/limitations.md`).
+#:
+#: **관측된 최솟값보다 낮게 잡는다.** 위 표의 최솟값이 2.03 이고, 아티팩트
+#: 구성이 달라지면 값도 달라진다. 상수가 실측보다 크면 곧바로 창을 넘는
+#: 쪽이므로, 여유를 상수 안에 넣어 둔다. 의심스러우면 낮춘다 — 이제는 그
+#: 방향이 실제로 안전한 쪽이다.
+CHARS_PER_TOKEN = 2.0
 
-#: 모델이 답을 쓸 자리로 남겨 두는 토큰. 프롬프트가 창을 꽉 채우면 출력할
-#: 자리가 없어 응답이 잘리고, 잘린 응답은 ``malformed_output`` 으로 온다.
+#: 소견 질의가 답을 쓸 자리로 남겨 두는 토큰. 프롬프트가 창을 꽉 채우면
+#: 출력할 자리가 없어 응답이 잘리고, 잘린 응답은 ``malformed_output`` 으로
+#: 온다.
 #:
 #: findings 여러 건과 timeline 을 담은 JSON 이 이 정도다. 실측 소견 4건이
 #: 약 1,800토큰이었고, 재시도 없이 한 번에 끝나려면 여유가 있어야 한다.
-RESERVE_OUTPUT_TOKENS = 4096
+#:
+#: **이름에 질의 종류를 박은 이유가 있다.** 이 단계가 갖게 될 질의는 출력
+#: 크기가 전혀 다르다 — 어느 레코드가 의심스러운지만 고르는 질의는 ref 와
+#: 한 줄 사유를 낼 뿐이고, 문장과 타임라인을 쓰는 질의는 그 몇 배다. 상수
+#: 하나로 두면 큰 쪽에 맞춰야 하고, 그러면 작은 질의가 쓰지도 않을 자리를
+#: 창에서 떼어 간다. 창이 좁을수록 그 낭비가 곧 레코드 수다.
+RESERVE_FINDINGS_TOKENS = 4096
 
 #: 프롬프트에 실을 때 ``fields`` 안의 목록을 몇 개까지 남길 것인가
 #: (``for_prompt`` 참조). ``None`` 이면 안 자른다.
@@ -296,11 +322,30 @@ def record_chars(
     return len(json.dumps(for_prompt(record, max_list_items, keep), ensure_ascii=False)) + 1
 
 
+def prompt_token_budget(
+    num_ctx: int,
+    *,
+    reserve_output_tokens: int = RESERVE_FINDINGS_TOKENS,
+) -> int:
+    """프롬프트에 쓸 수 있는 토큰. 창에서 답 쓸 자리를 뺀 값입니다.
+
+    **질의를 쪼갤지 정하는 임계값은 이 함수여야 합니다.** 그 자리에
+    "6,000 토큰" 같은 수를 따로 적어 두면 창이나 예약이 바뀌는 순간
+    임계값만 옛날 값으로 남고, 그 어긋남은 조용합니다 — 넘은 프롬프트를
+    Ollama 는 거부하지 않고 앞을 잘라 버립니다(``CHARS_PER_TOKEN`` 참조).
+
+    ``char_budget`` 은 여기에 글자 환산과 프롬프트 고정분을 더 뺀 값입니다.
+    두 함수로 나뉜 것은 묻는 쪽의 단위가 다르기 때문입니다 — 창과 분기는
+    토큰으로 묻고, 레코드를 몇 건 실을지는 글자로 묻습니다.
+    """
+    return max(0, num_ctx - reserve_output_tokens)
+
+
 def char_budget(
     num_ctx: int,
     overhead_chars: int,
     *,
-    reserve_output_tokens: int = RESERVE_OUTPUT_TOKENS,
+    reserve_output_tokens: int = RESERVE_FINDINGS_TOKENS,
     chars_per_token: float = CHARS_PER_TOKEN,
 ) -> int:
     """레코드에 쓸 수 있는 글자 수. 음수면 0.
@@ -312,7 +357,9 @@ def char_budget(
     출력 자리를 토큰으로 떼는 것은 그쪽이 모델의 단위이기 때문이고,
     레코드를 글자로 재는 것은 우리가 가진 것이 글자이기 때문입니다.
     """
-    for_prompt = (num_ctx - reserve_output_tokens) * chars_per_token
+    for_prompt = prompt_token_budget(
+        num_ctx, reserve_output_tokens=reserve_output_tokens
+    ) * chars_per_token
     return max(0, int(for_prompt) - overhead_chars)
 
 

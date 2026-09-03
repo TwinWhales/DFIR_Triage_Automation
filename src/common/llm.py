@@ -137,6 +137,16 @@ class Backend(Protocol):
 
     name: str
 
+    #: 직전 호출에서 **모델이 실제로 평가한 프롬프트 토큰 수.** 모르면
+    #: ``None`` 이다(리플레이처럼 모델을 부르지 않은 경우).
+    #:
+    #: 예산은 글자를 토큰으로 환산한 **추정**이라 언제든 어긋날 수 있고,
+    #: 어긋난 것이 밖으로 드러나지 않는 것이 문제였다 — 창을 넘은 프롬프트를
+    #: Ollama 는 거부하지 않고 앞을 잘라서 받으므로, 실행은 오류 없이 끝나고
+    #: findings 만 얇아진다(``limitations-log.md``, 2026-09-03). 부른 쪽이
+    #: 추정과 실측을 나란히 놓을 수 있어야 그 어긋남이 보인다.
+    last_prompt_tokens: "int | None"
+
     def complete(self, system: str, user: str, *, fmt: "dict[str, Any] | None" = None) -> str: ...
 
 
@@ -156,6 +166,9 @@ class StubBackend:
         if not self.path.is_file():
             raise LLMError(f"스텁 응답 파일 없음: {self.path}")
         self.name = f"stub({self.path.name})"
+        #: 모델을 부르지 않으므로 잴 것이 없다. 0 이 아니라 ``None`` 인
+        #: 것은 "0토큰이었다"와 "재지 않았다"가 다르기 때문이다.
+        self.last_prompt_tokens: int | None = None
 
     def complete(self, system: str, user: str, *, fmt: "dict[str, Any] | None" = None) -> str:
         #: ``fmt``을 받고 버린다. 리플레이는 기록해 둔 응답을 그대로 내는
@@ -203,6 +216,9 @@ class OllamaBackend:
         self.num_ctx = num_ctx
         self.num_predict = num_predict
         self.name = model
+        #: 직전 호출에서 모델이 실제로 평가한 프롬프트 토큰 수
+        #: (Ollama 응답의 ``prompt_eval_count``). ``Backend`` 참조.
+        self.last_prompt_tokens: int | None = None
 
     def payload(
         self, system: str, user: str, *, fmt: "dict[str, Any] | None" = None
@@ -255,7 +271,14 @@ class OllamaBackend:
 
         if response.status_code != 200:
             raise LLMError(f"{self.model}: HTTP {response.status_code} — {response.text[:200]}")
-        return response.json().get("response", "")
+
+        body = response.json()
+        #: 프롬프트가 창을 넘으면 Ollama 는 앞을 잘라서 받고, 이 값은 **자른
+        #: 뒤** 평가한 수로 온다. 그래서 "넘었다"를 이 수로 직접 볼 수는
+        #: 없고, 보낸 글자 수와 나란히 놓아야 드러난다 — 자·토큰 비가 갑자기
+        #: 두 배가 되는 것이 잘림의 모양이다(``limitations-log.md``).
+        self.last_prompt_tokens = body.get("prompt_eval_count")
+        return body.get("response", "")
 
 
 def build_backend(

@@ -406,6 +406,35 @@ def test_the_budget_takes_the_output_seat_first():
     assert full - reserved == int(4096 * allocation.CHARS_PER_TOKEN)
 
 
+def test_the_token_budget_is_the_window_minus_the_output_seat():
+    # 질의를 쪼갤지 정하는 임계값이 이 함수여야 한다. 따로 적어 둔 수는
+    # 창이나 예약이 바뀔 때 옛날 값으로 남고, 그 어긋남은 조용하다.
+    assert allocation.prompt_token_budget(8192, reserve_output_tokens=1024) == 7168
+    assert allocation.prompt_token_budget(4096, reserve_output_tokens=4096) == 0
+    # 예약이 창보다 크면 음수가 아니라 0 이다 — 음수 예산은 아래 글자
+    # 환산에서 부호가 뒤집혀 "무제한"처럼 보인다.
+    assert allocation.prompt_token_budget(2048, reserve_output_tokens=4096) == 0
+
+
+def test_the_char_budget_agrees_with_the_token_budget():
+    # 둘이 갈라지면 분기는 들어간다고 보는데 실을 자리는 없는 상태가 된다.
+    tokens = allocation.prompt_token_budget(16384, reserve_output_tokens=2048)
+    chars = allocation.char_budget(16384, 0, reserve_output_tokens=2048)
+
+    assert chars == int(tokens * allocation.CHARS_PER_TOKEN)
+
+
+def test_the_estimate_does_not_claim_more_room_than_the_model_gives():
+    # 2026-09-03 실측(`qwen2.5:7b`, prompt_eval_count): 55건 62,713자가
+    # 29,910토큰이었다 — 2.10자/토큰. 상수가 이보다 크면 같은 글자를 더 적은
+    # 토큰으로 세어 예산이 헐거워지고, 프롬프트가 창을 넘는다. 넘은 것은
+    # 거부되지 않고 앞이 잘리므로 실행은 조용히 성공한다.
+    assert allocation.CHARS_PER_TOKEN <= 62_713 / 29_910
+
+    measured_chars, measured_tokens = 62_713, 29_910
+    assert measured_chars / allocation.CHARS_PER_TOKEN >= measured_tokens
+
+
 def test_a_long_system_prompt_shrinks_the_budget():
     assert allocation.char_budget(32768, 2000) == allocation.char_budget(32768, 0) - 2000
 
