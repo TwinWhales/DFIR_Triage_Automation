@@ -95,6 +95,79 @@ def test_zero_denominator_gives_none_not_zero():
     assert evaluate._ratio(0, 2) == 0.0
 
 
+# ------------------------------- 환각률 0.0% 가 두 뜻으로 읽히던 것
+#
+# 실측(`docs/limitations.md` 실물 규모 A/B) — 제약을 끈 쪽이 소견 1건을
+# `claims` 빈 배열로 내 06 이 unverifiable 로 넘겼다. 분모가 0이라 환각률이
+# 0.0% 로 찍혔고, 제약을 켠 쪽의 **진짜** 0.0%(판정 3건 전부 통과)와 표에서
+# 구별되지 않았다.
+
+
+def _stats(passed, rejected, unverifiable):
+    """06 이 실제로 싣는 모양. 동결 스키마가 ``number`` 를 요구하므로
+    ``hallucination_rate`` 는 판정 0건일 때도 0.0 이다."""
+    judged = passed + rejected
+    return {
+        "total_findings": passed + rejected + unverifiable,
+        "passed": passed,
+        "rejected": rejected,
+        "unverifiable": unverifiable,
+        "hallucination_rate": round(rejected / judged, 4) if judged else 0.0,
+    }
+
+
+def test_nothing_judged_is_not_a_rate():
+    from src.stage06_verify import verify as verify_mod
+
+    assert verify_mod.judged_rate(_stats(0, 0, 1)) is None
+    assert verify_mod.judged_rate(_stats(3, 0, 0)) == 0.0, "이쪽은 진짜 0%다"
+    assert verify_mod.judged_rate(_stats(1, 1, 5)) == 0.5
+
+
+def test_the_printed_line_says_which_zero_it_is():
+    from src.stage06_verify import verify as verify_mod
+
+    assert "판정 0건" in verify_mod.format_rate(_stats(0, 0, 1))
+    assert "0.0%" in verify_mod.format_rate(_stats(3, 0, 0))
+    assert "판정 3건" in verify_mod.format_rate(_stats(3, 0, 0))
+
+
+def test_a_case_with_nothing_judged_reports_no_rate(case_dir, truth, tmp_path):
+    verified = io.read_json(case_dir / "06_verified.json")
+    verified["unverifiable"] = [
+        {"id": e["id"], "reason": "claims 없음 (종합 판단 문장)"}
+        for e in verified["passed"] + verified["rejected"]
+    ] + verified["unverifiable"]
+    verified["passed"] = []
+    verified["rejected"] = []
+    verified["stats"] = _stats(0, 0, len(verified["unverifiable"]))
+    io.write_json(case_dir / "06_verified.json", verified)
+
+    result = evaluate.evaluate_case(_dataset_with(tmp_path, truth), case_dir)
+    assert result["interpretation"]["status"] == "평가됨"
+    assert result["interpretation"]["hallucination_rate"] is None
+    assert result["interpretation"]["judged"] == 0
+
+
+def test_an_unjudged_case_does_not_drag_the_average_to_zero():
+    """이것이 이 결함의 실제 대가다 — 잴 것이 없던 실행이 다른 케이스의
+    환각률을 절반으로 깎아 발표 수치를 좋게 만든다."""
+    real = {
+        "provenance": "human_analysis",
+        "techniques": {}, "selection": {}, "evidence": {},
+        "interpretation": {"status": "평가됨", "hallucination_rate": 0.4},
+    }
+    nothing = {
+        "provenance": "human_analysis",
+        "techniques": {}, "selection": {}, "evidence": {},
+        "interpretation": {"status": "평가됨", "hallucination_rate": None},
+    }
+    totals = evaluate.aggregate([real, nothing])
+    assert totals["hallucination_rate"] == 0.4, "0.2 가 되면 평균에 0을 섞은 것이다"
+    assert totals["hallucination_cases"] == 1
+    assert totals["cases_with_nothing_judged"] == 1, "빠졌다는 사실 자체가 수치다"
+
+
 # -------------------------------------------- 어디서 놓쳤는지 가리는가
 
 

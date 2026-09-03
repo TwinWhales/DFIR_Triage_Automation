@@ -73,12 +73,23 @@ def summarize(run: dict[str, Any]) -> dict[str, Any]:
         "steps": len(steps),
         "failed_at": failed[0] if failed else None,
         "findings": measures.get("total_findings"),
-        "hallucination_rate": measures.get("hallucination_rate"),
+        # 06 이 파일에 싣는 값은 판정 0건일 때도 0.0 이다(동결 스키마가
+        # ``number`` 를 요구한다). 그대로 찍으면 "전부 맞음"과 "잴 것이
+        # 없었음"이 같은 칸에 앉으므로 여기서 분모를 보고 가른다.
+        "judged": _judged(measures),
+        "hallucination_rate": (
+            measures.get("hallucination_rate") if _judged(measures) else None
+        ),
         "unverifiable": measures.get("unverifiable"),
         "llm_seconds": round(llm, 1),
         "total_seconds": round(total, 1),
         "file": run.get("_file"),
     }
+
+
+def _judged(measures: dict[str, Any]) -> int:
+    """환각률의 분모. ``passed + rejected`` 이고 ``unverifiable`` 은 뺀다."""
+    return int(measures.get("passed") or 0) + int(measures.get("rejected") or 0)
 
 
 def _rate(value: Any) -> str:
@@ -97,8 +108,11 @@ def render(rows: list[dict[str, Any]]) -> str:
         )
 
     header = (
-        f"{'케이스':<16} {'시작':<20} {'모델':<18} {'판정':>7} "
-        f"{'findings':>9} {'환각률':>8} {'미검증':>7} {'LLM':>8} {'전체':>8}"
+        # 앞의 "관문" 은 live_check 의 단계 판정 수, 뒤의 "판정" 은 06 이
+        # 실제로 채점한 문장 수(= 환각률의 분모)다. 둘 다 "판정"이라고 쓰면
+        # 환각률 옆의 수가 무엇의 분모인지 표에서 사라진다.
+        f"{'케이스':<16} {'시작':<20} {'모델':<18} {'관문':>7} "
+        f"{'findings':>9} {'판정':>5} {'환각률':>8} {'미검증':>7} {'LLM':>8} {'전체':>8}"
     )
     lines = [header, "─" * len(header)]
     for row in rows:
@@ -107,7 +121,8 @@ def render(rows: list[dict[str, Any]]) -> str:
             verdict += "!"
         lines.append(
             f"{str(row['case_id']):<16} {row['started_at']:<20} {str(row['model'])[:18]:<18} "
-            f"{verdict:>7} {_num(row['findings']):>9} {_rate(row['hallucination_rate']):>8} "
+            f"{verdict:>7} {_num(row['findings']):>9} {row['judged']:>5} "
+            f"{_rate(row['hallucination_rate']):>8} "
             f"{_num(row['unverifiable']):>7} {row['llm_seconds']:>7.1f}초 {row['total_seconds']:>7.1f}초"
         )
 
