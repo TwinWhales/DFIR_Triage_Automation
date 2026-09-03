@@ -1,0 +1,424 @@
+/* ------------------------------------------------------------
+   Analysis Errors
+------------------------------------------------------------ */
+
+#errors-panel {
+    position: relative;
+}
+
+
+#error-count[data-level="warning"] {
+    border-color: rgba(246, 196, 83, 0.45);
+    background: rgba(246, 196, 83, 0.08);
+    color: var(--warning);
+}
+
+
+#error-count[data-level="danger"] {
+    border-color: rgba(245, 101, 101, 0.5);
+    background: rgba(245, 101, 101, 0.08);
+    color: var(--danger);
+}
+
+
+#error-count[data-level="success"] {
+    border-color: rgba(72, 187, 120, 0.45);
+    background: rgba(72, 187, 120, 0.08);
+    color: var(--success);
+}
+
+
+/* ------------------------------------------------------------
+   Error Summary
+------------------------------------------------------------ */
+
+.error-summary {
+    display: grid;
+
+    grid-template-columns:
+        repeat(3, minmax(0, 1fr));
+
+    gap: 12px;
+
+    margin-bottom: 18px;
+}
+
+
+.error-summary-item {
+    min-height: 74px;
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: 16px;
+
+    padding: 14px 16px;
+
+    border: 1px solid var(--border);
+
+    border-radius: 9px;
+
+    background: #091625;
+}
+
+
+.error-summary-label {
+    color: var(--text-soft);
+
+    font-size: 12px;
+    font-weight: 600;
+}
+
+
+.error-summary-item strong {
+    color: var(--text);
+
+    font-size: 22px;
+    font-weight: 700;
+}
+
+
+.error-summary-item:nth-child(1) strong {
+    color: var(--warning);
+}
+
+
+.error-summary-item:nth-child(2) strong {
+    color: var(--text-soft);
+}
+
+
+.error-summary-item:nth-child(3) strong {
+    color: var(--danger);
+}
+
+
+/* ------------------------------------------------------------
+   Error List
+------------------------------------------------------------ */
+
+.error-list {
+    display: flex;
+    flex-direction: column;
+
+    gap: 10px;
+}
+
+
+.error-empty {
+    min-height: 110px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 20px;
+
+    border: 1px dashed var(--border);
+
+    border-radius: 9px;
+
+    background: rgba(255, 255, 255, 0.012);
+
+    color: var(--text-dim);
+
+    font-size: 13px;
+}
+
+
+/* ------------------------------------------------------------
+   Error Event
+------------------------------------------------------------ */
+
+.error-event {
+    overflow: hidden;
+
+    border: 1px solid var(--border);
+
+    border-radius: 9px;
+
+    background: #091625;
+}
+
+
+.error-event[data-action="retry"] {
+    border-left:
+        3px solid var(--warning);
+}
+
+
+.error-event[data-action="skip"] {
+    border-left:
+        3px solid var(--text-dim);
+}
+
+
+.error-event[data-action="abort"] {
+    border-left:
+        3px solid var(--danger);
+}
+
+
+.error-event-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: 16px;
+
+    padding: 14px 16px;
+
+    border-bottom:
+        1px solid var(--border);
+}
+
+
+.error-event-title {
+    min-width: 0;
+
+    display: flex;
+    align-items: center;
+
+    gap: 10px;
+
+    flex-wrap: wrap;
+}
+
+
+.error-stage {
+    color: var(--accent);
+
+    font-size: 12px;
+    font-weight: 700;
+}
+
+
+.error-type {
+    color: var(--text);
+
+    font-family:
+        "Cascadia Code",
+        "JetBrains Mono",
+        Consolas,
+        monospace;
+
+    font-size: 12px;
+    font-weight: 600;
+
+    overflow-wrap: anywhere;
+}
+
+
+.error-action {
+    display: inline-flex;
+    align-items: center;
+
+    min-height: 24px;
+
+    padding: 0 8px;
+
+    border-radius: 999px;
+
+    font-size: 10px;
+    font-weight: 700;
+
+    letter-spacing: 0.5px;
+
+    white-space: nowrap;
+}
+
+
+.error-action[data-action="retry"] {
+    background:
+        rgba(246, 196, 83, 0.09);
+
+    color: var(--warning);
+}
+
+
+.error-action[data-action="skip"] {
+    background:
+        rgba(112, 131, 153, 0.12);
+
+    color: var(--text-soft);
+}
+
+
+.error-action[data-action="abort"] {
+    background:
+        rgba(245, 101, 101, 0.09);
+
+    color: var(--danger);
+}
+
+
+/* ------------------------------------------------------------
+   Error Detail
+------------------------------------------------------------ */
+
+.error-event-body {
+    padding: 14px 16px;
+}
+
+
+.error-message {
+    margin: 0 0 14px;
+
+    color: var(--text-soft);
+
+    font-size: 13px;
+    line-height: 1.65;
+
+    word-break: break-word;
+}
+
+
+.error-detail-grid {
+    display: grid;
+
+    grid-template-columns:
+        repeat(2, minmax(0, 1fr));
+
+    gap: 10px;
+}
+
+
+.error-detail {
+    min-width: 0;
+
+    padding: 10px 12px;
+
+    border: 1px solid var(--border);
+
+    border-radius: 7px;
+
+    background: #06111d;
+}
+
+
+.error-detail-label {
+    display: block;
+
+    margin-bottom: 6px;
+
+    color: var(--text-dim);
+
+    font-size: 10px;
+    font-weight: 700;
+
+    text-transform: uppercase;
+
+    letter-spacing: 0.5px;
+}
+
+
+.error-detail-value {
+    display: block;
+
+    color: #c7d4e2;
+
+    font-family:
+        "Cascadia Code",
+        "JetBrains Mono",
+        Consolas,
+        monospace;
+
+    font-size: 11px;
+    line-height: 1.55;
+
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+
+.error-detail[data-kind="claimed"] {
+    border-color:
+        rgba(246, 196, 83, 0.25);
+}
+
+
+.error-detail[data-kind="actual"] {
+    border-color:
+        rgba(79, 209, 197, 0.25);
+}
+
+
+.error-meta {
+    display: flex;
+    align-items: center;
+
+    gap: 12px;
+
+    flex-wrap: wrap;
+
+    margin-top: 12px;
+
+    color: var(--text-dim);
+
+    font-size: 11px;
+}
+
+
+/* ------------------------------------------------------------
+   Errors Scrollbar
+------------------------------------------------------------ */
+
+.error-list::-webkit-scrollbar {
+    width: 9px;
+}
+
+
+.error-list::-webkit-scrollbar-track {
+    background: #06101c;
+}
+
+
+.error-list::-webkit-scrollbar-thumb {
+    background: #233951;
+
+    border-radius: 10px;
+}
+
+
+.error-list::-webkit-scrollbar-thumb:hover {
+    background: #31506f;
+}
+
+
+/* ------------------------------------------------------------
+   Responsive
+------------------------------------------------------------ */
+
+@media (max-width: 760px) {
+
+    .error-summary {
+        grid-template-columns: 1fr;
+    }
+
+
+    .error-detail-grid {
+        grid-template-columns: 1fr;
+    }
+
+
+    .error-event-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+}
+
+
+@media (max-width: 480px) {
+
+    .error-summary-item {
+        min-height: 62px;
+    }
+
+
+    .error-event-body {
+        padding: 12px;
+    }
+
+}
