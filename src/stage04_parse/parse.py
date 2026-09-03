@@ -73,6 +73,40 @@ STAGE = "04_parse"
 #: ``docs/limitations.md`` 참고.
 DEFAULT_LARGE_ARTIFACT_BYTES = 100 * 1024 * 1024  # 100MB
 
+#: 파서 ``stats`` 중 **매니페스트까지 보내는 것**.
+#:
+#: 기준은 하나다 — **산출물을 액면 그대로 읽으면 안 되는 이유가 되는가.**
+#: ``record_count``와 ``parse_errors``는 "몇 건을 읽고 몇 건을 놓쳤나"까지만
+#: 말한다. 그 둘이 멀쩡해도 값이 낡았거나(더티 하이브), 정상 경로 밖에서
+#: 나왔거나(헤더가 선언하지 않은 청크), 선별이 사실상 안 걸린(드라이브 문자
+#: 미정) 경우가 있다. 그때 콘솔 경고를 놓치면 **보고서만 읽는 사람은 알
+#: 방법이 없다** — 파서는 세고 있는데 그 수가 이 단계 밖으로 안 나갔다.
+#:
+#: 0이면 키를 만들지 않는다(``unreadable_bytes``와 같은 규약). 정보성
+#: 집계(``filtered_out``·``amcache_values_renamed``·``records`` 등)는 넣지
+#: 않는다 — 다 넣으면 이 자리가 다시 아무도 안 읽는 표가 된다.
+#:
+#: 보고서 문구는 07단계가 정한다(``stage07_report.report.RELIABILITY_NOTES``).
+#: 04는 "무엇을 셌나"까지이고 "분석가에게 무엇으로 읽히나"는 저쪽 몫이다.
+RELIABILITY_STATS: tuple[str, ...] = (
+    # 값이 낡았을 수 있다. 파싱은 성공하고 답이 틀리는 종류다.
+    "dirty_hive",
+    # 헤더가 선언하지 않은 청크에서 나온 레코드가 섞여 있다.
+    "recovered_chunks",
+    # 체크섬이 안 맞아 통째로 건너뛴 청크. ``parse_errors``에 안 잡힌다.
+    "bad_chunks",
+    # 업데이트 시퀀스 복원 실패. **전체와 비슷하면 손상이 아니라 섹터 크기
+    # 판정이 틀린 것**을 의심해야 하는데, 그 비교를 매니페스트에서 못 했다.
+    "fixup_errors",
+    # 드라이브 문자를 못 정해 경로 범위를 건너뛴 레코드. 크면 그 아티팩트가
+    # 사실상 범위 없이 05단계로 간 것이라 쿼터를 그만큼 먹는다.
+    "scope_undecidable",
+    # 프로파일이 기대한 테이블이 없거나(missing) 우리가 못 읽는 형태다
+    # (unsupported — ``WITHOUT ROWID`` 등). 둘 다 "봤는데 없었다"가 아니다.
+    "missing_tables",
+    "unsupported_tables",
+)
+
 #: 아티팩트 이름 → ``04_parsed/`` 안의 파일명.
 OUTPUT_FILENAMES: dict[str, str] = {
     "$MFT": "mft.jsonl",
@@ -359,6 +393,12 @@ def parse_artifact(
         #
         # 0이면 키를 만들지 않는다(``unreadable_bytes`` 와 같은 규약).
         entry["unsupported_version"] = int(stats["unsupported_version"])
+    for key in RELIABILITY_STATS:
+        # 파서가 세 놓고 이 단계 밖으로 안 나가던 것들. 기준과 목록은
+        # ``RELIABILITY_STATS`` 에 있다.
+        value = int(stats.get(key) or 0)
+        if value:
+            entry[key] = value
     if prune:
         # 대형 아티팩트라 시간 범위 밖 레코드를 하드 컷했다는 사실 자체를
         # 남긴다. 0건을 뺐어도 "이번 실행은 하드 컷 모드였다"는 정보다 —
