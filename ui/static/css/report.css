@@ -132,7 +132,8 @@
 .report-document table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 620px;
+    min-width: 760px;
+    table-layout: auto;
 }
 
 
@@ -162,6 +163,26 @@
 
 .report-document tr:last-child td {
     border-bottom: 0;
+}
+
+
+/* 첫 번째 열: 아티팩트 이름은 항상 한 줄 유지 */
+.report-document th:first-child,
+.report-document td:first-child {
+    width: 1%;
+    min-width: 190px;
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
+}
+
+
+/* 두 번째 열 이후: 필요한 경우 자연스럽게 줄바꿈 */
+.report-document th:not(:first-child),
+.report-document td:not(:first-child) {
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: keep-all;
 }
 
 
@@ -248,5 +269,10 @@
     .report-document th,
     .report-document td {
         padding: 10px 12px;
+    }
+
+    .report-document th:first-child,
+    .report-document td:first-child {
+        min-width: 190px;
     }
 }

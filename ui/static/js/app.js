@@ -1,24 +1,60 @@
 document.addEventListener("DOMContentLoaded", () => {
-    const caseIdInput = document.getElementById("case-id");
-    const modelSelect = document.getElementById("model");
-    const incidentInput = document.getElementById("incident");
-    const evidenceInput = document.getElementById("evidence");
+    // ============================================================
+    // 기본 입력 UI
+    // ============================================================
 
-    const browseButton = document.getElementById("browse-button");
-    const browseImageButton = document.getElementById("browse-image-button");
-    const startButton = document.getElementById("start-button");
-    const loadCaseButton = document.getElementById("load-case-button");
-    const clearButton = document.getElementById("clear-log");
+    const caseIdInput =
+        document.getElementById("case-id");
 
-    const statusBadge = document.getElementById("analysis-status");
-    const log = document.getElementById("live-log");
+    const modelSelect =
+        document.getElementById("model");
 
-    const volumePanel = document.getElementById("volume-panel");
-    const volumeList = document.getElementById("volume-list");
+    const incidentInput =
+        document.getElementById("incident");
+
+    const evidenceInput =
+        document.getElementById("evidence");
+
+    const browseButton =
+        document.getElementById("browse-button");
+
+    const browseImageButton =
+        document.getElementById("browse-image-button");
+
+    const startButton =
+        document.getElementById("start-button");
+
+    const loadCaseButton =
+        document.getElementById("load-case-button");
+
+    const clearButton =
+        document.getElementById("clear-log");
+
+    const statusBadge =
+        document.getElementById("analysis-status");
+
+    const log =
+        document.getElementById("live-log");
+
+
+    // ============================================================
+    // Volume 선택 UI
+    // ============================================================
+
+    const volumePanel =
+        document.getElementById("volume-panel");
+
+    const volumeList =
+        document.getElementById("volume-list");
+
     const continueVolumeButton =
         document.getElementById("continue-volume-button");
 
+
+    // ============================================================
     // Errors UI
+    // ============================================================
+
     const errorCount =
         document.getElementById("error-count");
 
@@ -34,20 +70,29 @@ document.addEventListener("DOMContentLoaded", () => {
     const errorList =
         document.getElementById("error-list");
 
-    // Final Report UI
+
+    // ============================================================
+    // Report UI
+    // ============================================================
+
     const reportFilename =
         document.getElementById("report-filename");
 
     const reportContainer =
         document.getElementById("report-container");
 
+
+    // ============================================================
+    // 내부 상태
+    // ============================================================
+
     let pollTimer = null;
     let selectedVolume = null;
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Evidence Folder 선택
-    // ------------------------------------------------------------
+    // ============================================================
 
     browseButton.addEventListener(
         "click",
@@ -85,7 +130,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 );
 
             } finally {
-                browseButton.disabled = false;
+                browseButton.disabled =
+                    false;
+
                 browseButton.textContent =
                     "폴더 선택";
             }
@@ -93,9 +140,9 @@ document.addEventListener("DOMContentLoaded", () => {
     );
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Disk Image 선택
-    // ------------------------------------------------------------
+    // ============================================================
 
     browseImageButton.addEventListener(
         "click",
@@ -134,7 +181,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 );
 
             } finally {
-                browseImageButton.disabled = false;
+                browseImageButton.disabled =
+                    false;
 
                 browseImageButton.textContent =
                     "디스크 이미지";
@@ -143,9 +191,9 @@ document.addEventListener("DOMContentLoaded", () => {
     );
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Live Log 초기화
-    // ------------------------------------------------------------
+    // ============================================================
 
     clearButton.addEventListener(
         "click",
@@ -155,9 +203,9 @@ document.addEventListener("DOMContentLoaded", () => {
     );
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // 기존 Case 불러오기
-    // ------------------------------------------------------------
+    // ============================================================
 
     loadCaseButton.addEventListener(
         "click",
@@ -176,7 +224,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
             stopPolling();
 
-            loadCaseButton.disabled = true;
+            loadCaseButton.disabled =
+                true;
+
             loadCaseButton.textContent =
                 "불러오는 중...";
 
@@ -197,17 +247,21 @@ document.addEventListener("DOMContentLoaded", () => {
                     `[8vidence] 기존 Case 불러오기 완료: ${caseId}`
                 );
 
-                document
-                    .getElementById(
+                const errorsPanel =
+                    document.getElementById(
                         "errors-panel"
-                    )
-                    .scrollIntoView({
+                    );
+
+                if (errorsPanel) {
+                    errorsPanel.scrollIntoView({
                         behavior: "smooth",
                         block: "start",
                     });
+                }
 
             } finally {
-                loadCaseButton.disabled = false;
+                loadCaseButton.disabled =
+                    false;
 
                 loadCaseButton.textContent =
                     "기존 Case 불러오기";
@@ -216,10 +270,9 @@ document.addEventListener("DOMContentLoaded", () => {
     );
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // 기존 Case 결과 조회
-    // Errors + Final Report
-    // ------------------------------------------------------------
+    // ============================================================
 
     async function loadCase(
         caseId
@@ -290,9 +343,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // 최초 분석 시작
-    // ------------------------------------------------------------
+    // ============================================================
 
     startButton.addEventListener(
         "click",
@@ -345,7 +398,8 @@ document.addEventListener("DOMContentLoaded", () => {
             resetErrors();
             resetReport();
 
-            startButton.disabled = true;
+            startButton.disabled =
+                true;
 
             statusBadge.textContent =
                 "시작 중";
@@ -366,9 +420,9 @@ document.addEventListener("DOMContentLoaded", () => {
     );
 
 
-    // ------------------------------------------------------------
-    // Volume 선택 후 분석 재실행
-    // ------------------------------------------------------------
+    // ============================================================
+    // NTFS Volume 선택 후 분석 재시작
+    // ============================================================
 
     continueVolumeButton.addEventListener(
         "click",
@@ -411,8 +465,10 @@ document.addEventListener("DOMContentLoaded", () => {
             );
 
             appendLog(
-                "[8vidence] 기존 임시 Case를 정리하고 선택한 볼륨으로 분석을 다시 시작합니다."
+                "[8vidence] 선택한 볼륨으로 분석을 다시 시작합니다."
             );
+
+            resetStages();
 
             await startAnalysis({
                 caseId: caseId,
@@ -426,9 +482,9 @@ document.addEventListener("DOMContentLoaded", () => {
     );
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // 분석 시작 API 호출
-    // ------------------------------------------------------------
+    // ============================================================
 
     async function startAnalysis({
         caseId,
@@ -522,9 +578,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
-    // 분석 상태 Polling
-    // ------------------------------------------------------------
+    // ============================================================
+    // 분석 상태 Polling 시작
+    // ============================================================
 
     function startPolling(
         caseId
@@ -547,6 +603,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
+    // ============================================================
+    // 분석 상태 Polling
+    // ============================================================
+
     async function pollAnalysis(
         caseId
     ) {
@@ -566,18 +626,38 @@ document.addEventListener("DOMContentLoaded", () => {
                 );
             }
 
+
+            // ----------------------------------------------------
+            // Stage 상태 + 소요시간
+            // ----------------------------------------------------
+
             updateStages(
-                data.stages
+                data.stage_details || {}
             );
+
+
+            // ----------------------------------------------------
+            // Live Log
+            // ----------------------------------------------------
 
             updateLogs(
                 data.logs
             );
 
+
+            // ----------------------------------------------------
+            // 전체 상태 Badge
+            // ----------------------------------------------------
+
             statusBadge.textContent =
                 formatAnalysisStatus(
                     data.status
                 );
+
+
+            // ----------------------------------------------------
+            // errors.jsonl
+            // ----------------------------------------------------
 
             await updateErrors(
                 caseId
@@ -620,6 +700,12 @@ document.addEventListener("DOMContentLoaded", () => {
             ) {
                 stopPolling();
 
+                // Polling을 멈추기 직전에
+                // 마지막 Stage 상태를 한 번 더 적용
+                updateStages(
+                    data.stage_details || {}
+                );
+
                 startButton.disabled =
                     false;
 
@@ -641,7 +727,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
             // ----------------------------------------------------
-            // 일반 실패
+            // 실패
             // ----------------------------------------------------
 
             if (
@@ -649,6 +735,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 "failed"
             ) {
                 stopPolling();
+
+                updateStages(
+                    data.stage_details || {}
+                );
 
                 startButton.disabled =
                     false;
@@ -690,9 +780,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Polling 중지
-    // ------------------------------------------------------------
+    // ============================================================
 
     function stopPolling() {
         if (
@@ -708,9 +798,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // 전체 분석 상태 표시명
-    // ------------------------------------------------------------
+    // ============================================================
 
     function formatAnalysisStatus(
         status
@@ -739,12 +829,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
-    // Stage 상태 업데이트
-    // ------------------------------------------------------------
+    // ============================================================
+    // Stage 상태 + 실행시간 업데이트
+    // ============================================================
 
     function updateStages(
-        stages
+        stageDetails
     ) {
         document
             .querySelectorAll(
@@ -755,16 +845,19 @@ document.addEventListener("DOMContentLoaded", () => {
                     const stageNumber =
                         element.dataset.stage;
 
-                    const state =
-                        stages[
+                    const detail =
+                        stageDetails[
                             stageNumber
-                        ] ||
+                        ] || {};
+
+                    const state =
+                        detail.status ||
                         "waiting";
 
-                    /*
-                     * CSS와 내부 로직에서는
-                     * 영문 상태값 유지.
-                     */
+                    const elapsedSeconds =
+                        detail.elapsed_seconds;
+
+                    // CSS에서 사용하므로 영문 상태값 유지
                     element.dataset.state =
                         state;
 
@@ -774,21 +867,158 @@ document.addEventListener("DOMContentLoaded", () => {
                         );
 
                     if (
-                        stateElement
+                        !stateElement
+                    ) {
+                        return;
+                    }
+
+                    const stateLabel =
+                        formatStageState(
+                            state
+                        );
+
+                    // 대기 상태는 시간 표시 없음
+                    if (
+                        state === "waiting"
                     ) {
                         stateElement.textContent =
-                            formatStageState(
-                                state
-                            );
+                            stateLabel;
+
+                        return;
                     }
+
+                    // 시간이 아직 없는 경우
+                    if (
+                        elapsedSeconds ===
+                            null ||
+                        elapsedSeconds ===
+                            undefined
+                    ) {
+                        stateElement.textContent =
+                            stateLabel;
+
+                        return;
+                    }
+
+                    const elapsedLabel =
+                        formatElapsedTime(
+                            elapsedSeconds
+                        );
+
+                    // 실행 중
+                    if (
+                        state === "running"
+                    ) {
+                        stateElement.innerHTML =
+                            "";
+
+                        const spinner =
+                            document.createElement(
+                                "span"
+                            );
+
+                        spinner.className =
+                            "stage-spinner";
+
+                        spinner.setAttribute(
+                            "aria-hidden",
+                            "true"
+                        );
+
+                        const text =
+                            document.createElement(
+                                "span"
+                            );
+
+                        text.textContent =
+                            `${stateLabel} · 경과 ${elapsedLabel}`;
+
+                        stateElement.appendChild(
+                            spinner
+                        );
+
+                        stateElement.appendChild(
+                            text
+                        );
+
+                        return;
+                    }
+
+                    // 완료 / 실패
+                    stateElement.textContent =
+                        `${stateLabel} · ${elapsedLabel}`;
                 }
             );
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
+    // Stage 실행시간 표시
+    // ============================================================
+
+    function formatElapsedTime(
+        seconds
+    ) {
+        const numericSeconds =
+            Number(
+                seconds
+            );
+
+        if (
+            !Number.isFinite(
+                numericSeconds
+            )
+        ) {
+            return "0초";
+        }
+
+        let totalSeconds =
+            Math.round(
+                numericSeconds
+            );
+
+        if (
+            numericSeconds > 0 &&
+            totalSeconds === 0
+        ) {
+            totalSeconds = 1;
+        }
+
+        totalSeconds =
+            Math.max(
+                0,
+                totalSeconds
+            );
+
+        if (
+            totalSeconds < 60
+        ) {
+            return `${totalSeconds}초`;
+        }
+
+        const minutes =
+            Math.floor(
+                totalSeconds / 60
+            );
+
+        const remainingSeconds =
+            totalSeconds % 60;
+
+        if (
+            remainingSeconds === 0
+        ) {
+            return `${minutes}분`;
+        }
+
+        return (
+            `${minutes}분 ${remainingSeconds}초`
+        );
+    }
+
+
+    // ============================================================
     // Stage 상태 표시명
-    // ------------------------------------------------------------
+    // ============================================================
 
     function formatStageState(
         state
@@ -809,14 +1039,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         return (
             labels[state] ||
-            state
+            String(state)
         );
     }
 
 
-    // ------------------------------------------------------------
-    // Volume Selection 표시
-    // ------------------------------------------------------------
+    // ============================================================
+    // Volume 선택 UI
+    // ============================================================
 
     function showVolumeSelection(
         candidates
@@ -834,7 +1064,7 @@ document.addEventListener("DOMContentLoaded", () => {
             !candidates.length
         ) {
             appendLog(
-                "[UI 오류] 볼륨 선택이 필요하지만 NTFS 볼륨 후보 정보를 찾지 못했습니다."
+                "[UI 오류] 볼륨 선택이 필요하지만 NTFS 볼륨 후보를 찾지 못했습니다."
             );
 
             return;
@@ -935,7 +1165,6 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         );
 
-
         volumePanel.hidden =
             false;
 
@@ -949,9 +1178,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
-    // Volume Selection 숨기기
-    // ------------------------------------------------------------
+    // ============================================================
+    // Volume 선택 UI 숨기기
+    // ============================================================
 
     function hideVolumeSelection() {
         volumePanel.hidden =
@@ -968,9 +1197,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Live Log 자동 스크롤 여부
-    // ------------------------------------------------------------
+    // ============================================================
 
     function isLogNearBottom() {
         const threshold =
@@ -988,9 +1217,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Live Log 전체 업데이트
-    // ------------------------------------------------------------
+    // ============================================================
 
     function updateLogs(
         logs
@@ -1005,11 +1234,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
         /*
          * 사용자가 로그 맨 아래에 있을 때만
-         * 새 로그를 자동으로 따라간다.
+         * 새 로그를 따라 자동으로 내려간다.
          *
-         * 사용자가 과거 로그를 보기 위해
-         * 위로 스크롤했다면 현재 위치를 유지한다.
+         * 과거 로그를 보기 위해 위로 스크롤했다면
+         * 현재 위치를 유지한다.
          */
+
         const shouldAutoScroll =
             isLogNearBottom();
 
@@ -1034,9 +1264,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Live Log 한 줄 추가
-    // ------------------------------------------------------------
+    // ============================================================
 
     function appendLog(
         message
@@ -1070,9 +1300,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Errors API 조회
-    // ------------------------------------------------------------
+    // ============================================================
 
     async function updateErrors(
         caseId
@@ -1118,9 +1348,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Errors 화면 렌더링
-    // ------------------------------------------------------------
+    // ============================================================
 
     function renderErrors(
         data
@@ -1234,9 +1464,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Error Event 한 건 생성
-    // ------------------------------------------------------------
+    // ============================================================
 
     function createErrorEvent(
         event
@@ -1462,7 +1692,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 );
 
             attempt.textContent =
-                `시도 ${event.attempt}회`;
+                `시도 ${event.attempt}`;
 
             meta.appendChild(
                 attempt
@@ -1528,9 +1758,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Error Detail 생성
-    // ------------------------------------------------------------
+    // ============================================================
 
     function addErrorDetail(
         parent,
@@ -1604,9 +1834,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Error 값 표시
-    // ------------------------------------------------------------
+    // ============================================================
 
     function formatErrorValue(
         value
@@ -1655,9 +1885,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Error Stage 표시명
-    // ------------------------------------------------------------
+    // ============================================================
 
     function formatErrorStage(
         stage
@@ -1696,9 +1926,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Error Action 표시명
-    // ------------------------------------------------------------
+    // ============================================================
 
     function formatErrorAction(
         action
@@ -1721,9 +1951,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Timestamp 표시
-    // ------------------------------------------------------------
+    // ============================================================
 
     function formatTimestamp(
         value
@@ -1749,9 +1979,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Final Report API 조회
-    // ------------------------------------------------------------
+    // ============================================================
 
     async function updateReport(
         caseId
@@ -1797,9 +2027,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Final Report 화면 렌더링
-    // ------------------------------------------------------------
+    // ============================================================
 
     function renderReport(
         data
@@ -1845,13 +2075,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
-    // Final Report 화면 초기화
-    // ------------------------------------------------------------
+    // ============================================================
+    // Final Report 초기화
+    // ============================================================
 
     function resetReport(
         message =
-            "Case를 불러오거나 분석을 완료하면 최종 보고서가 여기에 표시됩니다."
+            "Case를 불러오거나 분석이 완료되면 최종 보고서가 여기에 표시됩니다."
     ) {
         reportFilename.textContent =
             "불러온 보고서 없음";
@@ -1879,9 +2109,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
-    // Errors 화면 초기화
-    // ------------------------------------------------------------
+    // ============================================================
+    // Errors 초기화
+    // ============================================================
 
     function resetErrors() {
         errorCount.textContent =
@@ -1922,9 +2152,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    // ------------------------------------------------------------
+    // ============================================================
     // Stage 화면 초기화
-    // ------------------------------------------------------------
+    // ============================================================
 
     function resetStages() {
         document
