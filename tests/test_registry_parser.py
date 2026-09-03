@@ -441,6 +441,55 @@ def test_one_bad_value_does_not_lose_the_key():
     assert parser.stats["parse_errors"] == 1
 
 
+def test_the_same_failure_is_logged_once_and_counted(caplog):
+    """실측 `K-ALERT` 에서 90건이 나왔고 **90건 전부 같은 사유**였다
+    (`Unknown VK Record type 0x12` — 장치 속성의 DEVPROP 타입).
+
+    그 90줄이 04단계 출력을 덮어 다른 경고를 가린다. `$MFT` 의
+    `fixup_errors` 와 `$UsnJrnl` 의 미지원 구간이 이미 같은 규약이다.
+    """
+    import logging
+
+    parser = _parser()
+    key = FakeKey(
+        "k",
+        0x1000,
+        values=[
+            FakeValue(f"v{i}", raises=Exception("Unknown VK Record type 0x12"))
+            for i in range(90)
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING, logger=registry._log.name):
+        parser._build(key, "SYSTEM\\k", 0x1000)
+
+    assert parser.stats["value_errors"] == 90, "집계는 레코드 단위 그대로다"
+    assert len(caplog.records) == 1, "90줄이 다른 경고를 덮었다"
+    assert "수만 셉니다" in caplog.records[0].getMessage()
+
+
+def test_a_different_failure_still_gets_its_own_line(caplog):
+    """묶으면 어느 사유가 몇 건인지 말할 수 없다. 미지원 구간을 버전별로
+    나눈 것과 같은 근거다."""
+    import logging
+
+    parser = _parser()
+    key = FakeKey(
+        "k",
+        0x1000,
+        values=[
+            FakeValue("a", raises=Exception("Unknown VK Record type 0x12")),
+            FakeValue("b", raises=Exception("Unknown VK Record type 0x12")),
+            FakeValue("c", raises=ValueError("corrupt cell")),
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING, logger=registry._log.name):
+        parser._build(key, "SYSTEM\\k", 0x1000)
+
+    assert len(caplog.records) == 2
+
+
 def test_records_match_the_parsed_record_schema():
     parser = _parser()
     root = FakeKey(
