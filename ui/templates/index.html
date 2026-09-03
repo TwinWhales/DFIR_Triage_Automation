@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>8vidence | DFIR Triage</title>
+
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/errors.css">
+    <link rel="stylesheet" href="/static/css/report.css">
+    <link rel="stylesheet" href="/static/css/evidence.css">
+</head>
+
+<body>
+
+<header class="topbar">
+
+    <div class="brand">
+
+        <img
+            src="/static/images/logo.png"
+            alt="8vidence Logo"
+            class="brand-logo"
+        >
+
+        <div class="brand-text">
+
+            <div class="brand-title">
+                8vidence
+            </div>
+
+            <div class="brand-subtitle">
+                Evidence-driven DFIR Triage
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <div class="server-status">
+        <span class="status-dot"></span>
+        로컬 서버
+    </div>
+
+</header>
+
+
+<main class="container">
+
+    <!-- ========================================================
+         새 분석
+    ========================================================= -->
+
+    <section class="panel">
+
+        <div class="panel-header">
+
+            <div>
+
+                <h2>새 분석</h2>
+
+                <p>
+                    침해사고 정보와 분석할 증거를 입력합니다.
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <div class="form-grid">
+
+            <div class="form-group">
+
+                <label for="case-id">
+                    Case ID
+                </label>
+
+                <input
+                    id="case-id"
+                    type="text"
+                    placeholder="예: KIOSK-2026-001"
+                >
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label for="model">
+                    분석 모델
+                </label>
+
+                <select id="model">
+
+                    <option value="qwen2.5:7b">
+                        qwen2.5:7b
+                    </option>
+
+                </select>
+
+            </div>
+
+        </div>
+
+
+        <div class="form-group">
+
+            <label for="incident">
+                사고 내용
+            </label>
+
+            <textarea
+                id="incident"
+                rows="5"
+                placeholder="예: 키오스크 단말기에 비인가 USB가 삽입된 후 수상한 서비스가 실행된 정황이 발견되었습니다."
+            ></textarea>
+
+        </div>
+
+
+        <div class="form-group">
+
+            <label for="evidence">
+                증거 경로
+            </label>
+
+            <div class="evidence-row">
+
+                <input
+                    id="evidence"
+                    type="text"
+                    placeholder="C:\evidence\KAPE_Results\...\C"
+                >
+
+                <div class="evidence-actions">
+
+                    <button
+                        id="browse-button"
+                        type="button"
+                        class="secondary-button"
+                    >
+                        폴더 선택
+                    </button>
+
+                    <button
+                        id="browse-image-button"
+                        type="button"
+                        class="secondary-button"
+                    >
+                        디스크 이미지
+                    </button>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <div class="action-row">
+
+            <button
+                id="start-button"
+                type="button"
+                class="primary-button"
+            >
+                분석 시작
+            </button>
+
+            <button
+                id="load-case-button"
+                type="button"
+                class="secondary-button"
+            >
+                기존 Case 불러오기
+            </button>
+
+        </div>
+
+    </section>
+
+
+    <!-- ========================================================
+         NTFS Volume 선택
+    ========================================================= -->
+
+    <section
+        id="volume-panel"
+        class="panel"
+        hidden
+    >
+
+        <div class="panel-header">
+
+            <div>
+
+                <h2>NTFS 볼륨 선택</h2>
+
+                <p>
+                    디스크 이미지에서 여러 NTFS 볼륨이 발견되었습니다.
+                    분석할 볼륨을 직접 선택해주세요.
+                </p>
+
+            </div>
+
+            <span class="status-badge">
+                선택 필요
+            </span>
+
+        </div>
+
+
+        <div id="volume-list">
+        </div>
+
+
+        <div class="action-row">
+
+            <button
+                id="continue-volume-button"
+                type="button"
+                class="primary-button"
+                disabled
+            >
+                선택한 볼륨으로 분석 계속
+            </button>
+
+        </div>
+
+    </section>
+
+
+    <!-- ========================================================
+         분석 진행 상태
+    ========================================================= -->
+
+    <section class="panel">
+
+        <div class="panel-header">
+
+            <div>
+
+                <h2>분석 진행 상태</h2>
+
+                <p>
+                    DFIR 파이프라인의 단계별 진행 상태입니다.
+                </p>
+
+            </div>
+
+            <span
+                id="analysis-status"
+                class="status-badge"
+            >
+                준비
+            </span>
+
+        </div>
+
+
+        <div class="pipeline">
+
+            <div
+                class="stage"
+                data-stage="01"
+                data-state="waiting"
+            >
+                <span class="stage-number">
+                    01
+                </span>
+
+                <span class="stage-name">
+                    입력
+                </span>
+
+                <span class="stage-state">
+                    대기
+                </span>
+            </div>
+
+
+            <div
+                class="stage"
+                data-stage="02"
+                data-state="waiting"
+            >
+                <span class="stage-number">
+                    02
+                </span>
+
+                <span class="stage-name">
+                    정규화
+                </span>
+
+                <span class="stage-state">
+                    대기
+                </span>
+            </div>
+
+
+            <div
+                class="stage"
+                data-stage="03"
+                data-state="waiting"
+            >
+                <span class="stage-number">
+                    03
+                </span>
+
+                <span class="stage-name">
+                    아티팩트 선별
+                </span>
+
+                <span class="stage-state">
+                    대기
+                </span>
+            </div>
+
+
+            <div
+                class="stage"
+                data-stage="04"
+                data-state="waiting"
+            >
+                <span class="stage-number">
+                    04
+                </span>
+
+                <span class="stage-name">
+                    파싱
+                </span>
+
+                <span class="stage-state">
+                    대기
+                </span>
+            </div>
+
+
+            <div
+                class="stage"
+                data-stage="05"
+                data-state="waiting"
+            >
+                <span class="stage-number">
+                    05
+                </span>
+
+                <span class="stage-name">
+                    근거 해석
+                </span>
+
+                <span class="stage-state">
+                    대기
+                </span>
+            </div>
+
+
+            <div
+                class="stage"
+                data-stage="06"
+                data-state="waiting"
+            >
+                <span class="stage-number">
+                    06
+                </span>
+
+                <span class="stage-name">
+                    근거 검증
+                </span>
+
+                <span class="stage-state">
+                    대기
+                </span>
+            </div>
+
+
+            <div
+                class="stage"
+                data-stage="07"
+                data-state="waiting"
+            >
+                <span class="stage-number">
+                    07
+                </span>
+
+                <span class="stage-name">
+                    보고서 생성
+                </span>
+
+                <span class="stage-state">
+                    대기
+                </span>
+            </div>
+
+        </div>
+
+
+        <!-- ====================================================
+             실시간 로그
+        ===================================================== -->
+
+        <div class="log-section">
+
+            <div class="log-header">
+
+                <h3>
+                    실시간 로그
+                </h3>
+
+                <button
+                    id="clear-log"
+                    type="button"
+                    class="text-button"
+                >
+                    로그 지우기
+                </button>
+
+            </div>
+
+            <pre id="live-log">8vidence 준비 완료.</pre>
+
+        </div>
+
+    </section>
+
+
+    <!-- ========================================================
+         분석 오류
+    ========================================================= -->
+
+    <section
+        id="errors-panel"
+        class="panel"
+    >
+
+        <div class="panel-header">
+
+            <div>
+
+                <h2>
+                    분석 오류 및 처리 내역
+                </h2>
+
+                <p>
+                    파이프라인 실행 중 발생한 오류,
+                    경고 및 재시도 기록입니다.
+                </p>
+
+            </div>
+
+            <span
+                id="error-count"
+                class="status-badge"
+                data-level="success"
+            >
+                0건
+            </span>
+
+        </div>
+
+
+        <div
+            id="error-summary"
+            class="error-summary"
+        >
+
+            <div class="error-summary-item">
+
+                <span class="error-summary-label">
+                    재시도
+                </span>
+
+                <strong id="error-retry-count">
+                    0
+                </strong>
+
+            </div>
+
+
+            <div class="error-summary-item">
+
+                <span class="error-summary-label">
+                    건너뜀
+                </span>
+
+                <strong id="error-skip-count">
+                    0
+                </strong>
+
+            </div>
+
+
+            <div class="error-summary-item">
+
+                <span class="error-summary-label">
+                    중단
+                </span>
+
+                <strong id="error-abort-count">
+                    0
+                </strong>
+
+            </div>
+
+        </div>
+
+
+        <div
+            id="error-list"
+            class="error-list"
+        >
+
+            <div
+                id="error-empty"
+                class="error-empty"
+            >
+                아직 기록된 오류가 없습니다.
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- ========================================================
+         최종 보고서
+    ========================================================= -->
+
+    <section
+        id="report-panel"
+        class="panel"
+    >
+
+        <div class="panel-header">
+
+            <div>
+
+                <h2>
+                    최종 분석 보고서
+                </h2>
+
+                <p>
+                    Stage 07에서 생성된
+                    침해사고 분석 보고서입니다.
+                </p>
+
+            </div>
+
+
+            <div class="report-meta">
+
+                <span
+                    id="report-filename"
+                    class="report-filename"
+                >
+                    불러온 보고서 없음
+                </span>
+
+            </div>
+
+        </div>
+
+
+        <div
+            id="report-container"
+            class="report-container"
+        >
+
+            <div
+                id="report-empty"
+                class="report-empty"
+            >
+                Case를 불러오거나 분석을 완료하면
+                최종 보고서가 여기에 표시됩니다.
+            </div>
+
+        </div>
+
+
+        <!-- ====================================================
+             Evidence Detail Drawer
+        ===================================================== -->
+
+        <div
+            id="evidence-detail-panel"
+            class="evidence-detail-panel"
+            hidden
+        >
+
+            <div class="evidence-detail-header">
+
+                <div>
+
+                    <h3 class="evidence-detail-title">
+                        근거 상세
+                    </h3>
+
+                    <div
+                        id="evidence-detail-ref"
+                        class="evidence-detail-ref"
+                    >
+                    </div>
+
+                </div>
+
+
+                <button
+                    id="evidence-close-button"
+                    type="button"
+                    class="evidence-close-button"
+                >
+                    닫기
+                </button>
+
+            </div>
+
+
+            <div
+                id="evidence-detail-content"
+            >
+            </div>
+
+        </div>
+
+    </section>
+
+</main>
+
+
+<script src="/static/js/report.js"></script>
+<script src="/static/js/app.js"></script>
+
+</body>
+
+</html>

@@ -1,0 +1,252 @@
+/* ============================================================
+   8vidence - Final Report
+   ============================================================ */
+
+.report-container {
+    min-height: 180px;
+}
+
+
+/* ------------------------------------------------------------
+   Empty State
+   ------------------------------------------------------------ */
+
+.report-empty {
+    padding: 42px 24px;
+    text-align: center;
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 14px;
+}
+
+
+/* ------------------------------------------------------------
+   Report Document
+   ------------------------------------------------------------ */
+
+.report-document {
+    line-height: 1.75;
+    color: rgba(255, 255, 255, 0.86);
+    overflow-wrap: anywhere;
+}
+
+
+/* ------------------------------------------------------------
+   Headings
+   ------------------------------------------------------------ */
+
+.report-document h1 {
+    margin: 0 0 28px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+
+    font-size: 26px;
+    line-height: 1.35;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+
+.report-document h2 {
+    margin: 36px 0 18px;
+
+    font-size: 20px;
+    line-height: 1.4;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+
+.report-document h3 {
+    margin: 28px 0 14px;
+
+    font-size: 16px;
+    line-height: 1.4;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.92);
+}
+
+
+/* ------------------------------------------------------------
+   Paragraph
+   ------------------------------------------------------------ */
+
+.report-document p {
+    margin: 12px 0;
+}
+
+
+/* ------------------------------------------------------------
+   Lists
+   ------------------------------------------------------------ */
+
+.report-document ul {
+    margin: 14px 0;
+    padding-left: 24px;
+}
+
+
+.report-document li {
+    margin: 7px 0;
+}
+
+
+/* ------------------------------------------------------------
+   Strong
+   ------------------------------------------------------------ */
+
+.report-document strong {
+    color: #ffffff;
+    font-weight: 700;
+}
+
+
+/* ------------------------------------------------------------
+   Divider
+   ------------------------------------------------------------ */
+
+.report-document hr {
+    margin: 34px 0;
+
+    border: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+
+/* ------------------------------------------------------------
+   Table
+   ------------------------------------------------------------ */
+
+.report-table-wrapper {
+    width: 100%;
+    margin: 18px 0 26px;
+
+    overflow-x: auto;
+
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 10px;
+}
+
+
+.report-document table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 620px;
+}
+
+
+.report-document th,
+.report-document td {
+    padding: 12px 14px;
+
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+
+    text-align: left;
+    vertical-align: top;
+
+    font-size: 13px;
+}
+
+
+.report-document th {
+    background: rgba(255, 255, 255, 0.045);
+
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+
+.report-document tr:last-child td {
+    border-bottom: 0;
+}
+
+
+/* ------------------------------------------------------------
+   Inline Code / Evidence Reference
+   ------------------------------------------------------------ */
+
+.report-document code {
+    padding: 2px 6px;
+
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+
+    background: rgba(255, 255, 255, 0.05);
+
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+}
+
+
+.evidence-ref {
+    display: inline-block;
+
+    padding: 2px 7px;
+
+    border: 1px solid rgba(59, 214, 196, 0.28);
+    border-radius: 5px;
+
+    background: rgba(59, 214, 196, 0.08);
+
+    color: #62e6d3;
+
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    font-weight: 700;
+
+    cursor: pointer;
+
+    transition:
+        background 0.15s ease,
+        border-color 0.15s ease;
+}
+
+
+.evidence-ref:hover {
+    background: rgba(59, 214, 196, 0.15);
+    border-color: rgba(59, 214, 196, 0.48);
+}
+
+
+/* ------------------------------------------------------------
+   Report Metadata
+   ------------------------------------------------------------ */
+
+.report-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 12px;
+}
+
+
+.report-filename {
+    font-family: Consolas, "Courier New", monospace;
+}
+
+
+/* ------------------------------------------------------------
+   Responsive
+   ------------------------------------------------------------ */
+
+@media (max-width: 720px) {
+
+    .report-document h1 {
+        font-size: 22px;
+    }
+
+    .report-document h2 {
+        font-size: 18px;
+    }
+
+    .report-document th,
+    .report-document td {
+        padding: 10px 12px;
+    }
+}

@@ -14,3 +14,6 @@ dissect.target>=3.25
 # SRUM(SRUDB.dat) — ESE 데이터베이스. dissect.target 과 같은 계열이라
 # 새 벤더가 아니다. work-guide.md 3.1: 로그 계층은 검증된 라이브러리.
 dissect.esedb>=3.9
+
+fastapi>=0.141
+uvicorn>=0.52
