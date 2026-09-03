@@ -3,14 +3,15 @@
   "policy": "여기 있는 문장은 전부 통과하거나(claims 있음) 검증불가로 분류되어야(claims 없음) 한다. 기대와 다르면 검증기 결함이다. 새 비교 규칙을 넣을 때마다 여기에 사례를 추가한다. expect 가 rejected 인 사례는 **아직 못 고친 것**이고 gap 에 사유와 고칠 자리를 적는다 — 고쳐지면 expect 를 passed 로 되돌린다. 이 목록이 낡지 않게 tests/test_benchmark.py 가 함께 검사한다.",
   "input_refs": [
     "AMCACHE#15044",
+    "AMCACHE#20117",
     "EVTX-SEC#40912",
     "EVTX-SEC#40915",
-    "SYSMON#77",
-    "SYSMON#91",
     "MFT#12345",
     "MFT#12346",
     "MFT#12400",
-    "PF#689046"
+    "PF#689046",
+    "SYSMON#77",
+    "SYSMON#91"
   ],
   "cases": [
     {
@@ -686,6 +687,22 @@
           "ref": "PF#689046",
           "field": "path",
           "value": "C:\\WINDOWS\\SYSTEM32\\SVCHOST.EXE"
+        }
+      ]
+    },
+    {
+      "id": "V41",
+      "risk": "Amcache InstallDate 가 MM/dd/yyyy 로 저장돼 있다",
+      "why": "이 프로젝트의 다른 시각은 전부 ISO 8601 이고 모델도 그렇게 쓴다. 레지스트리만 RegSZ 문자열이라 parse_timestamp 가 한쪽만 파싱하고 '같은 종류의 값이 아니다'로 떨어진다. 실측 이미지의 InventoryApplication 78건이 전부 이 표기다 — 설치 시각을 인용한 정상 문장이 전량 기각되고 있었다.",
+      "statement": "Mock POS Client 가 2017-03-20 03:53:52 에 설치되었습니다.",
+      "refs": [
+        "AMCACHE#20117"
+      ],
+      "claims": [
+        {
+          "ref": "AMCACHE#20117",
+          "field": "fields.InstallDate",
+          "value": "2017-03-20T03:53:52Z"
         }
       ]
     }
