@@ -42,6 +42,7 @@ from ..common import errors as errlog
 from ..common import io, llm, schema
 from ..common.llm import DEFAULT_NUM_CTX, DEFAULT_TIMEOUT
 from ..stage03_select import mapping_loader
+from ..stage06_verify import comparators
 from . import allocation, record_filter
 from .llm_client import DEFAULT_MODEL, FINDINGS_BODY_FIELDS, InterpretClient
 
@@ -55,6 +56,11 @@ __all__ = [
 
 STAGE = "05_interpret"
 MAX_ATTEMPTS = 3
+
+#: claim 값 대조의 허용 오차. **06단계의 ``DEFAULT_TOLERANCE_SECONDS`` 와
+#: 같은 값이어야 한다.** 두 단계가 갈라지면 05가 통과시킨 문장을 06이
+#: 기각하거나 그 반대가 되고, 그때 어느 쪽이 옳은지 가릴 수단이 없다.
+CLAIM_TOLERANCE_SECONDS = 1.0
 
 
 class ClaimValidationError(ValueError):
@@ -190,26 +196,35 @@ def _get_claim_field(
 
 
 def _claim_values_equal(
+    field: str,
     claimed: Any,
     actual: Any,
 ) -> bool:
-    """05단계 claim의 값이 원본 값과 같은지 보수적으로 비교한다.
+    """claim의 값이 원본 값과 같은지 **06단계와 같은 규칙으로** 본다.
 
-    이 단계의 목적은 모델이 실제 레코드 값을 그대로 사용했는지 확인하는 것이다.
+    이 관문이 잡으려는 것은 "모델이 레코드에 없는 값을 지어냈는가"다.
+    그것은 위임해도 그대로 잡힌다 — 지어낸 값은 ``compare`` 도 기각하고,
+    없는 ref·field 는 이 함수에 오기 전에 걸린다. 위임으로 느슨해지는 것은
+    **표기 차이뿐**이고, 그것은 애초에 이 관문이 잡을 대상이 아니다.
 
-    따라서:
-    - 문자열은 앞뒤 공백을 제외하고 정확히 비교한다.
-    - 숫자/불리언은 타입까지 포함해 그대로 비교한다.
-    - 리스트와 객체도 Python 값 기준으로 그대로 비교한다.
-    - 부분 문자열, 경로 정규화, Registry 표시 문자열 정규화는 하지 않는다.
+    **여기서 자체 규칙을 세우지 않는다.** 한때 정확 문자열 비교를 했는데,
+    06단계가 "관대하게 본다"고 명시한 것을 05단계가 기각했다. 같은 질문에
+    관문이 둘인데 답이 다르면 어느 쪽이 옳은지 가릴 수 없고, 이 단계에는
+    폴백이 없어 불일치가 문장 기각이 아니라 **파이프라인 중단**이 된다.
+    실제로 골든 픽스처의 claim 6건 중 3건이 그렇게 막혀 관통이 죽었다.
 
-    의미상 동등한 표기 차이를 허용하는 최종 판단은 06단계의 역할이다.
+    ``flags`` 는 위임하지 않으면 **만족 자체가 불가능하다.** 레코드의
+    ``flags`` 는 배열인데 ``schemas/findings.schema.json`` 이 ``value`` 를
+    스칼라로 못 박아, 스키마를 지킨 어떤 값도 배열과 같아질 수 없다.
+    스키마가 "타입 정규화는 comparators.py가 맡는다"고 적어 둔 이유다.
     """
 
-    if isinstance(claimed, str) and isinstance(actual, str):
-        return claimed.strip() == actual.strip()
-
-    return claimed == actual
+    return comparators.compare(
+        field,
+        claimed,
+        actual,
+        tolerance_seconds=CLAIM_TOLERANCE_SECONDS,
+    )
 
 
 def validate_model_claims(
@@ -222,7 +237,8 @@ def validate_model_claims(
 
     1. ref가 실제 전달 레코드에 존재해야 한다.
     2. field가 해당 ref의 레코드에 실제로 존재해야 한다.
-    3. value가 그 field의 실제 값과 일치해야 한다.
+    3. value가 그 field의 실제 값과 일치해야 한다. 같은가의 판단은
+       06단계 비교기에 위임한다 (``_claim_values_equal``).
 
     실패하면 모델에게 구체적인 feedback을 주고 다음 시도에서 수정하게 한다.
     """
@@ -296,7 +312,7 @@ def validate_model_claims(
                     claimed=claimed,
                 )
 
-            if not _claim_values_equal(claimed, actual):
+            if not _claim_values_equal(resolved_field, claimed, actual):
                 raise ClaimValidationError(
                     (
                         f"{finding_id} claim #{claim_index}: "
