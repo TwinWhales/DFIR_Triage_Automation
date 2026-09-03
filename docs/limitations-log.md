@@ -1195,3 +1195,107 @@ SYSMON#212  EID=5  fields=[Image, ProcessGuid, ProcessId, RuleName, User, UtcTim
 **다만 재지 않았습니다** — K-ALERT 케이스가 `cases/` 에 남아 있지
 않습니다. 그래서 "발표에 실을 실물 환각률 수치가 없다"는 쪽으로 고쳐
 적었고, 그것은 지금도 참이라 `docs/limitations.md` 에 남습니다.
+
+---
+
+## 2026-09-04 · 근거 추적이 접두어 28종 중 3종만 알았다 (**해결됨**)
+
+보고서의 ref 를 누르면 04단계 원본 레코드를 보여 주는 기능이, **04단계가
+정상적으로 만들어 둔 레코드를 못 찾았습니다.**
+
+### 증상은 같이 배포되는 케이스에서 이미 드러나 있었다
+
+`cases/C-001/07_report.md` 에 ref 가 3개 있는데 눌리는 것이 1개였습니다.
+
+| ref | 프론트엔드 정규식 | 백엔드 |
+|---|---|---|
+| `MFT#12345` | 잡힘 | 200 |
+| `EVTX-SEC#40912` | 못 잡음 | **400** |
+| `EVTX-SEC#40915` | 못 잡음 | **400** |
+
+`{"detail":"지원하지 않는 Evidence Ref입니다: EVTX-SEC#40912"}`
+
+`04_parsed/` 에는 `mft.jsonl` 과 `evtx_security.jsonl` 딱 둘이 있었으므로,
+**아티팩트 2개 중 1개에서 근거 추적이 안 되는 상태**였습니다.
+
+### 원인 — 두 곳이 각자 손으로 적었다
+
+`src/common/refs.py` 는 접두어 **28종**을 압니다. 그런데
+
+- `ui/routes/results.py` 의 `EVIDENCE_FILES` — 3줄짜리 손수 만든 사전
+- `ui/static/js/report.js` 의 `EVIDENCE_REF_PATTERN` —
+  `/\b(?:REG-SYS|USN|MFT)#.../g`
+
+이고, `ui/` 는 `src/common/refs.py` 를 **한 번도 import 하지 않았습니다.**
+CLAUDE.md 가 *"`ref` 문자열은 `src/common/refs.py`를 경유한다"* 로 못 박은
+자리입니다.
+
+빠진 25종에 `EVTX-AAOP`·`EVTX-AAADM`·`EVTX-AABRK`·`EVTX-DRV`·
+`EVTX-RDPCM` 이 들어 있었습니다 — **키오스크 축 다섯 채널이 전부**입니다.
+목표 시나리오를 돌리면 근거 추적이 그 채널에 대해 통째로 안 되는
+상태였습니다.
+
+### 고친 방식 — 목록을 없애고 유도한다 (손으로 적지 않는다)
+
+`ui/evidence_refs.py` 를 새로 두고, 두 원본에서 사슬로 유도합니다.
+
+```
+접두어 → refs.PREFIX_ARTIFACT → 아티팩트
+      → stage04_parse.parse.OUTPUT_FILENAMES → 파일명
+```
+
+두 맵이 28 ↔ 28 로 정합했고 양쪽 어디에도 빠짐이 없었습니다. 한쪽만 아는
+아티팩트가 생기면 **기동 시점에 사유를 내며 멈춥니다** — 조용히 빼면 그
+ref 만 추적이 안 되는, 방금 고친 그 상태로 돌아갑니다.
+
+프론트엔드는 접두어를 `index.html` 이 실어 보냅니다(`window.
+EVIDENCE_REF_PREFIXES`). 따로 받아 오게 하면 보고서가 먼저 그려질 수 있고,
+그때는 ref 가 눌리지 않는 채로 남습니다. 정규식은 **긴 접두어부터** 교대에
+넣습니다 — 지금 목록에는 겹치는 짝이 없지만, 늘어날 때 순서가 없으면
+짧은 쪽이 먼저 걸려 뒤가 잘립니다.
+
+뒤쪽 `\b` 는 쓰지 않습니다. ref 식별자는 `.` 이나 `:` 로 끝날 수 있어
+`\b` 를 붙이면 그런 ref 가 통째로 빠집니다.
+
+### 확인
+
+`EVTX-SEC#40912` 가 200 이고, 응답이 `evtx_security.jsonl` 1번 줄의
+`event_id: 4720`·`TargetUserName: svc_backup` 레코드입니다. 브라우저에서
+C-001 을 불러오면 ref 3개가 **전부** 버튼이 되고, 눌렀을 때 근거 상세
+패널에 원본 JSON 까지 나옵니다.
+
+`tests/test_ui_evidence_refs.py` 8건으로 못 박았습니다 — 정합·순서·
+`EVTX-SEC` 회귀·키오스크 다섯 채널. `ui/` 에 테스트가 없어서 이 결함이
+조용했으므로, 그 자리를 함께 막았습니다. 다만 라우트와 JS 는 여전히
+테스트가 없습니다(`limitations.md`).
+
+---
+
+## 2026-09-04 · venv 에서 폴더 선택창이 500 을 냈다 (**해결됨**)
+
+`/api/evidence/browse` 와 `/browse-image` 가 둘 다 500 이었습니다.
+
+```
+Can't find a usable init.tcl in the following directories:
+    .../Python313/lib/tcl8.6 ...
+```
+
+파일은 전부 있었습니다 — 실제 경로가 `<base_prefix>/tcl/tcl8.6` 인데
+venv 안의 tkinter 가 `<base_prefix>/lib/tcl8.6` 을 찾습니다. Tcl 이 없는
+기계가 아니라 **찾는 자리만 어긋난** 것이었습니다.
+
+`ui/tcl_paths.py` 가 `sys.base_prefix` 에서 유도해 `TCL_LIBRARY`·
+`TK_LIBRARY` 를 채웁니다. `start.bat` 에 환경변수를 박지 않은 이유가
+둘입니다 — uvicorn 을 직접 띄우는 경우에도 같아야 하고(`start.bat` 이
+기동 실패 때 안내하는 명령이 바로 그것입니다), 경로에 파이썬 버전이
+박히면 3.14 로 올릴 때 조용히 되돌아옵니다.
+
+디렉터리 이름만 보지 않고 표지 파일(`init.tcl`·`tk.tcl`)까지 봅니다 —
+`<base_prefix>/tcl` 에는 `tcl8` 처럼 라이브러리가 아닌 디렉터리도 함께
+있습니다. **찾지 못하면 아무것도 하지 않습니다.** 짐작한 경로를 넣어 두면
+tkinter 의 원래 오류가 가려져서, Tcl 이 정말 없는 기계와 경로만 어긋난
+기계를 구별할 수 없게 됩니다.
+
+확인: `tkinter OK — Tk 8.6.14`, 그리고 `/api/evidence/browse` 가 500 대신
+**대화상자를 실제로 열고 응답을 기다립니다**(로그에 완료 줄이 없는 것으로
+확인). 그 대기 자체의 성질은 닫히지 않았으므로 `limitations.md` 에 있습니다.
