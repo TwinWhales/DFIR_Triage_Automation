@@ -2039,3 +2039,156 @@ SRUM 의 OLE/FILETIME 대조와 같은 논리입니다.
 .venv/Scripts/python.exe tools/hexdump_record.py --sample 30 \
   --parsed <출력> --evidence evidence/0824test.001 --volume 1
 ```
+
+---
+
+## 2026-09-03 · 키오스크 수집물로 레지스트리 한계 넷을 다시 쟀다
+
+`docs/limitations.md` 의 "레지스트리에서 못 보는 것" 절이 든 수치는 전부
+`evidence/[root]`(개발 장비)에서 나온 것입니다. **목표는 키오스크**이므로
+`KAPE_Results/KIOSK_snapshotA_20260831T094536`(Windows 10 Home 19045.6466)로
+같은 것을 다시 쟀습니다.
+
+**셋 다 크게 어긋났습니다.** 개발 장비에서 작았던 값이 목표 환경에서는
+전부 큽니다 — 그 위에 세운 우선순위 판단도 함께 흔들립니다.
+
+| 무엇 | `evidence/[root]` | 키오스크 스냅샷 A |
+|---|---|---|
+| 더티 하이브 | SYSTEM·SOFTWARE 둘 다 **clean** | SYSTEM·SOFTWARE·SECURITY·Amcache·`kiosk` NTUSER **전부 DIRTY** |
+| 삭제된 키 (미할당 `nk`) | SYSTEM 7 / SOFTWARE 2 | **SYSTEM 202 / SOFTWARE 616** |
+| DEVPROP 미지원 값 | 90건 (`K-ALERT`) | **3,873건** |
+
+### 1. 하이브 더티 여부 — 기본 블록의 시퀀스 번호 둘
+
+`regf` 기본 블록 오프셋 4·8의 `uint32` 둘을 읽어 비교했습니다. 다르면
+더티입니다(`registry.py` 의 `_warn_if_dirty` 와 같은 판정).
+
+| 하이브 | seq1 / seq2 | 크기 | `.LOG1` / `.LOG2` |
+|---|---|---|---|
+| SYSTEM | 942 / 941 **DIRTY** | 13,369,344 | 3,145,728 / 2,293,760 |
+| SOFTWARE | 3724 / 3723 **DIRTY** | 78,905,344 | 19,776,512 / 18,678,784 |
+| SECURITY | 146 / 145 **DIRTY** | 32,768 | 73,728 / **0바이트** |
+| SAM | 74 / 74 clean | 65,536 | 32,768 / 49,152 |
+| `Amcache.hve` | 205 / 204 **DIRTY** | — | 있음 |
+| `Users\kiosk\NTUSER.DAT` | 509 / 508 **DIRTY** | — | 있음 |
+| `Users\Default\NTUSER.DAT` | 25 / 25 clean | — | 있음 |
+| `ServiceProfiles\*\NTUSER.DAT` | 51/50 · 629/628 **DIRTY** | — | 있음 |
+
+**로그는 전부 `HvLE` 형식입니다** — `.LOG` 파일의 앞 0x200 은 하이브 기본
+블록의 사본이고 그 뒤 0x200 부터 로그 엔트리가 시작하는데, 그 시그니처가
+전부 `HvLE`(Windows 8.1 이상)였습니다. **레거시 로그 형식은 이 수집물에
+없습니다.**
+
+스냅샷 B 도 같습니다(`kiosk` NTUSER 509/508, Amcache 205/204).
+
+> **`Amcache.hve` 가 더티인 것이 특히 중요합니다.** 2026-08-27 의
+> "AmcacheParser 대조" 절이 *"로그를 재생시켜 다시 돌린 결과가 재생 안 한
+> 것과 행 하나도 다르지 않았다"* 고 적고 그 자리에 *"일반화하지 마십시오 —
+> `LOG1` 은 0바이트였습니다"* 를 달아 뒀습니다. **이 수집물이 그 두 번째
+> 이미지입니다.**
+
+### 2. 삭제된 키 — `tools/scan_hive_cells.py`
+
+```bash
+.venv/Scripts/python.exe tools/scan_hive_cells.py \
+  --hive evidence/KAPE_Results/KIOSK_snapshotA_.../C/Windows/System32/config/SYSTEM
+```
+
+| 하이브 | hbin | 할당된 `nk` | **미할당 `nk`** | 끊긴 체인 |
+|---|---|---|---|---|
+| SYSTEM | 2,786 | 34,524 | **202** | 0 |
+| SOFTWARE | 16,820 | 246,984 | **616** | 0 |
+| SAM | 7 | 66 | 3 | 0 |
+| SECURITY | 5 | 88 | 3 | 0 |
+
+**복구 쪽 `ref` 는 규약에 걸리지 않습니다.** 레지스트리의 `record_num` 은
+`nk` 셀 오프셋이므로(`registry.py` 의 `_build`) 삭제된 키도 하이브 안에서
+유일한 값을 이미 갖습니다 — SQLite 다중 프로필을 막았던 "자체 일련번호를
+매기지 않는다"에 해당하지 않습니다. 아직 안 잰 것은 **부모 체인을 되짚어
+경로를 복원할 수 있는 것이 202건 중 몇 건인가**입니다.
+
+### 3. DEVPROP — 두 타입 체계가 번호로 겹친다
+
+`ControlSet001\Enum\...\Properties\{GUID}\NNNN` 아래의 값은 표준 레지스트리
+타입(`REG_SZ` 등)이 아니라 **DEVPROP 타입 체계**를 씁니다. 그런데 두 체계는
+**같은 번호 공간을 다른 뜻으로 씁니다.**
+
+python-registry 로 SYSTEM 을 전부 걸으며 `value_type()`(예외를 던지지 않는
+원시 정수)으로 히스토그램을 냈습니다. `Properties` 하위 6,226건 · 그 밖
+72,257건입니다.
+
+| vk 타입 | `Properties` 하위 | 지금 우리가 하는 일 |
+|---|---|---|
+| `0x03` | 129 | `RegBin` 으로 읽어 16진 문자열 |
+| `0x04` | 3 | `RegDWord` |
+| `0x05` | 20 | `RegBigEndian` — **조용히 틀린다, 아래** |
+| `0x07` | 1,400 | `RegMultiSZ` — 전부 0바이트라 `[]` |
+| `0x08` | 4 | `RegResourceList` → 16진 |
+| `0x09` | 17 | `RegFullResourceDescriptor` → 16진 |
+| `0x10` | 780 | `RegFileTime` — **맞는데 우연이다, 아래** |
+| `0x0D` | 50 | **예외** |
+| `0x11` | 919 | **예외** |
+| `0x12` | 2,691 | **예외** |
+| `0x13` | 51 | **예외** |
+| `0x19` | 158 | **예외** |
+| `0x82` | 4 | **예외** |
+
+예외 합계 **3,873건**. `limitations.md` 가 적어 둔 90건은 Sysmon 이미지의
+`K-ALERT` 수치이고, USB 가 실제로 꽂힌 기계에서는 43배입니다.
+
+#### 조용히 틀리는 값 — 이것이 문서에 없었다
+
+예외가 나는 것은 시끄러운 쪽입니다. **번호가 겹치는 자리는 예외 없이 표준
+타입으로 해석되어 그럴듯한 값이 `fields` 에 실립니다.**
+
+```
+SYSTEM\ControlSet001\Enum\...\Properties\{cbf38310-4a17-4310-a1eb-247f0b67593b}\0007
+  raw    = 05 00 ff ff   (4바이트)
+  우리   = 83951615      ← RegBigEndian 으로 빅엔디언 정수 해석
+```
+
+`83951615` 는 하이브 어디에도 없는 수입니다. 이런 값이 20건(`0x05`, 전부
+데이터 있음)입니다. `0x08`·`0x09` 21건은 정수여야 할 것이 16진 문자열로
+나가고, `0x03` 129건은 16진이라 형태만 미해석입니다. `0x07` 1,400건은 전부
+0바이트라 `[]` 로 나가 해가 없습니다.
+
+**`0x10`(FILETIME)이 멀쩡한 것은 두 체계에서 번호가 우연히 같아서입니다.**
+`limitations.md` 가 *"정작 중요한 타임스탬프는 멀쩡히 나옵니다"* 라고 적은
+것은 맞지만, 그것이 우연이라는 사실은 안 적혀 있었습니다.
+
+**그래서 고칠 때 번호로 판단하면 안 됩니다.** `Properties` 밖에 진짜
+`RegMultiSZ` 가 2,370건 있고, 번호만 보고 DEVPROP 표를 적용하면 그 멀쩡한
+값들을 깨뜨립니다. **경로로 켜야 합니다** — `comparators` 의 `PATH_FIELDS`·
+`DATE_FIELDS` 가 이름으로 켜지는 것과 같은 규약입니다.
+
+#### 예외 나는 여섯이 무엇인지 — 이미지 안에서 확인했다
+
+명세를 옮겨 적지 않고, 원시 바이트의 길이 분포와 내용으로 판정했습니다.
+`AMCACHE_FILE_VALUE_PROVENANCE` 와 같은 근거 표기를 씁니다.
+
+| vk 타입 | 건수 | 판정 | 근거 |
+|---|---|---|---|
+| `0x12` STRING | 2,691 | **확정** | `image` — UTF-16LE 로 읽으면 전부 읽히는 문자열. `'bb36f4b5-4229-46ea-b75a-ec678f920ec9'` 등 |
+| `0x19` STRING_INDIRECT | 158 | **확정** | `image` — `'@sdbus.inf,%SDBUSSlot%;SD Host Slot %1!u!'`. 간접 문자열 형식 그대로 |
+| `0x13` SECURITY_DESCRIPTOR | 51 | **확정** | `image` — 전부 `01 00 04 90` 으로 시작. 자기상대 SD 의 revision 1 + control 0x9004 |
+| `0x0D` GUID | 50 | `shape` | 길이가 **전부 정확히 16바이트** |
+| `0x11` BOOLEAN(?) | 919 | **명세와 어긋남** | 길이가 전부 **4바이트**이고 값이 `ff000000`. 명세의 `DEVPROP_TYPE_BOOLEAN` 은 1바이트다. 첫 바이트 `0xFF` 는 `DEVPROP_TRUE` 와 맞지만 **폭이 다르므로 단정하지 않는다** |
+| `0x82` | 4 | **모름** | `02000000 12000000 <길이>` 로 시작. 안에 `0x12`(STRING)가 보여 문자열 배열로 짐작되나 확인 못 함 |
+
+**넷은 이미지 안에서 확정됐고 하나는 명세와 어긋나며 하나는 모릅니다.**
+모르는 것은 숫자로 남기는 편이 낫습니다 — Amcache 값 이름에서 쓴 것과 같은
+판단입니다.
+
+### 재현
+
+```bash
+A=evidence/KAPE_Results/KIOSK_snapshotA_20260831T094536/C
+# 더티 여부 — regf 기본 블록 오프셋 4·8
+.venv/Scripts/python.exe -c "import struct;b=open(r'$A/Windows/System32/config/SYSTEM','rb').read(0x200);print(struct.unpack_from('<II',b,4))"
+# 삭제된 키
+.venv/Scripts/python.exe tools/scan_hive_cells.py --hive "$A/Windows/System32/config/SYSTEM"
+# DEVPROP 히스토그램은 value_type() 을 쓴다 — value_type_str() 은 예외를 던진다
+```
+
+**`--volume` 을 주지 않습니다.** KAPE 수집물이라 `<수집폴더>/C` 가 볼륨
+루트입니다.

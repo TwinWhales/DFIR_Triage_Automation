@@ -27,13 +27,15 @@ Windows Registry 간접 리소스 문자열도 모든 문자열에 적용하지 
 문자열이 의도치 않게 같은 값으로 처리될 수 있다.
 
 `benchmark/validator_check.py`가 사람이 옳다고 판단한 문장을 넣어 이 규칙이
-과엄격하지 않은지 정기적으로 확인한다. **경로 규칙과 Registry 문자열 규칙은
-필드 이름으로 켜지므로, 아티팩트를 늘릴 때 이름을 같이 늘리지 않으면 조용히
-정확 문자열 비교로 떨어진다** — 사례를 먼저 추가하고 고치는 것이 순서다.
+과엄격하지 않은지 정기적으로 확인한다. **경로 규칙·Registry 문자열 규칙과
+``DATE_FIELDS`` 는 필드 이름으로 켜지므로, 아티팩트를 늘릴 때 이름을 같이
+늘리지 않으면 조용히 정확 문자열 비교로 떨어진다** — 사례를 먼저 추가하고
+고치는 것이 순서다.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from ..common.io import normalize_path, parse_timestamp
@@ -47,6 +49,9 @@ __all__ = [
     "FieldMissing",
     "PATH_FIELDS",
     "PATH_FIELD_SUFFIXES",
+    "is_date_field",
+    "DATE_FIELDS",
+    "DATE_FIELD_FORMATS",
 ]
 
 
@@ -92,6 +97,28 @@ PATH_FIELDS = frozenset(
 #: 이름 끝으로도 경로 필드를 판정할 수 있는 접미어.
 PATH_FIELD_SUFFIXES = ("_path", "filename")
 
+#: **레지스트리가 시각을 문자열로 적어 둔 자리.** 값이 ``RegSZ`` 라
+#: 04단계가 원본 그대로 냅니다 — ``'03/20/2017 03:53:52'``.
+#:
+#: 이 프로젝트의 다른 시각은 전부 ISO 8601 이고 모델도 그렇게 씁니다.
+#: 그러면 ``parse_timestamp`` 가 모델 쪽만 파싱하고 레코드 쪽은 못 해
+#: "같은 종류의 값이 아니다"로 떨어집니다. **사실은 같은데 표기가 다른
+#: 경우**라 모듈 첫머리의 다섯 가지와 같은 부류입니다. 실측 이미지의
+#: ``InventoryApplication`` 78건이 전부 이 표기입니다.
+#:
+#: **경로와 같이 이름으로 켭니다.** 아무 문자열에나 이 형식을 시도하면
+#: 값의 생김새로 판단하는 것이 되고, 이 모듈이 처음부터 거부한 방식입니다.
+#: 04단계에서 값을 바꾸지 않는 이유도 같습니다 — 산출물은 하이브에 적힌
+#: 것에 충실해야 하고, 표기를 흡수하는 것은 비교기의 일입니다.
+DATE_FIELDS = frozenset({"installdate"})
+
+#: ``DATE_FIELDS`` 에서만 추가로 시도하는 형식. 레지스트리가 쓰는 미국식
+#: 표기이고 타임존이 없습니다 — ``parse_timestamp`` 와 같이 UTC 로 봅니다.
+DATE_FIELD_FORMATS = ("%m/%d/%Y %H:%M:%S", "%m/%d/%Y")
+
+#: **`CommandLine` 은 일부러 뺐다.** 앞머리는 경로지만 뒤는 인자다.
+#: 경로 규칙으로 대소문자를 지우면 인자의 실제 차이(`-EncodedCommand` 의
+#: base64 등)까지 같이 지워져 검증이 물러진다.
 
 #: Windows Registry 간접 리소스 문자열 정규화를 허용할 필드.
 #:
@@ -121,6 +148,36 @@ def is_path_field(field: str) -> bool:
         leaf in PATH_FIELDS
         or leaf.endswith(PATH_FIELD_SUFFIXES)
     )
+
+
+def is_date_field(field: str) -> bool:
+    """ISO 8601 밖의 날짜 표기를 흡수할 필드인지 판단한다."""
+
+    return field.rsplit(".", 1)[-1].lower() in DATE_FIELDS
+
+
+def _as_datetime(
+    field: str,
+    value: Any,
+) -> "datetime | None":
+    """``parse_timestamp`` 에 ``DATE_FIELDS`` 용 형식을 더한 것.
+
+    ISO 8601 이 먼저다. 그쪽이 파이프라인의 규약이고, 실패했을 때만
+    이름이 허락한 형식을 시도한다.
+    """
+
+    parsed = parse_timestamp(value)
+
+    if parsed is not None or not isinstance(value, str) or not is_date_field(field):
+        return parsed
+
+    for fmt in DATE_FIELD_FORMATS:
+        try:
+            return datetime.strptime(value.strip(), fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+
+    return None
 
 
 def _walk(
@@ -225,9 +282,10 @@ def compare(
             for item in actual
         )
 
-    # 타임스탬프 비교
-    claimed_ts = parse_timestamp(claimed)
-    actual_ts = parse_timestamp(actual)
+    # 타임스탬프 비교. 양쪽이 다 파싱되어야 시각 비교로 넘어간다.
+    # 한쪽만 파싱되면 애초에 같은 종류의 값이 아니므로 불일치다.
+    claimed_ts = _as_datetime(field, claimed)
+    actual_ts = _as_datetime(field, actual)
 
     if claimed_ts is not None and actual_ts is not None:
         difference = abs(

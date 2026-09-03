@@ -548,6 +548,10 @@ class RegistryParser:
         self.artifact = artifact
         self.hive = hive_designator(artifact)
         self.stats: dict[str, int] = self._new_stats()
+        #: 값 하나를 못 읽은 사유 → 건수. 로그를 사유당 한 줄로 묶는 데만
+        #: 씁니다. 집계는 ``stats["value_errors"]`` 가 들고, 이쪽은 파일마다
+        #: 초기화되므로 산출물에 실리지 않습니다.
+        self._value_error_reasons: dict[str, int] = {}
 
     @staticmethod
     def _new_stats() -> dict[str, int]:
@@ -567,6 +571,7 @@ class RegistryParser:
 
     def parse(self, stream: BinaryIO, scope: Scope) -> Iterator[dict[str, Any]]:
         self.stats = self._new_stats()
+        self._value_error_reasons = {}
 
         buf = stream.read()
         if not buf:
@@ -811,7 +816,27 @@ class RegistryParser:
             except Exception as e:  # noqa: BLE001 - 손상 셀에서 무엇이 나올지 모른다
                 self.stats["value_errors"] += 1
                 self.stats["parse_errors"] += 1
-                _log.warning("%s: %s 의 값 하나를 읽지 못했습니다 — %s", self.artifact, path, e)
+                # **사유마다 첫 건만 보이고 나머지는 셉니다.** 실측
+                # `K-ALERT` 에서 90건이 나왔고 **90건 전부 같은 사유**
+                # (`Unknown VK Record type 0x12` = `DEVPROP_TYPE_STRING`,
+                # 장치 속성 저장소)였습니다. 그 90줄이 04단계 출력을 덮어
+                # 다른 경고를 가립니다 — `$MFT` 의 `fixup_errors` 와
+                # `$UsnJrnl` 의 미지원 구간이 이미 같은 규약입니다.
+                #
+                # 사유별로 나누는 이유는 **묶으면 어느 쪽이 몇 건인지 말할
+                # 수 없기 때문**입니다(미지원 구간을 버전별로 나눈 것과 같은
+                # 근거). 총계는 `stats["value_errors"]` 가 듭니다.
+                reason = type(e).__name__ + ": " + str(e)
+                seen = self._value_error_reasons.get(reason, 0)
+                self._value_error_reasons[reason] = seen + 1
+                if seen == 0:
+                    _log.warning(
+                        "%s: %s 의 값 하나를 읽지 못했습니다 — %s "
+                        "(이후 같은 사유는 수만 셉니다)",
+                        self.artifact,
+                        path,
+                        e,
+                    )
         return self._rename_amcache_values(out, path)
 
     def _rename_amcache_values(self, out: dict[str, Any], path: str) -> dict[str, Any]:

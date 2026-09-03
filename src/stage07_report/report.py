@@ -203,6 +203,57 @@ def _windows(manifest: dict[str, Any] | None) -> str:
     return f"{parts[0]} ({', '.join(parts[1:])})"
 
 
+#: 매니페스트의 신뢰도 집계 → 보고서 문구.
+#:
+#: 04단계가 "무엇을 셌나"를 정하고(``stage04_parse.parse.RELIABILITY_STATS``)
+#: 여기가 "분석가에게 무엇으로 읽히나"를 정한다. 어느 쪽도 상대의 어휘를
+#: 베껴 두지 않는다 — 매니페스트 키가 곧 보고서 문장이면, 키 이름을 바꾸는
+#: 순간 보고서가 조용히 바뀐다.
+#:
+#: **수를 문장에 넣는 이유**는 판단이 절대량이 아니라 비율이기 때문이다.
+#: ``fixup_errors`` 3건은 손상이고 30,000건은 섹터 크기 판정 오류다. 같은
+#: 표에 ``record_count``가 있으므로 읽는 사람이 그 자리에서 나눠 볼 수 있다.
+RELIABILITY_NOTES: tuple[tuple[str, str], ...] = (
+    (
+        "dirty_hive",
+        "더티 하이브 — 트랜잭션 로그(.LOG1/.LOG2)를 재생하지 않았으므로 "
+        "값이 최신이 아닐 수 있음",
+    ),
+    ("recovered_chunks", "헤더가 선언하지 않은 청크 {n:,}개를 복구해 읽음"),
+    ("bad_chunks", "체크섬이 맞지 않는 청크 {n:,}개를 건너뜀"),
+    (
+        "fixup_errors",
+        "업데이트 시퀀스 복원 실패 {n:,}건 — 레코드 수와 비슷하면 손상이 "
+        "아니라 섹터 크기 판정을 의심",
+    ),
+    (
+        "scope_undecidable",
+        "{n:,}건은 드라이브 문자를 정하지 못해 경로 범위를 적용하지 못함",
+    ),
+    ("missing_tables", "프로파일이 기대한 테이블 {n:,}개가 없음"),
+    ("unsupported_tables", "읽지 못하는 형태의 테이블 {n:,}개를 건너뜀"),
+)
+
+
+def _reliability_notes(entry: dict[str, Any]) -> list[str]:
+    """읽기는 했는데 액면 그대로 보면 안 되는 사유들.
+
+    ``parse_errors``와 달리 **못 읽은 것이 아닙니다.** 읽었는데 값이
+    낡았거나, 정상 경로 밖에서 나왔거나, 선별이 안 걸린 것입니다. 그래서
+    "부분 판독"과 같은 칸에 적되 문장을 따로 씁니다.
+
+    ``dirty_hive``는 0/1 플래그라 수를 넣지 않습니다. 문구에 ``{n}``이
+    없으면 그대로 나갑니다.
+    """
+    notes: list[str] = []
+    for key, template in RELIABILITY_NOTES:
+        count = entry.get(key)
+        if not count:
+            continue
+        notes.append(template.format(n=count) if "{n" in template else template)
+    return notes
+
+
 def _examined(manifest: dict[str, Any] | None) -> list[dict[str, str]]:
     """실제로 읽은 아티팩트와 규모.
 
@@ -218,19 +269,22 @@ def _examined(manifest: dict[str, Any] | None) -> list[dict[str, str]]:
 
     rows: list[dict[str, str]] = []
     for entry in manifest.get("files", []):
-        note = ""
+        notes: list[str] = []
         unreadable = entry.get("unreadable_bytes")
         if unreadable:
             # 부분 판독. "안 봤다"가 아니지만 "다 봤다"도 아니므로 따로 적는다.
-            note = (
+            notes.append(
                 f"부분 판독 — 구간 {entry.get('parse_errors', 0)}곳 / "
                 f"{unreadable:,}바이트를 읽지 못함"
             )
         elif entry.get("parse_errors"):
-            note = f"부분 판독 — 구간 {entry['parse_errors']}곳"
+            notes.append(f"부분 판독 — 구간 {entry['parse_errors']}곳")
         if entry.get("source_empty_skipped"):
-            skipped_note = "0바이트 후보를 건너뛰고 읽음 (추출 확인 권장)"
-            note = f"{note}; {skipped_note}" if note else skipped_note
+            notes.append("0바이트 후보를 건너뛰고 읽음 (추출 확인 권장)")
+        # 읽기는 했는데 액면 그대로 보면 안 되는 사유. 위의 "못 읽은 것"
+        # 뒤에 붙는다 — 분석가가 먼저 볼 것은 여전히 결손이다.
+        notes.extend(_reliability_notes(entry))
+        note = "; ".join(notes)
         rows.append(
             {
                 "artifact": entry["artifact"],

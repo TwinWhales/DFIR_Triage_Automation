@@ -39,6 +39,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.common import errors as errlog  # noqa: E402
 from src.common import io  # noqa: E402
 from src.common import refs  # noqa: E402
+from src.stage06_verify import verify as verify_mod  # noqa: E402
 
 __all__ = ["evaluate_case", "aggregate", "main", "STAGE_FILES"]
 
@@ -194,13 +195,18 @@ def _interpretation(verified: dict[str, Any] | None) -> dict[str, Any]:
         return {"status": "미실행"}
     stats = verified.get("stats", {})
     total = stats.get("total_findings", 0)
+    # **파일의 값을 그대로 쓰지 않는다.** 동결 스키마가 ``number`` 를 요구해
+    # 06 은 판정 0건일 때도 0.0 을 실어야 한다. 그것을 그대로 표에 올리면
+    # "아무것도 말하지 않음"이 "전부 맞음"과 같은 칸에 앉는다. 이 파일의
+    # ``_ratio`` 가 이미 "분모가 0이면 None" 이라고 적어 둔 규약이다.
     return {
         "status": "평가됨",
         "total_findings": total,
         "passed": stats.get("passed", 0),
         "rejected": stats.get("rejected", 0),
         "unverifiable": stats.get("unverifiable", 0),
-        "hallucination_rate": stats.get("hallucination_rate"),
+        "judged": stats.get("passed", 0) + stats.get("rejected", 0),
+        "hallucination_rate": verify_mod.judged_rate(stats),
         "unverifiable_rate": _ratio(stats.get("unverifiable", 0), total),
         "rejection_reasons": _rejection_reasons(verified),
     }
@@ -344,12 +350,24 @@ def aggregate(cases: list[dict[str, Any]]) -> dict[str, Any]:
     # 적으면 누가 만들었는지가 사라진다. 두 질문을 필드 둘로 나눴다 —
     # authored_by 는 "누가", provenance 는 "어디서 왔나".
     human_authored = sum(1 for c in cases if c["provenance"] != "human_analysis")
+    # 판정 0건인 케이스는 평균에서 빠진다(위 목록이 None 을 거른다). 그런데
+    # **빠졌다는 사실 자체가 수치다** — 소견을 냈지만 근거가 하나도 안 달려
+    # 06 이 전부 unverifiable 로 넘긴 실행이 그렇다. 그것을 세지 않으면
+    # "환각률 0%"와 "잴 것이 없었다"가 다시 한 칸에 앉는다.
+    unjudged = sum(
+        1
+        for c in cases
+        if c["interpretation"]["status"] == "평가됨"
+        and c["interpretation"].get("hallucination_rate") is None
+    )
     return {
         "cases": len(cases),
         "technique_recall": _mean(technique_recalls),
         "selection_recall": _mean(selection_recalls),
         "end_to_end_recall": _mean(end_to_end),
         "hallucination_rate": _mean(hallucination),
+        "hallucination_cases": len(hallucination),
+        "cases_with_nothing_judged": unjudged,
         "cases_missing_human_ground_truth": human_authored,
     }
 
@@ -399,8 +417,11 @@ def _format(report: dict[str, Any]) -> str:
 
         interp = case["interpretation"]
         if interp["status"] == "평가됨":
+            # 환각률은 **판정 건수를 달고 나간다.** 분모가 안 보이면 0.0% 가
+            # "전부 맞음"인지 "잴 것이 없었음"인지 읽는 사람이 못 가른다.
             lines.append(
                 f"  해석 품질   환각률 {_pct(interp['hallucination_rate'])}"
+                f" (판정 {interp['judged']}건)"
                 f" / 검증불가 {_pct(interp['unverifiable_rate'])}"
                 + (f"  {interp['rejection_reasons']}" if interp["rejection_reasons"] else "")
             )
@@ -413,7 +434,18 @@ def _format(report: dict[str, Any]) -> str:
     lines.append(f"  기법 식별 재현율   {_pct(totals['technique_recall'])}")
     lines.append(f"  아티팩트 선별 재현율 {_pct(totals['selection_recall'])}")
     lines.append(f"  종단 증거 재현율   {_pct(totals['end_to_end_recall'])}")
-    lines.append(f"  환각률            {_pct(totals['hallucination_rate'])}")
+    lines.append(
+        f"  환각률            {_pct(totals['hallucination_rate'])}"
+        f" ({totals['hallucination_cases']}개 케이스 평균)"
+    )
+
+    if totals["cases_with_nothing_judged"]:
+        lines.append(
+            f"\n  주의: 판정된 문장이 한 건도 없던 케이스가 "
+            f"{totals['cases_with_nothing_judged']}건 있습니다. 위 환각률 평균에서 "
+            "빠졌습니다 — 소견이 근거 없이 나오면 06이 전부 미검증으로 넘기고, "
+            "그때 나오는 0.0%는 모델이 맞혔다는 뜻이 아닙니다."
+        )
 
     if totals["cases_missing_human_ground_truth"]:
         lines.append(
