@@ -44,7 +44,7 @@ from ..common import errors as errlog
 from ..common import io, schema
 from . import checkers
 
-__all__ = ["verify", "load_records", "main"]
+__all__ = ["verify", "load_records", "judged_rate", "format_rate", "main"]
 
 STAGE = "06_verify"
 DEFAULT_TOLERANCE_SECONDS = 1.0
@@ -126,6 +126,37 @@ def verify(
             "hallucination_rate": round(len(rejected) / judged, 4) if judged else 0.0,
         },
     )
+
+
+def judged_rate(stats: dict[str, Any]) -> "float | None":
+    """환각률을 **판정 건수가 0이면 ``None``** 으로 돌려준다.
+
+    ``stats["hallucination_rate"]`` 는 판정 대상이 없을 때 ``0.0`` 입니다.
+    동결 스키마가 ``number`` 를 요구해 ``null`` 을 실을 수 없기 때문이고,
+    그래서 **"아무것도 말하지 않음"과 "전부 맞음"이 같은 숫자로 나옵니다.**
+
+    실측으로 겪은 자리입니다(`docs/limitations.md` 실물 규모 A/B) — 제약을
+    끈 쪽이 소견 1건을 `claims` 빈 배열로 내 06 이 `unverifiable` 로 넘겼고,
+    분모가 0이라 환각률이 0.0% 로 찍혔습니다. 제약을 켠 쪽의 진짜 0.0%
+    (판정 3건 전부 통과)와 표에서 구별되지 않았습니다.
+
+    **수치를 읽는 쪽은 전부 이 함수를 거칩니다.** 파일에 실리는 값은
+    스키마 때문에 그대로 두고, 사람이 보는 자리에서만 갈라 냅니다 —
+    ``benchmark/evaluate.py`` 의 ``_ratio`` 가 "분모가 0이면 ``None``,
+    0.0으로 두면 완벽히 실패로 잘못 읽힌다"고 적어 둔 것과 같은 규약입니다.
+    """
+    judged = int(stats.get("passed", 0)) + int(stats.get("rejected", 0))
+    if not judged:
+        return None
+    return round(int(stats.get("rejected", 0)) / judged, 4)
+
+
+def format_rate(stats: dict[str, Any]) -> str:
+    """사람이 읽는 한 토막. 판정 0건이면 수치 대신 그 사실을 적는다."""
+    rate = judged_rate(stats)
+    if rate is None:
+        return "환각률 — (판정 0건)"
+    return f"환각률 {rate:.1%} (판정 {stats['passed'] + stats['rejected']}건)"
 
 
 def _tidy_number(value: float) -> float | int:
@@ -221,7 +252,7 @@ def main(argv: "list[str] | None" = None) -> int:
     print(
         f"{out_path}: passed {stats['passed']} / rejected {stats['rejected']} "
         f"/ unverifiable {stats['unverifiable']} "
-        f"(환각률 {stats['hallucination_rate']:.1%})"
+        f"({format_rate(stats)})"
     )
     return 0
 

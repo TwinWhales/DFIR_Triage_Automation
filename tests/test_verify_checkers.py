@@ -149,6 +149,46 @@ def test_widened_path_fields_did_not_go_soft(field):
     assert not comparators.compare(field, "E:\\banker.exe", "C:\\banker.exe")
 
 
+def test_registry_date_notation_is_absorbed():
+    """Amcache `InstallDate` 는 하이브에 `RegSZ` 로, 미국식 표기로 적혀 있다.
+
+    실측 이미지의 `InventoryApplication` 78건이 전부 그렇다. 이 프로젝트의
+    다른 시각은 전부 ISO 8601 이라, 흡수하지 않으면 설치 시각을 인용한
+    정상 문장이 **전량** 기각된다.
+    """
+    assert comparators.compare(
+        "fields.InstallDate", "2017-03-20T03:53:52Z", "03/20/2017 03:53:52"
+    )
+    assert comparators.compare("InstallDate", "2017-03-20T00:00:00Z", "03/20/2017")
+
+
+def test_the_date_rule_is_keyed_on_the_name_not_the_value():
+    """값의 생김새로 판단하면 이 모듈이 처음부터 거부한 방식이 된다.
+
+    같은 값이라도 이름이 허락하지 않으면 흡수하지 않는다 — 버전 문자열이나
+    일련번호가 우연히 날짜처럼 보이는 자리에서 오작동한다.
+    """
+    assert not comparators.is_date_field("Publisher")
+    assert not comparators.compare("Publisher", "2017-03-20T03:53:52Z", "03/20/2017 03:53:52")
+
+
+def test_the_date_rule_did_not_go_soft():
+    """흡수한 것은 **표기**이지 값이 아니다. 다른 날짜는 여전히 기각된다."""
+    assert not comparators.compare(
+        "fields.InstallDate", "2017-03-21T03:53:52Z", "03/20/2017 03:53:52"
+    )
+    # 하루 안이라도 시각이 다르면 기각이다. 정밀도 차이는 이 프로젝트의
+    # 다른 시각 필드와 같은 규칙(tolerance_seconds)이 정하고, 이 변경이
+    # 그것을 건드리지 않는다.
+    assert not comparators.compare(
+        "fields.InstallDate", "2017-03-20T00:00:00Z", "03/20/2017 03:53:52"
+    )
+    # ISO 가 먼저다. 모호한 표기를 미국식으로 재해석하지 않는다.
+    assert comparators.compare(
+        "fields.InstallDate", "2017-03-04T00:00:00Z", "2017-03-04T00:00:00Z"
+    )
+
+
 def test_command_line_is_not_a_path_field():
     """앞머리는 경로지만 뒤는 인자다. 경로 규칙으로 대소문자를 지우면
     인자의 실제 차이까지 같이 지워진다."""

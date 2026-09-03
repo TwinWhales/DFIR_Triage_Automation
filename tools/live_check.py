@@ -52,6 +52,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.common import attack, io  # noqa: E402
 from src.common import errors as errlog  # noqa: E402
+from src.stage06_verify import verify as verify_mod  # noqa: E402
 from src.common.llm import DEFAULT_NUM_CTX  # noqa: E402
 from src.stage05_interpret import allocation, record_filter  # noqa: E402
 from src.stage02_normalize.llm_client import DEFAULT_MODEL  # noqa: E402
@@ -599,7 +600,7 @@ class Runner:
         return (
             f"passed {stats['passed']} / rejected {stats['rejected']} "
             f"/ unverifiable {stats['unverifiable']} "
-            f"(환각률 {stats['hallucination_rate']:.1%} — 측정치)"
+            f"({verify_mod.format_rate(stats)} — 측정치)"
         )
 
     def do_stage07(self, result: Result) -> str:
