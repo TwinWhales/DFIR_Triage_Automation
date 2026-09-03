@@ -384,6 +384,38 @@ def test_cli_aborts_when_the_budget_admits_nothing(tmp_path, capsys):
 
 def test_cli_says_so_when_the_budget_trims_seats(tmp_path, capsys):
     # 넘는데도 조용히 도는 것이 이 자리에서 가장 나쁜 성질이다.
+    #
+    # **골든 픽스처를 그대로 재생하지 않는다.** 리플레이 파일은 어떤
+    # 프롬프트에 대한 응답의 기록이다. 이 테스트는 일부러 레코드를 잘라
+    # 프롬프트를 바꾸므로, 자르기 전 프롬프트로 녹음한 골든을 재생하면
+    # 모델이 받은 적 없는 EVTX-SEC#40915 를 인용하게 된다. 그것은 05단계
+    # claim 관문이 잡으라고 있는 것이라 통과시키면 안 되고, 여기서 볼
+    # 것도 아니다. 잘린 프롬프트에 맞는 기록을 따로 준다.
+    replay = tmp_path / "05_trimmed_reply.json"
+    replay.write_text(
+        json.dumps(
+            {
+                # 살아남는 둘은 MFT#12345 · EVTX-SEC#40912 다. F1 은 앞의
+                # 것만 인용하므로 잘라도 성립한다. F2 는 EVTX-SEC#40915 를
+                # 함께 인용해야 말이 되는 문장이라 통째로 뺀다.
+                "findings": [
+                    finding
+                    for finding in io.read_json(FIXTURES / "05_findings.json")["findings"]
+                    if finding["id"] in ("F1", "F3")
+                ],
+                "timeline": [
+                    {
+                        "ts": "2026-07-20T03:14:22Z",
+                        "event": "shell.aspx 생성",
+                        "refs": ["MFT#12345"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
     out = tmp_path / "05_findings.json"
     code = interpret_mod.main(
         [
@@ -391,7 +423,7 @@ def test_cli_says_so_when_the_budget_trims_seats(tmp_path, capsys):
             "--scenario", str(FIXTURES / "02_scenario.json"),
             "--out", str(out),
             "--llm", "stub",
-            "--replay", str(FIXTURES / "05_findings.json"),
+            "--replay", str(replay),
             # 레코드 넷 중 둘만 들어갈 만큼만 연다.
             "--num-ctx", "5300",
             "--reserve-output-tokens", "4096",
@@ -405,6 +437,39 @@ def test_cli_says_so_when_the_budget_trims_seats(tmp_path, capsys):
     # ref_not_in_input 검사가 무력해진다.
     doc = io.read_json(out)
     assert len(doc["input_refs"]) < 4
+
+    # 자리가 줄어도 살아남은 레코드를 인용한 문장은 그대로 나온다. 잘림이
+    # 문장을 통째로 삼키면 예산 축소가 조용한 누락이 된다.
+    assert [finding["id"] for finding in doc["findings"]] == ["F1", "F3"]
+
+
+def test_replaying_a_reply_that_cites_a_trimmed_record_is_refused(tmp_path, capsys):
+    """자르기 전에 녹음한 응답을 자른 프롬프트에 재생하면 중단한다.
+
+    관문이 실제로 켜져 있는지 보는 자리다. 위 테스트가 기록을 맞춰 주고
+    지나가므로, 맞추지 않았을 때 조용히 통과하지 않는다는 것을 여기서
+    따로 못 박는다. 재생된 F2 는 잘려 나간 EVTX-SEC#40915 를 인용한다.
+    """
+    with pytest.raises(SystemExit):
+        interpret_mod.main(
+            [
+                "--in", str(PARSED),
+                "--scenario", str(FIXTURES / "02_scenario.json"),
+                "--out", str(tmp_path / "05_findings.json"),
+                "--llm", "stub",
+                "--replay", str(FIXTURES / "05_findings.json"),
+                "--num-ctx", "5300",
+                "--reserve-output-tokens", "4096",
+            ]
+        )
+
+    recorded = [
+        json.loads(line)
+        for line in (tmp_path / "errors.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert recorded[0]["type"] == "claim_validation"
+    assert "EVTX-SEC#40915" in recorded[0]["detail"]["message"]
 
 
 def test_a_roomy_context_says_nothing_about_the_budget(tmp_path, capsys):
