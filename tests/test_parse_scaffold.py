@@ -682,6 +682,12 @@ def test_every_catalogued_artifact_has_a_layout():
             # relative_paths/filenames 가 아니라 폴더 후보를 본다.
             assert location.directory_paths, name
             assert not location.relative_paths, name
+        elif location.is_user_scoped:
+            # 사용자 프로필마다 있는 아티팩트(알림 DB). 볼륨 기준 고정
+            # 경로가 없고 Users/<사용자>/ 아래를 훑는다.
+            assert location.user_paths, name
+            assert not location.relative_paths, name
+            assert location.filenames, name
         else:
             assert location.relative_paths, name
             assert location.filenames, name

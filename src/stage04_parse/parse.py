@@ -104,6 +104,9 @@ OUTPUT_FILENAMES: dict[str, str] = {
     "srum:NetworkUsage": "srum_networkusage.jsonl",
     "srum:AppResourceUsage": "srum_appresourceusage.jsonl",
     "srum:NetworkConnectivity": "srum_networkconnectivity.jsonl",
+    # SQLite DB. 같은 파서가 맡지만 DB 가 다르므로 파일도 다르다.
+    "sqlite:StateRepository": "sqlite_staterepository.jsonl",
+    "sqlite:Notifications": "sqlite_notifications.jsonl",
 }
 
 #: 합집합으로 넓히는 범위 키. 여기 없는 키는 첫 값을 쓴다.

@@ -170,6 +170,19 @@ for _artifact in _SRUM_ARTIFACTS:
     REFERENCE_PARSERS[_artifact] = _srum_parser
 
 
+# SQLite DB. SRUM 과 같은 구조다 — 한 클래스가 DB 여럿을 맡으므로
+# **인스턴스를 아티팩트마다 따로 만든다.** 다른 점은 엔진이 범용이라는
+# 것이다. 새 DB 는 카탈로그 한 줄과 프로파일 몇 줄로 붙는다
+# (parsers/sqlite.py 의 PROFILES).
+from .sqlite import ARTIFACTS as _SQLITE_ARTIFACTS  # noqa: E402 — 등록 블록 순서
+from .sqlite import SqliteParser  # noqa: E402 — 등록 블록 순서
+
+for _artifact in _SQLITE_ARTIFACTS:
+    _sqlite_parser = SqliteParser(_artifact)
+    PARSERS[_artifact] = _sqlite_parser
+    REFERENCE_PARSERS[_artifact] = _sqlite_parser
+
+
 IMPLEMENTATIONS = ("native", "reference")
 
 

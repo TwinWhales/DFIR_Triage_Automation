@@ -276,6 +276,21 @@ def _i32(data: bytes, at: int) -> int:
     return int(struct.unpack_from("<i", data, at)[0])
 
 
+def _read_varint(data: bytes, at: int) -> "tuple[int, int]":
+    """SQLite varint. ``(값, 소비한 바이트 수)``.
+
+    파서와 **다른 길로** 읽습니다 — 이 도구는 ``structs`` 를 부르지 않고
+    바이트에서 직접 셉니다. 같은 코드를 두 번 부르면 대조가 아닙니다.
+    """
+    value = 0
+    for i in range(min(8, len(data) - at)):
+        byte = data[at + i]
+        value = (value << 7) | (byte & 0x7F)
+        if not byte & 0x80:
+            return value, i + 1
+    return 0, 0
+
+
 def _u64(data: bytes, at: int) -> int:
     return int(struct.unpack_from("<Q", data, at)[0])
 
@@ -308,6 +323,15 @@ def natural_length(artifact: str, probe: bytes) -> int:
             chars = _u32(probe, 0x0)
             if 0 < chars <= 512:
                 return 4 + chars * 2 + 2
+
+        if artifact.startswith("sqlite:") and len(probe) >= 9:
+            # 테이블 리프 셀은 varint 두 개(페이로드 크기, rowid)로 시작한다.
+            # 페이로드가 페이지를 넘으면 일부만 여기 있으므로, 말하는 길이가
+            # 상한을 넘으면 기본값으로 떨어뜨린다.
+            payload, used = _read_varint(probe, 0)
+            _, used2 = _read_varint(probe, used)
+            if 0 < payload <= MAX_AUTO_LENGTH:
+                return used + used2 + payload
     except struct.error:
         pass
     return FALLBACK_LENGTH
@@ -699,6 +723,49 @@ def _verify_srum(record: dict[str, Any], window: Window) -> list[Check]:
     return checks
 
 
+def _verify_sqlite(record: dict[str, Any], window: Window) -> list[Check]:
+    """이 자리가 정말 테이블 리프 셀의 시작인가.
+
+    SQLite 에는 셀 시그니처가 없습니다. 대신 **셀이 스스로 말하는 두 값**을
+    레코드가 들고 있는 값과 맞춥니다.
+
+    * 셀 헤더의 rowid varint = ``fields.sqlite_rowid``
+    * 오프셋 = ``record_num`` (레코드 번호가 곧 셀의 절대 오프셋이다)
+
+    rowid 는 파서가 만든 값이 아니라 **디스크에서 읽은 값**이고, 이 도구는
+    ``structs`` 를 쓰지 않고 바이트에서 직접 셉니다. 오프셋이 한 바이트만
+    어긋나도 varint 해석이 통째로 달라지므로 우연히 맞기 어렵습니다.
+    """
+    data = window.data
+    number = int(record["record_num"])
+    checks = [
+        Check(
+            window.offset == number,
+            "오프셋 = record_num",
+            f"0x{window.offset:X} = {number}",
+        )
+    ]
+    payload, used = _read_varint(data, 0)
+    rowid, used2 = _read_varint(data, used)
+    if not used or not used2:
+        checks.append(Check(False, "셀 헤더", "varint 두 개를 읽지 못했다"))
+        return checks
+
+    checks.append(
+        Check(payload > 0, "페이로드 크기", f"varint = {payload}바이트")
+    )
+    expected = (record.get("fields") or {}).get("sqlite_rowid")
+    if expected is not None:
+        checks.append(
+            Check(
+                rowid == expected,
+                "rowid",
+                f"셀 = {rowid} / 레코드 = {expected}",
+            )
+        )
+    return checks
+
+
 def verify(record: dict[str, Any], window: Window) -> list[Check]:
     """되짚은 바이트가 정말 그 레코드인가."""
     artifact = window.artifact
@@ -716,6 +783,8 @@ def verify(record: dict[str, Any], window: Window) -> list[Check]:
         return _verify_prefetch(record, window)
     if artifact.startswith("srum:"):
         return _verify_srum(record, window)
+    if artifact.startswith("sqlite:"):
+        return _verify_sqlite(record, window)
     # 아티팩트가 늘었는데 여기 안 넣은 경우다. 조용히 통과시키지 않는다 —
     # "대조했다"와 "대조할 줄 모른다"는 다르다.
     return [Check(False, "대조", f"{artifact} 를 어떻게 대조하는지 이 도구가 모른다")]

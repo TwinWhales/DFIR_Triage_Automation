@@ -120,8 +120,9 @@ PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01
 **단, 기본값 그대로는 아닙니다.** 아티팩트가 여럿 걸린 실제 케이스에서는
 05단계 프롬프트가 모델의 컨텍스트 창을 넘겨 중단됩니다. `--limit` 을
 낮춰야 통과합니다 — 실측과 원인은
-[`limitations.md`](docs/limitations.md) "05단계 프롬프트가 컨텍스트 창을
-넘는다" 절에 있습니다. 알려진 한계 전체도 같은 문서에 있습니다.
+[`limitations-log.md`](docs/limitations-log.md) "05단계 프롬프트가 컨텍스트
+창을 넘었다" 절에 있습니다(2026-08-26 해결됨). 알려진 한계 전체는
+[`limitations.md`](docs/limitations.md) 입니다.
 
 | | 상태 |
 |---|---|
