@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import functools
+import ntpath
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +45,7 @@ __all__ = [
     "SI_FIELDS",
     "FN_FIELDS",
     "MISMATCH_PAIRS",
+    "SHARED_PROGRAM_DIRS",
     "VocabularyError",
     "Clause",
     "FlagRule",
@@ -490,6 +492,76 @@ def _outside_selected_time_range(record: dict[str, Any], ctx: Context) -> bool:
     return not any(ctx.scope.matches_time(m) for m in usable)
 
 
+#: 여러 프로그램이 함께 쓰는 설치 자리. **소문자, 뒤 구분자 없음.**
+#:
+#: ``_parent_is_another_program`` 이 "자식이 부모 디렉터리 하위인가"로 같은
+#: 프로그램인지 볼 때, 부모가 이 자리에 있으면 그 근거가 성립하지 않는다 —
+#: ``C:\Windows\explorer.exe`` 의 디렉터리 하위에는 ``System32`` 전체가
+#: 들어오므로 ``explorer.exe → cmd.exe`` 까지 같은 프로그램으로 묶인다.
+#: 그것은 이 룰이 존재하는 이유인 신호 자체다.
+#:
+#: **환경 목록이 아니다.** 어느 프로그램이 설치돼 있는지가 아니라 윈도우가
+#: 어느 경로를 공유하는지이고, 그것은 이미지가 달라져도 같다. 화이트리스트
+#: 역탐지를 넣지 않기로 한 판단(``docs/limitations.md``)과 부딪히지 않는다.
+SHARED_PROGRAM_DIRS = frozenset(
+    {
+        r"c:\windows",
+        r"c:\windows\system32",
+        r"c:\windows\syswow64",
+        r"c:\program files",
+        r"c:\program files (x86)",
+        r"c:\programdata",
+    }
+)
+
+
+def _parent_is_another_program(record: dict[str, Any], ctx: Context) -> bool:
+    """부모가 **다른 프로그램**인가. 같은 프로그램의 내부 동작이면 아니다.
+
+    ``unexpected_parent_process`` 가 보는 것은 "누가 실행시켰나"입니다.
+    그런데 요즘 응용 프로그램은 자기 자신을 여러 번 띄웁니다 — 브라우저의
+    탭·GPU·유틸리티 프로세스가 그렇습니다. 그것은 "누가 실행시켰나"에
+    대해 아무 말도 하지 않는데, 부모 이름만 보는 룰에는 걸립니다.
+
+    **실측(``K-LIVE-0902-wide``, 2026-09-03): 258건 중 193건(75%)이 그
+    경우였습니다.** 157건이 ``msedge.exe → msedge.exe``, 36건이
+    ``msedge.exe → identity_helper.exe`` 입니다.
+
+    두 조건으로 봅니다. **이름이 아니라 관계입니다** — 특정 프로그램을
+    아는 것이 아니라 두 필드가 서로 어떤 관계인지만 봅니다. 그래서 Edge
+    말고 다른 다중 프로세스 프로그램도 같이 걸러집니다.
+
+    1. ``Image == ParentImage`` — 자기 자신을 다시 띄운 것.
+    2. 자식이 **부모 디렉터리 하위**에 있고, 그 디렉터리가 공유 설치 자리가
+       아닌 것(``SHARED_PROGRAM_DIRS``). 같은 설치 트리 안의 도우미
+       프로세스입니다.
+
+    **2번에 공유 자리 예외가 없으면 신호를 지웁니다.** 부모가
+    ``C:\Windows\explorer.exe`` 이면 ``System32`` 전체가 "하위"라
+    ``explorer.exe → cmd.exe`` 아홉 건과 ``→ powershell.exe`` 다섯 건이
+    함께 사라집니다. 이 룰이 잡으라고 있는 바로 그것입니다.
+
+    **모르면 좁히지 않습니다.** 두 필드 중 하나라도 없으면 참을 냅니다 —
+    이 handler 가 붙기 전과 같은 동작입니다. 판단할 근거가 없을 때 신호를
+    지우는 쪽으로 기울면, 파서가 필드를 못 읽은 것이 곧 탐지 누락이 됩니다.
+    """
+    fields = record.get("fields") or {}
+    image = str(fields.get("Image") or "").strip().lower()
+    parent = str(fields.get("ParentImage") or "").strip().lower()
+    if not image or not parent:
+        return True
+
+    if image == parent:
+        return False
+
+    parent_dir = ntpath.dirname(parent)
+    if parent_dir and parent_dir not in SHARED_PROGRAM_DIRS:
+        if image.startswith(parent_dir + "\\"):
+            return False
+
+    return True
+
+
 #: ``handler:`` 에 쓸 수 있는 이름. YAML 이 목록 밖을 부르면 로드가 실패한다.
 #:
 #: **선언으로 되는 것을 여기 넣지 마십시오.** handler 로 내려가는 순간
@@ -500,6 +572,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any], Context], bool]] = {
     "has_zero_timestamp": _has_zero_timestamp,
     "target_is_privileged_group": _target_is_privileged_group,
     "outside_selected_time_range": _outside_selected_time_range,
+    "parent_is_another_program": _parent_is_another_program,
 }
 
 

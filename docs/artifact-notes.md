@@ -2090,3 +2090,52 @@ FileVersion       188,898자  1.9%   ← 뺀다
 **효과(같은 케이스, 같은 창).** 32,768 창에서 전달 레코드가 **54건 → 58건**
 이 됐다. 창을 그대로 두고 증거를 더 싣는 쪽으로 먼저 쓴 것이고, 창을
 좁히는 것은 분할 질의가 들어온 뒤다(`work.md` 9-3).
+
+
+## 2026-09-03 · `unexpected_parent_process` — 오탐 넷 중 셋이 한 구조였다
+
+`K-LIVE-0902-wide`(`evtx:Sysmon` 9,606건)에서 이 flag 가 **258건** 붙었다.
+부모 이름만 보는 룰이라 브라우저의 자기 자식이 통째로 걸려 있었다.
+
+| | 건수 | 비중 |
+|---|---|---|
+| `Image == ParentImage` (msedge → msedge) | 157 | 60% |
+| 자식이 부모 전용 디렉터리 하위 (msedge → identity_helper) | 36 | 14% |
+| 남는 것 | 65 | 25% |
+
+`parent_is_another_program` handler 를 붙여 **258건 → 65건(74% 제외)**.
+`evtx:Sysmon` 의 신호 레코드는 6,358건 → 6,165건이고, 이 flag 가 유일한
+신호였던 193건이 05단계 후보에서 빠진다.
+
+**이름이 아니라 관계로 본다.** 특정 프로그램을 아는 것이 아니라 두 필드가
+서로 어떤 관계인지만 보므로, Edge 말고 다른 다중 프로세스 프로그램도 함께
+걸러진다. 화이트리스트 역탐지를 넣지 않기로 한 판단(`docs/limitations.md`)과
+부딪히지 않는 이유가 이것이다.
+
+**공유 설치 자리 예외가 없으면 신호를 지운다.** 부모가
+`C:\Windows\explorer.exe` 이면 `System32` 전체가 "부모 디렉터리 하위"라
+아래 것들이 함께 사라진다. 이 룰이 잡으라고 있는 바로 그것이다.
+
+```
+남는 65건 (handler 적용 후)
+   11  explorer.exe -> msedge.exe
+    9  explorer.exe -> cmd.exe               ← 지우면 안 되는 것
+    6  userinit.exe -> explorer.exe
+    6  explorer.exe -> SecurityHealthSystray.exe
+    6  explorer.exe -> vmtoolsd.exe
+    6  explorer.exe -> OneDrive.exe
+    6  explorer.exe -> m365copilot_autostarter.exe
+    5  explorer.exe -> powershell.exe        ← 지우면 안 되는 것
+    4  explorer.exe -> mmc.exe               ← 지우면 안 되는 것
+    3  explorer.exe -> tailscale-ipn.exe
+    1  explorer.exe -> ie4uinit.exe / rundll32.exe / runonce.exe
+```
+
+**남는 것 중 자동 시작 앱은 이 handler 로 못 고친다.** explorer 가
+OneDrive·vmtoolsd 를 띄우는 것은 일반 데스크톱에서 정상이고 키오스크에서는
+정상이 아니다 — 룰의 전제가 이 이미지에서 성립하지 않는 것이지 룰이 틀린
+것이 아니다. 이름 목록으로 지우는 것은 화이트리스트 역탐지이고, Stage 0
+베이스라인 없이 넣지 않기로 했다.
+
+**이 이미지는 키오스크가 아니다**(`DESKTOP-RJRKJG1`). 실제 키오스크
+스냅샷에서 다시 재야 남는 65건의 성격을 말할 수 있다(`work.md` 0번).
