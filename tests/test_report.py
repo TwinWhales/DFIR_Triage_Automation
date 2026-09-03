@@ -301,6 +301,86 @@ def test_an_artifact_that_was_read_is_never_also_listed_as_unexamined(docs):
     assert examined & limited == set()
 
 
+def test_a_dirty_hive_is_visible_without_the_console_warning(docs):
+    """파일이 있고, 파서가 성공하고, 값이 낡았다.
+
+    ``parse_errors`` 는 0 이라 지금까지 이 표가 "정상"으로만 보였다.
+    콘솔 경고를 놓치면 보고서만 읽는 사람은 알 방법이 없었다.
+    """
+    manifest = _manifest(
+        files=[
+            {"artifact": "registry:SYSTEM", "record_count": 34855, "dirty_hive": 1}
+        ]
+    )
+    (row,) = _context(docs, manifest=manifest)["examined"]
+    assert "더티 하이브" in row["note"]
+    assert ".LOG1" in row["note"], "분석가가 무엇을 해야 하는지가 문구에 있어야 한다"
+
+
+def test_recovered_chunks_say_the_records_came_from_outside_the_header(docs):
+    """실측: 헤더가 chunk_count=1 인데 청크 4개를 복구했다(Sysmon 244건).
+
+    그 레코드가 정상 경로에서 나온 것이 아니라는 사실이 산출물에 남아야 한다.
+    """
+    manifest = _manifest(
+        files=[
+            {"artifact": "evtx:Sysmon", "record_count": 244, "recovered_chunks": 3}
+        ]
+    )
+    (row,) = _context(docs, manifest=manifest)["examined"]
+    assert "선언하지 않은 청크 3개" in row["note"]
+
+
+def test_fixup_failures_point_at_the_sector_size_not_just_corruption(docs):
+    """4Kn 디스크에서 나오는 것은 오류가 아니라 "$MFT: 0건" 이다.
+
+    비율로 판단하라는 말이 문구에 있어야 그 표에서 바로 갈린다.
+    """
+    manifest = _manifest(
+        files=[{"artifact": "$MFT", "record_count": 0, "fixup_errors": 98151}]
+    )
+    (row,) = _context(docs, manifest=manifest)["examined"]
+    assert "98,151" in row["note"]
+    assert "섹터 크기" in row["note"]
+
+
+def test_reasons_stack_instead_of_overwriting_each_other(docs):
+    """못 읽은 것과 액면대로 보면 안 되는 것은 다른 사실이다.
+
+    예전에는 ``note`` 가 문자열 하나라 나중 것이 앞엣것을 덮었다.
+    """
+    manifest = _manifest(
+        files=[
+            {
+                "artifact": "evtx:Security",
+                "record_count": 912,
+                "parse_errors": 2,
+                "bad_chunks": 5,
+            }
+        ]
+    )
+    (row,) = _context(docs, manifest=manifest)["examined"]
+    assert "부분 판독" in row["note"]
+    assert "체크섬" in row["note"]
+
+
+def test_a_clean_read_gets_no_note(docs):
+    """0인 집계는 문장을 만들지 않는다. 다 적으면 아무도 안 읽는 표가 된다."""
+    manifest = _manifest(
+        files=[
+            {
+                "artifact": "$MFT",
+                "record_count": 98151,
+                "dirty_hive": 0,
+                "bad_chunks": 0,
+                "fixup_errors": 0,
+            }
+        ]
+    )
+    (row,) = _context(docs, manifest=manifest)["examined"]
+    assert row["note"] == ""
+
+
 def test_a_skipped_empty_candidate_is_surfaced_in_the_report(docs):
     """0바이트 껍데기를 건너뛰고 읽었다는 사실은 추출 진단이다."""
     manifest = _manifest(

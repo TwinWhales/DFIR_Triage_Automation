@@ -19,7 +19,13 @@ from typing import Any, NoReturn
 
 from . import io
 
-__all__ = ["ERROR_TYPES", "ACTIONS", "ErrorLog", "tally"]
+__all__ = [
+    "ERROR_TYPES",
+    "ACTIONS",
+    "ErrorLog",
+    "tally",
+]
+
 
 #: 고정 어휘. 새 유형이 필요하면 여기에 추가하고 전체 공지한다.
 #:
@@ -28,11 +34,27 @@ __all__ = ["ERROR_TYPES", "ACTIONS", "ErrorLog", "tally"]
 #: 잘못된 호스트. 그전에는 이 예외를 아무도 잡지 않아 파이썬 트레이스백이
 #: 그대로 올라왔고 ``errors.jsonl`` 에 남지 않았다.
 #:
-#: **``timeout`` 으로 합치지 않는다.** 둘은 조치가 다르고(기다릴 것인가 /
-#: 설정을 고칠 것인가), 07단계 통계가 이 어휘로 직접 산출된다.
+#: ``claim_validation`` 은 2026-09-03 에 추가됐다.
+#: 05단계에서 모델이 만든 ``(ref, field, value)`` claim이 실제로 모델에게
+#: 전달된 레코드와 일치하지 않을 때 기록한다.
+#:
+#: 예:
+#:
+#: - ref는 실제 전달된 레코드지만 해당 field가 존재하지 않음
+#: - field는 존재하지만 모델이 실제와 다른 value를 주장함
+#: - 다른 레코드의 값을 현재 ref에 잘못 붙임
+#:
+#: 이것을 ``schema_violation`` 으로 합치지 않는다.
+#: JSON 구조 자체는 올바르지만 **근거 내용이 잘못된 경우**이므로,
+#: 출력 형식 오류와 LLM 근거 오류를 통계에서 구분해야 한다.
+#:
+#: **``timeout`` 과 ``llm_error`` 도 합치지 않는다.**
+#: 둘은 조치가 다르고(기다릴 것인가 / 설정을 고칠 것인가),
+#: 07단계 통계가 이 어휘로 직접 산출된다.
 ERROR_TYPES = frozenset(
     {
         "schema_violation",
+        "claim_validation",
         "parse_error",
         "malformed_output",
         "empty_result",
@@ -41,7 +63,14 @@ ERROR_TYPES = frozenset(
     }
 )
 
-ACTIONS = frozenset({"retry", "skip", "abort"})
+
+ACTIONS = frozenset(
+    {
+        "retry",
+        "skip",
+        "abort",
+    }
+)
 
 
 class ErrorLog:
@@ -51,13 +80,22 @@ class ErrorLog:
     시간순으로 이어 보려면 파일이 나뉘어 있으면 안 된다.
     """
 
-    def __init__(self, path: str | os.PathLike[str]) -> None:
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+    ) -> None:
         self.path = Path(path)
 
     @classmethod
-    def for_case(cls, case_dir: str | os.PathLike[str]) -> "ErrorLog":
+    def for_case(
+        cls,
+        case_dir: str | os.PathLike[str],
+    ) -> "ErrorLog":
         """``cases/C-001/`` → ``cases/C-001/errors.jsonl``."""
-        return cls(Path(case_dir) / "errors.jsonl")
+
+        return cls(
+            Path(case_dir) / "errors.jsonl"
+        )
 
     def record(
         self,
@@ -68,13 +106,23 @@ class ErrorLog:
         attempt: int | None = None,
     ) -> dict[str, Any]:
         """실패 한 건을 기록하고, 기록한 항목을 돌려준다."""
+
         if type not in ERROR_TYPES:
             raise ValueError(
-                f"미등록 오류 유형: {type!r} (등록된 값: {', '.join(sorted(ERROR_TYPES))})"
+                (
+                    f"미등록 오류 유형: {type!r} "
+                    f"(등록된 값: "
+                    f"{', '.join(sorted(ERROR_TYPES))})"
+                )
             )
+
         if action not in ACTIONS:
             raise ValueError(
-                f"미등록 조치: {action!r} (등록된 값: {', '.join(sorted(ACTIONS))})"
+                (
+                    f"미등록 조치: {action!r} "
+                    f"(등록된 값: "
+                    f"{', '.join(sorted(ACTIONS))})"
+                )
             )
 
         entry: dict[str, Any] = {
@@ -84,32 +132,74 @@ class ErrorLog:
             "detail": detail,
             "action": action,
         }
+
         if attempt is not None:
             entry["attempt"] = attempt
-        io.append_jsonl(self.path, entry)
+
+        io.append_jsonl(
+            self.path,
+            entry,
+        )
+
         return entry
 
-    def abort(self, stage: str, type: str, detail: dict[str, Any]) -> NoReturn:
+    def abort(
+        self,
+        stage: str,
+        type: str,
+        detail: dict[str, Any],
+    ) -> NoReturn:
         """기록하고 즉시 중단한다.
 
         조용히 넘어가지 않는 것이 방침이다. 폴백이 없는 상태에서 실패를
         삼키면, 뒤 단계가 빈 입력을 정상으로 받아 원인 파악이 불가능해진다.
         """
-        self.record(stage, type, detail, action="abort")
-        message = detail.get("message") or detail.get("msg") or ""
-        print(f"[{stage}] {type}: {message}", file=sys.stderr)
-        print(f"  detail: {detail}", file=sys.stderr)
-        print(f"  기록됨: {self.path}", file=sys.stderr)
+
+        self.record(
+            stage,
+            type,
+            detail,
+            action="abort",
+        )
+
+        message = (
+            detail.get("message")
+            or detail.get("msg")
+            or ""
+        )
+
+        print(
+            f"[{stage}] {type}: {message}",
+            file=sys.stderr,
+        )
+
+        print(
+            f"  detail: {detail}",
+            file=sys.stderr,
+        )
+
+        print(
+            f"  기록됨: {self.path}",
+            file=sys.stderr,
+        )
+
         raise SystemExit(1)
 
 
-def tally(path: str | os.PathLike[str]) -> dict[str, Any]:
+def tally(
+    path: str | os.PathLike[str],
+) -> dict[str, Any]:
     """``errors.jsonl``을 집계한다.
 
     발표 자료의 "스키마 검증 실패율 8%, 그중 6%는 존재하지 않는 ATT&CK ID"
     같은 수치가 여기서 나온다. ``detail.field`` 분포를 보면 sLLM이 어떤
     필드에서 자주 틀리는지 드러난다.
+
+    ``claim_validation``도 일반 오류 유형과 동일하게 집계되므로,
+    Stage 05에서 모델이 실제 근거 삼중항을 얼마나 자주 잘못 만드는지도
+    별도의 수치로 확인할 수 있다.
     """
+
     by_type: Counter[str] = Counter()
     by_action: Counter[str] = Counter()
     by_stage: Counter[str] = Counter()
@@ -117,14 +207,35 @@ def tally(path: str | os.PathLike[str]) -> dict[str, Any]:
     by_field: Counter[str] = Counter()
 
     total = 0
+
     for entry in io.read_jsonl(path):
         total += 1
-        stage, etype = entry.get("stage", "?"), entry.get("type", "?")
+
+        stage = entry.get(
+            "stage",
+            "?",
+        )
+
+        etype = entry.get(
+            "type",
+            "?",
+        )
+
         by_type[etype] += 1
-        by_action[entry.get("action", "?")] += 1
+        by_action[
+            entry.get("action", "?")
+        ] += 1
+
         by_stage[stage] += 1
-        by_stage_type[(stage, etype)] += 1
-        field = (entry.get("detail") or {}).get("field")
+        by_stage_type[
+            (stage, etype)
+        ] += 1
+
+        field = (
+            entry.get("detail")
+            or {}
+        ).get("field")
+
         if field:
             by_field[field] += 1
 
@@ -133,6 +244,12 @@ def tally(path: str | os.PathLike[str]) -> dict[str, Any]:
         "by_type": dict(by_type),
         "by_action": dict(by_action),
         "by_stage": dict(by_stage),
-        "by_stage_type": {f"{s}/{t}": n for (s, t), n in by_stage_type.items()},
+        "by_stage_type": {
+            f"{stage}/{etype}": count
+            for (
+                stage,
+                etype,
+            ), count in by_stage_type.items()
+        },
         "by_field": dict(by_field),
     }

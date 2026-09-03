@@ -1,0 +1,318 @@
+/* ============================================================
+   8vidence - Evidence Detail Drawer
+   ============================================================ */
+
+
+/* ------------------------------------------------------------
+   Drawer
+   ------------------------------------------------------------ */
+
+.evidence-detail-panel {
+    position: fixed;
+
+    top: 0;
+    right: 0;
+
+    width: min(520px, 92vw);
+    height: 100vh;
+
+    margin: 0;
+    padding: 0;
+
+    z-index: 1000;
+
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+
+    background: #0f1b2a;
+
+    box-shadow:
+        -18px 0 45px rgba(0, 0, 0, 0.35);
+
+    overflow: hidden;
+}
+
+
+/*
+ * HTML hidden 속성을 확실하게 적용한다.
+ */
+.evidence-detail-panel[hidden] {
+    display: none;
+}
+
+
+/* ------------------------------------------------------------
+   Header
+   ------------------------------------------------------------ */
+
+.evidence-detail-header {
+    display: flex;
+
+    justify-content: space-between;
+    align-items: flex-start;
+
+    gap: 16px;
+
+    padding: 22px 24px 18px;
+
+    margin: 0;
+
+    border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+
+    background: rgba(255, 255, 255, 0.025);
+}
+
+
+.evidence-detail-title {
+    margin: 0;
+
+    font-size: 17px;
+    font-weight: 700;
+
+    color: #ffffff;
+}
+
+
+.evidence-detail-ref {
+    margin-top: 7px;
+
+    font-family:
+        Consolas,
+        "Courier New",
+        monospace;
+
+    font-size: 13px;
+    font-weight: 700;
+
+    color: #62e6d3;
+}
+
+
+/* ------------------------------------------------------------
+   Close Button
+   ------------------------------------------------------------ */
+
+.evidence-close-button {
+    flex-shrink: 0;
+
+    padding: 7px 10px;
+
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 6px;
+
+    background: rgba(255, 255, 255, 0.04);
+
+    color: rgba(255, 255, 255, 0.60);
+
+    font-size: 12px;
+
+    cursor: pointer;
+
+    transition:
+        background 0.15s ease,
+        color 0.15s ease,
+        border-color 0.15s ease;
+}
+
+
+.evidence-close-button:hover {
+    background: rgba(255, 255, 255, 0.08);
+
+    border-color: rgba(255, 255, 255, 0.18);
+
+    color: #ffffff;
+}
+
+
+/* ------------------------------------------------------------
+   Drawer Content
+   ------------------------------------------------------------ */
+
+#evidence-detail-content {
+    height: calc(100vh - 92px);
+
+    padding: 20px 24px 32px;
+
+    overflow-y: auto;
+}
+
+
+/* ------------------------------------------------------------
+   Metadata
+   ------------------------------------------------------------ */
+
+.evidence-detail-meta {
+    display: grid;
+
+    grid-template-columns:
+        repeat(2, minmax(0, 1fr));
+
+    gap: 10px;
+
+    margin-bottom: 24px;
+}
+
+
+.evidence-detail-meta-item {
+    min-width: 0;
+
+    padding: 12px 13px;
+
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+
+    background: rgba(255, 255, 255, 0.025);
+}
+
+
+.evidence-detail-label {
+    display: block;
+
+    margin-bottom: 6px;
+
+    color: rgba(255, 255, 255, 0.42);
+
+    font-size: 10px;
+    font-weight: 700;
+
+    text-transform: uppercase;
+
+    letter-spacing: 0.06em;
+}
+
+
+.evidence-detail-value {
+    display: block;
+
+    overflow-wrap: anywhere;
+
+    color: rgba(255, 255, 255, 0.88);
+
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+
+/* ------------------------------------------------------------
+   Original Record
+   ------------------------------------------------------------ */
+
+.evidence-record-title {
+    margin: 0 0 10px;
+
+    font-size: 13px;
+    font-weight: 700;
+
+    color: rgba(255, 255, 255, 0.68);
+}
+
+
+.evidence-record {
+    margin: 0;
+
+    padding: 16px;
+
+    min-height: 160px;
+
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+
+    background: rgba(0, 0, 0, 0.24);
+
+    color: rgba(255, 255, 255, 0.82);
+
+    font-family:
+        Consolas,
+        "Courier New",
+        monospace;
+
+    font-size: 12px;
+    line-height: 1.65;
+
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+
+/* ------------------------------------------------------------
+   Loading / Error
+   ------------------------------------------------------------ */
+
+.evidence-detail-loading,
+.evidence-detail-error {
+    padding: 32px 20px;
+
+    text-align: center;
+
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+
+    color: rgba(255, 255, 255, 0.48);
+
+    font-size: 13px;
+}
+
+
+.evidence-detail-error {
+    color: #ff8f8f;
+
+    border-color: rgba(255, 143, 143, 0.20);
+}
+
+
+/* ------------------------------------------------------------
+   Scrollbar
+   ------------------------------------------------------------ */
+
+#evidence-detail-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+
+#evidence-detail-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+
+#evidence-detail-content::-webkit-scrollbar-thumb {
+    border-radius: 8px;
+
+    background: rgba(255, 255, 255, 0.12);
+}
+
+
+#evidence-detail-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.20);
+}
+
+
+/* ------------------------------------------------------------
+   Responsive
+   ------------------------------------------------------------ */
+
+@media (max-width: 720px) {
+
+    .evidence-detail-panel {
+        width: 100vw;
+    }
+
+
+    .evidence-detail-meta {
+        grid-template-columns: 1fr;
+    }
+
+
+    .evidence-detail-header {
+        padding:
+            18px
+            18px
+            16px;
+    }
+
+
+    #evidence-detail-content {
+        padding:
+            18px
+            18px
+            28px;
+    }
+}

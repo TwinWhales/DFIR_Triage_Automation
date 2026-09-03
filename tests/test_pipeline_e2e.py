@@ -353,6 +353,87 @@ def test_prune_large_artifacts_false_disables_the_hard_cut(tmp_path):
     assert 10 in written
 
 
+# ============================== 파서가 센 것이 매니페스트까지 가는가
+
+
+class _StatsParser:
+    """레코드 하나를 내고 지정한 ``stats`` 를 남기는 파서.
+
+    확인하려는 것은 파싱이 아니라 **운반**이다. 파서 쪽은 이미 시험이
+    있는데(`test_registry_parser.test_a_dirty_hive_is_reported`) 그 값이
+    04단계 밖으로 안 나가고 있었다.
+    """
+
+    def __init__(self, stats):
+        self.stats = dict(stats)
+
+    def parse(self, stream, scope):
+        yield {
+            "ref": "MFT#1",
+            "artifact": "$MFT",
+            "record_num": 1,
+            "offset": 0,
+            "timestamp": "2026-07-20T00:00:00.0000000Z",
+            "path": "C:\\x",
+            "fields": {},
+        }
+
+
+def _entry_with_stats(tmp_path, monkeypatch, stats):
+    from src.stage04_parse import evidence
+
+    root = tmp_path / "C"
+    root.mkdir()
+    (root / "$MFT").write_bytes(b"\x00" * 16)
+    out_dir = tmp_path / "04_parsed"
+    out_dir.mkdir()
+
+    monkeypatch.setattr(parse_mod.parsers, "get", lambda *a, **k: _StatsParser(stats))
+    return parse_mod.parse_artifact("$MFT", {}, evidence.FileSource(root), out_dir)
+
+
+def test_a_dirty_hive_reaches_the_manifest(tmp_path, monkeypatch):
+    """파일이 있고, 파서가 성공하고, 값이 낡았다.
+
+    ``parse_errors`` 가 0 이라 매니페스트만 보면 정상으로 보인다. 그 사실이
+    콘솔 경고에만 있으면 보고서를 읽는 사람은 알 수 없다.
+    """
+    entry = _entry_with_stats(tmp_path, monkeypatch, {"dirty_hive": 1})
+    assert entry["dirty_hive"] == 1
+
+
+def test_bad_chunks_are_not_swallowed_by_parse_errors(tmp_path, monkeypatch):
+    """evtx 는 체크섬이 안 맞는 청크를 ``parse_errors`` 에 세지 않는다.
+
+    그래서 지금까지 통째로 건너뛴 청크가 매니페스트 어디에도 없었다.
+    """
+    entry = _entry_with_stats(tmp_path, monkeypatch, {"bad_chunks": 5})
+    assert entry["bad_chunks"] == 5
+    assert entry["parse_errors"] == 0, "둘은 다른 사실이다 — 합치면 규모를 못 읽는다"
+
+
+def test_zero_counts_do_not_create_keys(tmp_path, monkeypatch):
+    """``unreadable_bytes`` 와 같은 규약. 0을 실으면 표가 잡음이 된다."""
+    entry = _entry_with_stats(
+        tmp_path, monkeypatch, {"dirty_hive": 0, "fixup_errors": 0, "bad_chunks": 0}
+    )
+    for key in parse_mod.RELIABILITY_STATS:
+        assert key not in entry
+
+
+def test_reliability_stats_never_shadow_the_entrys_own_keys(tmp_path, monkeypatch):
+    """매니페스트 항목에 평평하게 싣는 구조라, 이름이 겹치면 조용히 덮는다."""
+    entry = _entry_with_stats(tmp_path, monkeypatch, {})
+    assert not set(parse_mod.RELIABILITY_STATS) & set(entry)
+
+
+def test_every_forwarded_stat_has_a_sentence_in_the_report():
+    """04가 보내는데 07이 문구를 모르면 그 값은 다시 아무 데도 안 보인다."""
+    assert set(parse_mod.RELIABILITY_STATS) == {
+        key for key, _ in report_mod.RELIABILITY_NOTES
+    }
+
+
 def test_a_hard_cut_without_a_time_range_is_a_no_op():
     # 시간 범위가 없으면 컷할 기준이 없다. 크기만으로 자르면 "왜 없어졌는지"
     # 설명할 수 없는 레코드가 생긴다.
