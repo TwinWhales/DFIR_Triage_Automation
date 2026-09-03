@@ -1128,3 +1128,70 @@ ISO 8601 이고 모델도 그렇게 씁니다. 그러면 `parse_timestamp` 가 �
 
 DEVPROP 타입을 해석하게 된 것은 아닙니다 — 그쪽은 `docs/limitations.md`
 에 남아 있습니다.
+
+## 2026-08-26 · `run_pipeline.sh` 에 볼륨을 줄 통로가 없었다 (**해결됨**)
+
+그전까지 `--volume` 은 `parse.py` 를 직접 부를 때만 줄 수 있었습니다. 관통
+스크립트에는 통로가 없어서, **일반적인 Win10/11 물리 디스크 이미지에서는
+04단계만 손으로 따로 돌려야 했습니다** — 거의 항상 해당한다는 점을
+생각하면 관통 스크립트가 관통하지 못한 셈입니다.
+
+```bash
+VOLUME=1 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh K-ALERT evidence/0824test.001
+```
+
+위치 인자가 아니라 환경 변수인 것은 세 번째 자리를 `replay_dir` 이 이미
+쓰고 있어서입니다. 위치로 받으면 replay 없이는 볼륨을 못 줍니다.
+
+**주지 않았을 때 후보를 보여 주고 멈추는 04단계의 동작은 그대로입니다.**
+스크립트가 대신 추측하지 않습니다 — 그것은 한계가 아니라 의도된 동작이라
+`docs/limitations.md` 의 "디스크 이미지를 직접 열 수 있다" 절에 있습니다.
+
+## 2026-08-26 · 세 룰이 EID 1 만 본다고 써 놓고 안 그랬다 (**해결됨**)
+
+`win10_sysmon_testimage.001` 실측에서 붙은 플래그의 **절반이
+`ProcessTerminate`(EID 5)** 였습니다. `shell_spawned`·
+`execution_from_unusual_path`·`unexpected_parent_process` 셋 다
+`condition:` 에 "Sysmon 1(프로세스 생성)" 이라고 적어 놓고 `when:` 절에
+event_id 제약이 없었습니다. 바로 아래 `network_connection` 은
+`match: event_id` 를 쓰고 있으니 관례는 이미 있었고, 이 셋만 안 지켰습니다.
+
+같은 프로세스를 두 번 세는 것보다 나쁜 것이 있습니다. **EID 5 레코드에는
+`ParentImage` 도 `CommandLine` 도 없습니다.**
+
+```
+SYSMON#212  EID=5  fields=[Image, ProcessGuid, ProcessId, RuleName, User, UtcTime]
+```
+
+`shell_spawned` 의 note 가 "부모가 무엇이냐가 그 다음 질문이다
+(fields.ParentImage 는 레코드에 그대로 실려 모델이 본다)" 라고 적은 바로 그
+필드가 없는 쪽입니다. **05단계 자리는 먹고 정보는 더 적습니다.**
+
+2026-08-25 에 채널 단위로 좁혔던 "flag 사정거리" 와 같은 부류인데, 이번엔
+채널 **안에서** EventID 사이입니다.
+
+**조치** — `Clause` 에 `event_ids` 를 더했습니다. `artifact` 와 같은
+자리이고, 둘 다 대상을 좁힌 뒤 `match` 가 판정합니다. `match: event_id`
+(EventID 자체가 신호)와 뜻이 달라 함께 쓰면 거부됩니다. 작성 규칙은
+`docs/mapping-guide.md`.
+
+```
+조치 전  17건 (EID 5 가 8건)
+조치 후   9건 (EID 5 가 0건)
+```
+
+## 2026-09-03 · 일곱 번째 자기모순 — 프리패치 볼륨 GUID (**해결됨 — 진작에**)
+
+검증기 오탐 절의 조치 표가 `프리패치 볼륨 GUID 경로 | **미해결**` 이라고
+적고 있었는데, **같은 문서 위쪽의 "장치 경로가 드라이브 문자로 안 바뀌었다"
+절이 같은 날(2026-08-26) 고쳤다고 적고 있었습니다.** 정규식이 두 형태를
+다 받고, 검증 사례 `V40` 이 그것을 못 박고 있습니다.
+
+그 표를 근거로 "수치가 정상으로 돌아오려면 미해결 둘이 남아 있습니다"라고
+적힌 문단도 함께 틀려 있었습니다. K-ALERT 의 기각 넷 중 셋(F2·F3·F4)은
+전부 닫혔으므로 지금 같은 케이스를 돌리면 F1 하나만 기각돼 환각률이 25%
+여야 합니다.
+
+**다만 재지 않았습니다** — K-ALERT 케이스가 `cases/` 에 남아 있지
+않습니다. 그래서 "발표에 실을 실물 환각률 수치가 없다"는 쪽으로 고쳐
+적었고, 그것은 지금도 참이라 `docs/limitations.md` 에 남습니다.
