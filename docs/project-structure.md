@@ -64,7 +64,8 @@ dfir-triage/
 │   │   ├── checkers/
 │   │   │   ├── ref_exists.py      # 참조 존재 검증
 │   │   │   ├── ref_in_input.py    # input_refs 범위 검증
-│   │   │   └── value_match.py     # 값 일치 검증 (필드 타입별 비교기)
+│   │   │   ├── value_match.py     # 값 일치 검증 (필드 타입별 비교기)
+│   │   │   └── technique_supported.py  # 인용한 증거가 그 기법의 근거인가
 │   │   └── comparators.py         # 타임스탬프·경로·문자열 비교 규칙
 │   │
 │   └── stage07_report/

@@ -4,7 +4,8 @@
 때문이다. 검증 강도별 실험에서 ``--checkers ref_exists,value_match`` 같은
 조합으로 통과율 변화를 측정한다.
 
-**실행 순서는 고정이다.** ``ref_exists`` → ``ref_in_input`` → ``value_match``.
+**실행 순서는 고정이다.** ``ref_exists`` → ``ref_in_input`` → ``value_match``
+→ ``technique_supported``.
 
 파싱 결과에도 ``input_refs``에도 없는 레코드는 두 체커 모두에 걸리는데,
 스펙은 이것을 ``ref_not_found``로 판정한다. 순서가 반대면 같은 상황이
@@ -13,6 +14,10 @@
 체커를 끄면 그 항목의 위반이 다음 체커로 넘어간다는 점에 주의한다.
 ``ref_exists``를 끄면 존재하지 않는 레코드가 ``ref_not_in_input``으로
 잡히므로, 조합별 실험 결과를 읽을 때 감안해야 한다.
+
+``technique_supported``가 **맨 뒤**인 것은 값이 어긋난 문장이 더 기본적인
+잘못이기 때문이다. 값도 틀리고 기법도 안 맞는 문장은 ``value_mismatch``로
+집계된다. 다른 셋이 값과 존재를 본다면 이것만 **함의**를 본다.
 """
 
 from __future__ import annotations
@@ -66,6 +71,12 @@ class CheckContext:
     input_refs: frozenset[str]
     #: 타임스탬프 비교 허용 오차(초).
     tolerance_seconds: float = 0.0
+    #: 기법 → 그 기법의 근거로 매핑에 등재된 아티팩트 이름.
+    #:
+    #: ``mappings/*/T*.yaml`` 의 ``artifacts:`` 에서 온다. **비어 있으면
+    #: ``technique_supported`` 가 아무것도 기각하지 않는다** — 매핑을 못
+    #: 읽었는데 전부 기각하면, 검증기가 증거가 아니라 우리 설정을 재게 된다.
+    technique_artifacts: dict[str, frozenset[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -89,7 +100,12 @@ class CheckResult:
 Checker = Callable[[dict[str, Any], CheckContext], CheckResult]
 
 #: 기각 판정에서의 실행 순서. 위 docstring 참조.
-DEFAULT_ORDER: tuple[str, ...] = ("ref_exists", "ref_in_input", "value_match")
+DEFAULT_ORDER: tuple[str, ...] = (
+    "ref_exists",
+    "ref_in_input",
+    "value_match",
+    "technique_supported",
+)
 
 
 def resolve(names: "list[str] | tuple[str, ...] | None") -> list[tuple[str, Checker]]:
@@ -115,6 +131,7 @@ def resolve(names: "list[str] | tuple[str, ...] | None") -> list[tuple[str, Chec
 # 각 체커 모듈이 CheckContext 등을 가져갈 수 있다.
 from .ref_exists import check as _ref_exists  # noqa: E402
 from .ref_in_input import check as _ref_in_input  # noqa: E402
+from .technique_supported import check as _technique_supported  # noqa: E402
 from .value_match import check as _value_match  # noqa: E402
 
 #: 이름 → 체커. ``--checkers``가 이 키를 받는다.
@@ -122,4 +139,5 @@ CHECKERS: dict[str, Checker] = {
     "ref_exists": _ref_exists,
     "ref_in_input": _ref_in_input,
     "value_match": _value_match,
+    "technique_supported": _technique_supported,
 }

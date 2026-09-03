@@ -49,8 +49,8 @@
         "properties": {
           "id": { "$ref": "#/$defs/finding_id" },
           "reason": {
-            "enum": ["ref_not_found", "value_mismatch", "ref_not_in_input", "field_not_found"],
-            "description": "환각 유형별 분포가 발표 수치가 되므로 어휘를 고정한다. field_not_found는 스펙 예시에 없으나, 존재하는 레코드의 없는 필드를 주장한 경우를 value_mismatch로 뭉뚱그리면 유형 분포가 왜곡되어 따로 둔다."
+            "enum": ["ref_not_found", "value_mismatch", "ref_not_in_input", "field_not_found", "technique_unsupported"],
+            "description": "환각 유형별 분포가 발표 수치가 되므로 어휘를 고정한다. field_not_found는 스펙 예시에 없으나, 존재하는 레코드의 없는 필드를 주장한 경우를 value_mismatch로 뭉뚱그리면 유형 분포가 왜곡되어 따로 둔다. technique_unsupported는 값이 아니라 함의를 본다 — 인용한 레코드의 아티팩트가 그 기법의 근거로 매핑에 등재돼 있지 않은 경우다. claims를 파이썬이 조립하면 value_mismatch가 항등식이 되므로, 이쪽이 실제로 재는 자리가 된다."
           },
           "detail": { "type": "object" }
         }

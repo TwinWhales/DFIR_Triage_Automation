@@ -543,7 +543,7 @@ def test_a_binary_in_a_normal_install_location_is_not_flagged():
 
 
 def test_the_path_fragments_carry_separators():
-    """구분자 없이 조각만 쓰면 엉뚱한 데서 걸린다.
+    r"""구분자 없이 조각만 쓰면 엉뚱한 데서 걸린다.
 
     ``temp`` 로 썼다면 ``C:\Program Files\Tempo\app.exe`` 가 걸린다.
     """
@@ -607,7 +607,7 @@ def test_a_helper_inside_the_parents_own_install_tree_is_not_flagged():
     ],
 )
 def test_a_shared_system_directory_is_not_a_parents_own_tree(image):
-    """**이 검사가 없으면 신호를 지운다.**
+    r"""**이 검사가 없으면 신호를 지운다.**
 
     부모가 ``C:\Windows\explorer.exe`` 이면 ``System32`` 전체가 "부모
     디렉터리 하위"라, explorer → cmd.exe 가 같은 프로그램으로 묶인다.

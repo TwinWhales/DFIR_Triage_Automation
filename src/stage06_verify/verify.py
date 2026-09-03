@@ -42,6 +42,7 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, schema
+from ..stage03_select import mapping_loader
 from . import checkers
 
 __all__ = ["verify", "load_records", "main"]
@@ -59,12 +60,52 @@ DuplicateRefError = io.DuplicateRefError
 load_records = io.read_parsed_records
 
 
+def technique_artifacts(mappings_dir: "str | Path") -> dict[str, frozenset[str]]:
+    """기법 → 그 기법의 근거로 매핑에 등재된 아티팩트 이름.
+
+    ``mappings/*/T*.yaml`` 의 ``artifacts:`` 를 그대로 뒤집은 표입니다.
+    **새 판단 기준을 만드는 것이 아닙니다** — 03단계가 이 표로 선별하고,
+    06단계가 같은 표로 "그 증거로 그 기법을 말했는가"를 봅니다.
+
+    **OS 를 가리지 않고 합집합으로 읽습니다.** 05단계 산출물에는 대상 OS 가
+    없고(시나리오에 있습니다), 같은 기법 번호라도 OS 마다 근거 아티팩트가
+    다릅니다. 합치면 판정이 느슨해지는 쪽인데, 이 자리에서는 그쪽이 안전한
+    방향입니다 — 판정할 수 없는 것을 기각하면 환각률이 실제 환각이 아니라
+    우리 설정을 셉니다(``benchmark/validator_check.py``).
+
+    **못 읽으면 빈 표를 냅니다.** 그러면 ``technique_supported`` 가 아무것도
+    기각하지 않습니다. 이 단계는 매핑이 없어도 돌아야 하는 결정론적 구간이라,
+    표가 없다고 멈추면 04단계 산출물만으로 검증하던 경로가 막힙니다.
+    """
+    directory = Path(mappings_dir)
+    if not directory.is_dir():
+        return {}
+
+    try:
+        catalog = mapping_loader.load_catalog(directory)
+    except (mapping_loader.MappingError, OSError):
+        return {}
+
+    table: dict[str, set[str]] = {}
+    for os_dir in sorted(p.name for p in directory.iterdir() if p.is_dir()):
+        try:
+            loaded = mapping_loader.load_all(directory, os_dir, catalog)
+        except (mapping_loader.MappingError, OSError):
+            continue
+        for technique, mapping in loaded.items():
+            table.setdefault(technique, set()).update(
+                request.artifact for request in mapping.requests
+            )
+    return {technique: frozenset(names) for technique, names in table.items()}
+
+
 def verify(
     findings_doc: dict[str, Any],
     records: dict[str, dict[str, Any]],
     *,
     checker_names: "list[str] | None" = None,
     tolerance_seconds: float = DEFAULT_TOLERANCE_SECONDS,
+    supported_artifacts: "dict[str, frozenset[str]] | None" = None,
     generator: str = "verify.py",
 ) -> dict[str, Any]:
     """판정을 수행하고 ``06_verified.json`` 문서를 만든다.
@@ -77,6 +118,7 @@ def verify(
         records=records,
         input_refs=frozenset(findings_doc.get("input_refs", [])),
         tolerance_seconds=tolerance_seconds,
+        technique_artifacts=supported_artifacts or {},
     )
 
     passed: list[dict[str, Any]] = []
@@ -150,6 +192,15 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--mappings",
+        default="mappings",
+        help=(
+            "매핑 디렉터리. 기법마다 어느 아티팩트가 근거인지 읽어 "
+            "technique_supported 가 쓴다. 기본 %(default)s. "
+            "없거나 못 읽으면 그 체커는 아무것도 기각하지 않는다"
+        ),
+    )
+    parser.add_argument(
         "--tolerance-seconds",
         type=float,
         default=DEFAULT_TOLERANCE_SECONDS,
@@ -202,11 +253,23 @@ def main(argv: "list[str] | None" = None) -> int:
             {"message": f"파싱 결과가 비어 있음: {args.parsed}. 04단계를 먼저 실행한다."},
         )
 
+    supported = technique_artifacts(args.mappings)
+    if not supported:
+        # 조용히 넘어가면 technique_supported 가 아무것도 안 잡는데 통과율만
+        # 올라가고, 그것을 성능으로 읽게 된다. 실패는 아니므로 멈추지는
+        # 않지만 말은 한다.
+        print(
+            f"[{STAGE}] 경고: {args.mappings} 에서 기법-아티팩트 표를 읽지 못했습니다. "
+            "technique_supported 가 아무것도 기각하지 않습니다.",
+            file=sys.stderr,
+        )
+
     verified = verify(
         findings_doc,
         records,
         checker_names=checker_names,
         tolerance_seconds=args.tolerance_seconds,
+        supported_artifacts=supported,
     )
 
     # 출력 검증
