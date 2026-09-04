@@ -116,6 +116,10 @@ def record_coverage(
     못한다. 여기서 하는 일은 **놓친 것을 보이게 만드는 것**이지 없애는
     것이 아니다.
 
+    **두 가지를 한다** — 옮겨지지 않은 구간을 ``unmapped_text`` 에 채우고,
+    입력에 없는 ``entities`` 값을 **떨군다.** 앞은 놓친 것을 보이게 만들고,
+    뒤는 지어낸 것이 03단계의 선별 기준이 되는 것을 막는다.
+
     ``unmapped_text`` 를 우리가 채우는 것이 모델의 답을 고치는 것처럼
     보일 수 있으나 반대다. 그 필드의 정의가 "기법으로 매핑하지 못한
     서술"이고, 모델은 매핑하지 못한 것이 있는데도 8/8 빈 배열을 냈다.
@@ -134,19 +138,34 @@ def record_coverage(
         )
 
     spans = coverage.uncovered_spans(scenario, raw)
-    if not spans:
-        return scenario
+    if spans:
+        known = list(scenario.get("unmapped_text") or [])
+        added = [s for s in spans if s not in known]
+        if added:
+            scenario["unmapped_text"] = known + added
+            log.record(
+                STAGE,
+                "uncovered_input",
+                {"field": "unmapped_text", "spans": added},
+                action="record",
+            )
 
-    known = list(scenario.get("unmapped_text") or [])
-    added = [s for s in spans if s not in known]
-    if added:
-        scenario["unmapped_text"] = known + added
+    ungrounded = coverage.ungrounded_entities(scenario, raw)
+    if ungrounded:
+        # **떨군다.** 남겨 두면 `scope_resolver.build_context` 가 매핑의
+        # `defaults` 를 덮어, 사람이 기법별로 써 둔 경로 대신 모델이 지어낸
+        # 경로를 03단계가 훑는다. 떨구면 그 자리는 defaults 로 돌아간다 —
+        # **잃는 것이 없다**(`coverage.ungrounded_entities` 의 설명).
+        entities = scenario["entities"]
+        for axis, values in ungrounded.items():
+            entities[axis] = [v for v in entities.get(axis, []) if v not in values]
         log.record(
             STAGE,
-            "uncovered_input",
-            {"field": "unmapped_text", "spans": added},
+            "ungrounded_entity",
+            {"field": "entities", "dropped": ungrounded},
             action="record",
         )
+
     return scenario
 
 

@@ -450,3 +450,31 @@ def test_cli_takes_the_adapter_path_for_edr_alerts(tmp_path):
     # 03단계 이후를 개발할 수 있는 이유다.
     assert normalize_mod.main(["--in", str(src), "--out", str(out)]) == 0
     assert io.read_json(out)["generator"] == "alert_adapter.py"
+
+
+def test_an_ungrounded_entity_is_dropped_and_recorded(tmp_path, scenario_body):
+    """입력에 없는 `entities` 값은 떨구고 기록한다.
+
+    남겨 두면 `scope_resolver.build_context` 가 매핑의 `defaults` 를 덮어,
+    사람이 기법별로 써 둔 경로 대신 모델이 지어낸 경로를 03단계가 훑는다.
+    """
+    body = copy.deepcopy(scenario_body)
+    body["entities"]["paths"] = ["C:\지어낸경로"]
+    body["entities"]["hosts"] = ["WEB01"]
+    log = errlog.ErrorLog.for_case(tmp_path)
+    client = NormalizeClient(FakeBackend(json.dumps(body, ensure_ascii=False)), few_shot=False)
+
+    doc = normalize(
+        {"case_id": "C-001", "raw": "웹서버 WEB01 에서 이상한 파일이 발견됐습니다", "evidence": {}},
+        client,
+        log,
+    )
+    schema.validate(doc, "scenario")
+
+    assert doc["entities"]["paths"] == [], "지어낸 경로가 살아남았다"
+    assert doc["entities"]["hosts"] == ["WEB01"], "입력에서 온 값까지 떨궜다"
+
+    recorded = [e for e in io.read_jsonl(tmp_path / "errors.jsonl") if e["type"] == "ungrounded_entity"]
+    assert len(recorded) == 1
+    assert recorded[0]["action"] == "record", "흐름을 바꾸지 않았다는 뜻이어야 한다"
+    assert recorded[0]["detail"]["dropped"] == {"paths": ["C:\지어낸경로"]}

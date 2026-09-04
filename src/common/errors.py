@@ -79,6 +79,18 @@ __all__ = [
 #:   아니다. 다듬는 과정에서 절이 사라지는 것이 실제 실패 방식이라
 #:   (``자동 실행 등록과 계정 관련 변경이`` → ``자동 실행 등록이``)
 #:   위 항목의 선행 지표다.
+#: ``ungrounded_entity`` 는 2026-09-05 에 추가됐다(전체 공지 대상).
+#: 위의 둘과 같은 성격이다 — **실패가 아니라 측정**이라 조치가 ``record`` 다.
+#:
+#: 02단계가 ``entities`` 에 입력 원문에 없는 값을 넣은 것이다. 실측에서
+#: ``paths`` 는 **16/16 전부** 그랬다(2026-09-05, 두 입력 8회씩). 그냥 남는
+#: 것이 아니라 **사람이 기법별로 써 둔 ``defaults`` 를 덮으므로**
+#: (``scope_resolver.build_context``) 03단계가 엉뚱한 폴더를 훑게 된다.
+#: 02단계가 그 값을 떨구고 여기 적는다.
+#:
+#: 세는 이유는 ``uncovered_input`` 과 같다 — **프롬프트를 고쳤을 때
+#: 나아졌는지 알기 위해서**다. 같은 자리의 ``hosts`` 환각은 2026-09-04 의
+#: few-shot 수정으로 0/16 이 됐는데, 그 차이를 볼 자리가 이 통계다.
 ERROR_TYPES = frozenset(
     {
         "schema_violation",
@@ -91,6 +103,7 @@ ERROR_TYPES = frozenset(
         "assembly_error",
         "uncovered_input",
         "nonverbatim_evidence",
+        "ungrounded_entity",
     }
 )
 
