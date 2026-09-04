@@ -57,6 +57,8 @@ __all__ = [
     "KeepPaths",
     "prompt_keep_paths",
     "prompt_drop_fields",
+    "ClaimFields",
+    "claim_fields",
     "apply",
     "apply_all",
 ]
@@ -793,6 +795,61 @@ def prompt_drop_fields(directory: str | None = None) -> frozenset[str]:
         raise VocabularyError(f"{path}: prompt_drop_fields 는 문자열 목록이어야 함")
 
     return frozenset(n.strip().lower() for n in names if n.strip())
+
+
+@dataclass(frozen=True)
+class ClaimFields:
+    """소견의 ``claims`` 에 실을 필드의 순서와 상한. ``claim_fields`` 참조."""
+
+    max_items: int
+    names: tuple[str, ...]
+
+
+#: ``claim_fields`` 가 없을 때. 기능이 꺼진다 — 조립기가 claims 를 만들지
+#: 않고, 그 소견은 06단계에서 ``unverifiable`` 이 된다. 조용히 틀리지 않는다.
+NO_CLAIM_FIELDS = ClaimFields(max_items=0, names=())
+
+
+@functools.lru_cache(maxsize=None)
+def claim_fields(directory: str | None = None) -> ClaimFields:
+    """05단계 조립기가 ``claims`` 로 삼을 필드. **순서가 우선순위다.**
+
+    ``prompt_keep_paths``·``prompt_drop_fields`` 와 같은 이유로 이 파일에서
+    읽습니다 — 플래그가 아니라 배분·조립의 문제이지만, 어느 필드가 판단에
+    쓰이는가라는 같은 성격의 판단이고, 새 파서가 붙을 때 함께 늘어야 합니다.
+
+    이름은 점 표기입니다(``fields.CommandLine``). 최상위와 ``fields`` 안이
+    섞이는 것은 아티팩트마다 값이 사는 층이 다르기 때문입니다 —
+    ``$UsnJrnl`` 은 ``fields`` 가 아예 없습니다.
+
+    **모양이 틀렸으면 멈춥니다.** 슬쩍 무시하면 claims 가 조용히 비고,
+    그 소견은 ``unverifiable`` 이 되어 검증 대상에서 빠집니다.
+    """
+    path = Path(directory or mappings_dir()) / "_flags.yaml"
+    if not path.is_file():
+        return NO_CLAIM_FIELDS
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    spec = data.get("claim_fields")
+    if spec is None:
+        return NO_CLAIM_FIELDS
+    if not isinstance(spec, dict):
+        raise VocabularyError(f"{path}: claim_fields 가 매핑이 아님")
+
+    max_items = spec.get("max_items", 0)
+    if isinstance(max_items, bool) or not isinstance(max_items, int) or max_items < 0:
+        raise VocabularyError(
+            f"{path}: claim_fields.max_items 는 0 이상의 정수여야 함 (현재 {max_items!r})"
+        )
+
+    names = spec.get("fields") or []
+    if not isinstance(names, list) or any(not isinstance(n, str) for n in names):
+        raise VocabularyError(f"{path}: claim_fields.fields 는 문자열 목록이어야 함")
+
+    return ClaimFields(
+        max_items=int(max_items),
+        names=tuple(n.strip() for n in names if n.strip()),
+    )
 
 
 #: 고정 어휘. ``mappings/_flags.yaml`` 이 원본이고, 스키마 enum 은

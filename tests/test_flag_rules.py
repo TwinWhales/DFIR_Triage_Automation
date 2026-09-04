@@ -56,6 +56,57 @@ def _restore_cache():
     flagging.load_vocabulary.cache_clear()
     flagging.privileged_groups.cache_clear()
     flagging.prompt_drop_fields.cache_clear()
+    flagging.claim_fields.cache_clear()
+
+
+# ================================================== claims 로 삼을 필드 (어휘)
+
+
+def _write_claim(directory, value) -> str:
+    path = directory / "_flags.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if value is None:
+        data.pop("claim_fields", None)
+    else:
+        data["claim_fields"] = value
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    flagging.claim_fields.cache_clear()
+    return str(directory)
+
+
+def test_the_claim_field_order_comes_from_the_yaml(flags_dir):
+    # 순서가 우선순위다. 코드에 박으면 새 파서가 붙을 때 고칠 자리를 놓친다.
+    directory = _write_claim(flags_dir, {"max_items": 2, "fields": ["b", "a"]})
+
+    fields = flagging.claim_fields(directory)
+
+    assert fields.names == ("b", "a")
+    assert fields.max_items == 2
+
+
+def test_no_claim_key_turns_the_assembler_off(flags_dir):
+    # claims 가 비면 그 소견은 06단계에서 unverifiable 이 된다. 조용히
+    # 틀리는 것이 아니라 검증 대상에서 빠지는 것이라 드러난다.
+    directory = _write_claim(flags_dir, None)
+
+    assert flagging.claim_fields(directory) == flagging.NO_CLAIM_FIELDS
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        ["path"],
+        {"max_items": -1, "fields": ["path"]},
+        {"max_items": True, "fields": ["path"]},
+        {"max_items": 4, "fields": "path"},
+        {"max_items": 4, "fields": ["path", 3]},
+    ],
+)
+def test_a_misshapen_claim_spec_stops_instead_of_being_ignored(flags_dir, bad):
+    directory = _write_claim(flags_dir, bad)
+
+    with pytest.raises(flagging.VocabularyError, match="claim_fields"):
+        flagging.claim_fields(directory)
 
 
 # ============================================ 프롬프트에서 뺄 필드 (어휘)

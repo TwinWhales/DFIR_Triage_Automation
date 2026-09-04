@@ -770,3 +770,46 @@ prompt_drop_fields:
   # 터미널 세션 번호. 세션을 가르는 판정은 LogonId 로 하고 있고
   # (privileged_group_add 등), 그쪽은 남긴다.
   - TerminalSessionId
+
+# 05단계가 소견의 claims 를 조립할 때 레코드에서 꺼내는 필드다. **순서가
+# 뜻을 갖는다** — 앞에 있는 것부터 쓰고, 레코드에 있는 것만 골라 상한까지
+# 채운다. src/stage05_interpret/assembly.py 가 읽는다.
+#
+# **왜 어휘인가.** claims 는 06단계가 원본과 대조하는 유일한 대상이다. 어느
+# 필드를 claim 으로 삼을지는 아티팩트마다 다르고(아래 참조), 새 파서가 붙을
+# 때 함께 늘어야 한다. 코드에 박으면 add-parser 절차에서 빠뜨려도 아무 데도
+# 안 남는다 — prompt_drop_fields 와 같은 이유다.
+#
+# **최상위와 fields 를 함께 적는다.** 실측(2026-09-03)에서 아티팩트마다
+# 값이 사는 층이 다르다:
+#
+#   $UsnJrnl      fields 가 아예 없다. name·reason 이 전부 최상위다
+#   prefetch      name 이 최상위, 나머지는 fields
+#   registry:*    path·name 이 최상위
+#   evtx:*        event_id·timestamp 가 최상위, 나머지는 fields
+#   $MFT          path 와 si_*/fn_* 여덟이 최상위
+#
+# **하나도 없으면 claims 가 빈다.** 그 소견은 06단계에서 unverifiable 로
+# 분류되고, 그것이 정직한 결과다 — 없는 필드를 지어내 채우면 그 순간
+# 06단계가 우리가 만든 값을 검증하게 된다.
+claim_fields:
+  # 상한. claims 하나하나가 06 의 대조 한 번이라, 많을수록 좋은 것이 아니라
+  # **문장이 실제로 주장하는 것**과 같아야 한다. 넷이면 "무엇이·어디서·
+  # 언제·누가" 를 대개 덮는다.
+  max_items: 4
+
+  # 순서가 우선순위다. 경로·이름처럼 그 레코드를 특정하는 것이 앞이고,
+  # 시각은 맨 뒤다 — 어느 레코드에나 있어서 앞에 두면 다른 필드를 밀어낸다.
+  fields:
+    - path                    # $MFT, registry:*
+    - name                    # $UsnJrnl, prefetch, registry:*
+    - reason                  # $UsnJrnl — 이 아티팩트 판단의 핵심이다
+    - fields.CommandLine      # evtx:Sysmon 1
+    - fields.Image
+    - fields.TargetFilename   # evtx:Sysmon 11
+    - fields.TargetUserName   # evtx:Security 4720·4728·4732
+    - fields.ParentImage
+    - fields.DestinationIp    # evtx:Sysmon 3
+    - fields.ServiceName
+    - event_id                # evtx:* — 무슨 사건이었나
+    - timestamp
