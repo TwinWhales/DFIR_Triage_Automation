@@ -13,7 +13,7 @@ import pytest
 
 from src.common import io
 from src.stage04_parse import evidence
-from src.stage04_parse.parsers.base import Scope
+from src.stage04_parse.parsers.base import Scope, path_in_prefix, path_leads_to_prefix
 from casepaths import GOLDEN
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -706,3 +706,66 @@ def test_no_artifact_lists_the_same_filename_twice():
     for artifact, location in FILE_LAYOUT.items():
         assert len(location.filenames) == len(set(location.filenames)), artifact
         assert len(location.relative_paths) == len(set(location.relative_paths)), artifact
+
+
+# ======================================================= 접두어 와일드카드
+
+
+def test_a_star_fills_exactly_one_segment():
+    # 매핑이 사용자 이름 자리를 비워 두는 형태다. 확장이 없으면 이 요청은
+    # **영구 0건**이 되는데, 04단계는 0건을 "그 범위에 흔적이 없었다"로
+    # 보고하므로 증거를 놓친 것과 구별되지 않는다.
+    # 실측: K-LIVE-0902-wide (2026-09-04) 의 `$MFT` 가 그 경우였다.
+    scope = Scope.from_selection(
+        {"path_prefix": [r"C:\Users\*\AppData\Local\Temp"], "extensions": [".ps1"]}
+    )
+    assert scope.matches_path(r"C:\Users\kiosk\AppData\Local\Temp\s.ps1")
+    assert scope.matches_path(r"C:\Users\Administrator\AppData\Local\Temp\deep\evil.ps1")
+    # 한 세그먼트다 — 그 자리를 통째로 건너뛰지는 않는다.
+    assert not scope.matches_path(r"C:\Users\AppData\Local\Temp\s.ps1")
+    assert not scope.matches_path(r"C:\Users\kiosk\AppData\Roaming\Temp\s.ps1")
+
+
+def test_a_star_does_not_cross_a_separator():
+    # `*` 가 구분자를 넘으면 "Temp 아래 전부"가 되어 범위가 조용히 넓어진다.
+    scope = Scope.from_selection({"path_prefix": [r"C:\Users\*\Temp"]})
+    assert scope.matches_prefix(r"C:\Users\kiosk\Temp")
+    assert not scope.matches_prefix(r"C:\Users\kiosk\AppData\Temp")
+
+
+def test_a_prefix_without_a_star_keeps_the_old_behaviour():
+    scope = Scope.from_selection({"path_prefix": [r"C:\web"]})
+    assert scope.matches_prefix(r"C:\web\a.aspx")
+    assert scope.matches_prefix(r"C:\web")
+    assert not scope.matches_prefix(r"C:\website\a.aspx")
+
+
+def test_the_pruning_test_follows_the_same_rule():
+    # 레지스트리 파서가 하위 트리를 걷지 말지 정하는 자리다. 두 판정이
+    # 갈라지면 범위 안에 있는 키를 걸어가 보지도 않고 버린다.
+    prefix = "c:/users/*/appdata/local/temp"
+    assert path_leads_to_prefix("c:/users", prefix)
+    assert path_leads_to_prefix("c:/users/kiosk", prefix)
+    assert not path_leads_to_prefix("c:/windows", prefix)
+    # 이미 범위 안이면 길목이 아니다.
+    assert not path_leads_to_prefix("c:/users/kiosk/appdata/local/temp", prefix)
+    assert path_in_prefix("c:/users/kiosk/appdata/local/temp/s.ps1", prefix)
+
+
+def test_every_mapping_wildcard_can_actually_match_something():
+    # 매핑에 `*` 를 적었는데 04단계가 확장하지 못하면 조용한 0건이다.
+    # 여기서 도는 것은 실제 `mappings/` 이므로, 지원하지 않는 문법이
+    # 새로 들어오면 로더보다 먼저 이 테스트가 깨진다.
+    from src.stage03_select.mapping_loader import load_all, load_catalog
+
+    repo_root = Path(__file__).resolve().parents[1]
+    catalog = load_catalog(repo_root / "mappings")
+    for mapping in load_all(repo_root / "mappings", "windows", catalog).values():
+        for request in mapping.requests:
+            for prefix in request.scope_template.get("path_prefix", ()):
+                if "*" not in prefix:
+                    continue
+                filled = prefix.replace("*", "x")
+                assert Scope.from_selection({"path_prefix": [prefix]}).matches_prefix(filled), (
+                    f"{mapping.technique} {request.artifact}: {prefix!r} 가 아무것도 맞히지 못한다"
+                )

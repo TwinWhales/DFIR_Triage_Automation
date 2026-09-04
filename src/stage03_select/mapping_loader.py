@@ -138,6 +138,50 @@ FOLLOWUP_KEYS = REQUEST_KEYS | {"technique", "artifact"}
 SCOPE_KEYS = frozenset({"path_prefix", "extensions", "event_ids"})
 
 
+#: ``path_prefix`` 가 쓸 수 있는 유일한 와일드카드는 ``*`` 하나이고,
+#: **세그먼트 하나 안에서만** 확장된다(``parsers.base.path_in_prefix``).
+#:
+#: 나머지 glob 문법을 여기서 막는 이유는 04단계가 그것을 **글자 그대로**
+#: 취급하기 때문이다. ``?`` 를 적으면 물음표라는 문자가 든 경로만 찾게
+#: 되는데 그런 경로는 없으므로 결과는 조용한 0건이다. 매핑을 쓴 사람은
+#: "그 범위에 흔적이 없었다"고 읽는다 — 증거를 놓친 것과 구별이 안 된다.
+#:
+#: 선례: ``T1105`` 의 ``$MFT`` 요청이 ``C:\Users\*\AppData\Local\Temp`` 로
+#: 적혀 있었는데 04단계에 ``*`` 확장이 없어 **영구 0건**이었다
+#: (2026-09-04 실측, ``K-LIVE-0902-wide``). ``*`` 는 지원하게 고쳤고,
+#: 지원하지 않는 문법은 여기서 멈춘다.
+UNSUPPORTED_GLOB = {
+    "?": "한 글자 와일드카드",
+    "[": "문자 클래스",
+    "]": "문자 클래스",
+}
+
+#: 구분자를 넘는 재귀 glob. ``*`` 두 개는 04단계에서 ``*`` 하나와 똑같이
+#: 동작하므로, 적은 사람의 뜻(하위 전부)과 조용히 어긋난다.
+RECURSIVE_GLOB = "**"
+
+
+def _reject_unsupported_glob(path_prefix: Any, where: str) -> None:
+    """``path_prefix`` 에 04단계가 못 읽는 문법이 있으면 멈춘다."""
+    if not isinstance(path_prefix, list):
+        return
+    for value in path_prefix:
+        if not isinstance(value, str):
+            continue
+        if RECURSIVE_GLOB in value:
+            raise MappingError(
+                f"{where}: path_prefix 에 {RECURSIVE_GLOB!r} — 구분자를 넘는 재귀 glob 은 "
+                f"지원하지 않습니다. ``*`` 는 세그먼트 하나만 채웁니다 ({value!r})"
+            )
+        for char, label in UNSUPPORTED_GLOB.items():
+            if char in value:
+                raise MappingError(
+                    f"{where}: path_prefix 에 {char!r}({label}) — 쓸 수 있는 와일드카드는 "
+                    f"``*`` 하나뿐입니다. 04단계는 나머지를 글자 그대로 읽어 "
+                    f"조용히 0건이 됩니다 ({value!r})"
+                )
+
+
 def _reject_unknown_keys(entry: dict[str, Any], allowed: frozenset[str], where: str) -> None:
     """모르는 키가 있으면 멈춘다. 무엇을 쓸 수 있는지 함께 말한다."""
     unknown = sorted(set(entry) - allowed)
@@ -278,8 +322,10 @@ def _build_request(
     name = str(_require(entry, "name", f"{where} {kind}"))
     catalog[name]  # 카탈로그에 없으면 여기서 MappingError
 
-    _reject_unknown_keys(
-        entry.get("scope_template") or {}, SCOPE_KEYS, f"{where} {kind}[{name}].scope_template"
+    scope_template = entry.get("scope_template") or {}
+    _reject_unknown_keys(scope_template, SCOPE_KEYS, f"{where} {kind}[{name}].scope_template")
+    _reject_unsupported_glob(
+        scope_template.get("path_prefix"), f"{where} {kind}[{name}].scope_template"
     )
 
     tier = _require(entry, "tier", f"{where} {kind}[{name}]")
@@ -311,7 +357,7 @@ def _build_request(
         tier=int(tier),
         technique=technique,
         rationale=str(_require(entry, "rationale", f"{where} {kind}[{name}]")),
-        scope_template=dict(entry.get("scope_template") or {}),
+        scope_template=dict(scope_template),
         trigger=str(trigger) if trigger else None,
         priority=int(priority),
     )

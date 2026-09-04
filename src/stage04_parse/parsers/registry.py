@@ -88,7 +88,7 @@ from Registry import Registry
 from ...common import refs
 from ...common.io import normalize_path
 from ..structs.mft_record import filetime_to_datetime
-from .base import Scope
+from .base import Scope, path_in_prefix, path_leads_to_prefix
 
 __all__ = [
     "RegistryParser",
@@ -735,16 +735,15 @@ class RegistryParser:
     def _in_scope(path: str, prefixes: tuple[str, ...]) -> bool:
         """이 키 자체가 범위 안인가.
 
-        ``Scope.matches_prefix``와 같은 규칙입니다. ``Scope``를 직접 쓰지
-        않는 것은 접두어가 ``CurrentControlSet`` 해석으로 바뀌었기
-        때문입니다.
+        ``Scope.matches_prefix``와 **같은 함수**(``path_in_prefix``)를
+        씁니다. ``Scope``를 통째로 쓰지 않는 것은 접두어가
+        ``CurrentControlSet`` 해석으로 이미 바뀌었기 때문입니다 — 판정
+        규칙이 아니라 입력이 다릅니다.
         """
         if not prefixes:
             return True
         normalized = normalize_path(path)
-        return any(
-            normalized == prefix or normalized.startswith(prefix + "/") for prefix in prefixes
-        )
+        return any(path_in_prefix(normalized, prefix) for prefix in prefixes)
 
     @staticmethod
     def _prune(path: str, prefixes: tuple[str, ...]) -> bool:
@@ -758,9 +757,9 @@ class RegistryParser:
             return False
         normalized = normalize_path(path)
         for prefix in prefixes:
-            if normalized == prefix or normalized.startswith(prefix + "/"):
+            if path_in_prefix(normalized, prefix):
                 return False  # 범위 안
-            if prefix.startswith(normalized + "/"):
+            if path_leads_to_prefix(normalized, prefix):
                 return False  # 범위로 내려가는 길목
         return True
 
