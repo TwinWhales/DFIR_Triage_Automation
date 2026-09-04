@@ -12,8 +12,23 @@
 
 ## 켜는 법
 
+이 프로젝트의 기본 셸은 PowerShell 이다. **`VAR=값 명령` 형식이 안 먹는다** —
+PowerShell 은 그것을 명령 이름으로 읽고 `CommandNotFoundException` 을 낸다.
+
+```powershell
+$env:DFIR_LIVE_MODEL = "qwen2.5:7b"
+$env:DFIR_LIVE_TIMEOUT = "600"
+.venv/Scripts/python.exe -m pytest tests/test_llm_live.py -v
+Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
+```
+
+**끝나면 지운다.** 안 지우면 그 세션의 이후 `pytest` 가 전부 모델을 부르고,
+10초에 끝나던 스위트가 몇 분이 된다.
+
+bash(Git Bash) 에서는 예전 형식 그대로다.
+
 ```bash
-DFIR_LIVE_MODEL=qwen2.5:14b .venv/Scripts/python.exe -m pytest tests/test_llm_live.py -v
+DFIR_LIVE_MODEL=qwen2.5:7b .venv/Scripts/python.exe -m pytest tests/test_llm_live.py -v
 ```
 
 환경 변수가 없으면 **전부 건너뜁니다.** 있는데 Ollama 가 응답하지 않거나
