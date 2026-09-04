@@ -823,3 +823,64 @@ def test_one_pick_needs_no_reduce_query(monkeypatch, tmp_path):
 
     assert len(backend.calls) == 1  # 종합 질의를 안 보냈다
 
+
+@pytest.mark.parametrize(
+    "mode, expected",
+    [
+        ("model", interpret_mod.DEFAULT_NUM_CTX),
+        ("assemble", interpret_mod.ASSEMBLE_NUM_CTX),
+    ],
+)
+def test_the_window_follows_the_query_kind(monkeypatch, tmp_path, mode, expected):
+    """단일 질의는 창이 곧 커버리지라 넓어야 하고, 분할 질의는 여러 번
+    보내므로 좁혀도 커버리지를 잃지 않는다.
+
+    한 값으로 두면 한쪽이 반드시 손해다 — 넓으면 GPU 에서 흘러넘치고,
+    좁으면 단일 질의가 54건에서 열 건 남짓이 된다.
+    """
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        body = (
+            _selection(_pick("MFT#12345"))
+            if mode == "assemble"
+            else (FIXTURES / "05_findings.json").read_text(encoding="utf-8")
+        )
+        return FakeBackend(body)
+
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", fake_build_backend)
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "ollama", "--model", "m",
+            "--mode", mode,
+        ]
+    )
+
+    assert captured["num_ctx"] == expected
+
+
+def test_an_explicit_window_wins_over_the_mode_default(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        return FakeBackend(_selection(_pick("MFT#12345")))
+
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", fake_build_backend)
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "ollama", "--model", "m",
+            "--mode", "assemble",
+            "--num-ctx", "16384",
+        ]
+    )
+
+    assert captured["num_ctx"] == 16384
+

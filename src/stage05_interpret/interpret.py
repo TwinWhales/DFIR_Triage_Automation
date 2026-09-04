@@ -45,6 +45,7 @@ from ..stage03_select import mapping_loader
 from ..stage06_verify import comparators
 from . import allocation, assembly, record_filter
 from .llm_client import (
+    ASSEMBLE_NUM_CTX,
     DEFAULT_MODEL,
     DEFAULT_NUM_CTX,
     FINDINGS_BODY_FIELDS,
@@ -813,9 +814,10 @@ def _parse_args(
     parser.add_argument(
         "--num-ctx",
         type=int,
-        default=DEFAULT_NUM_CTX,
+        default=None,
         help=(
-            "모델에게 열어 줄 컨텍스트 창(토큰). 기본 %(default)s. "
+            "모델에게 열어 줄 컨텍스트 창(토큰). 생략하면 --mode 가 정한다 "
+            f"(model {DEFAULT_NUM_CTX}, assemble {ASSEMBLE_NUM_CTX}). "
             "작으면 프롬프트가 조용히 잘린다"
         ),
     )
@@ -932,6 +934,11 @@ def main(
     # 쓰지도 않을 자리를 창에서 떼어 가고, 창이 좁을수록 그 낭비가 곧
     # 레코드 수다. 사용자가 직접 준 값은 그대로 존중한다.
     assembled = args.mode == "assemble"
+    if args.num_ctx is None:
+        # **창도 질의 종류를 따라간다.** 단일 질의는 창이 곧 커버리지라 넓어야
+        # 하고, 분할 질의는 여러 번 보내므로 좁혀도 커버리지를 잃지 않는다 —
+        # 오히려 GPU 에 다 올라가 빨라진다(`llm_client.ASSEMBLE_NUM_CTX`).
+        args.num_ctx = ASSEMBLE_NUM_CTX if assembled else DEFAULT_NUM_CTX
     if args.reserve_output_tokens is None:
         args.reserve_output_tokens = (
             allocation.RESERVE_SELECTION_TOKENS
