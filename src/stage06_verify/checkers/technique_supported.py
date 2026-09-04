@@ -30,6 +30,30 @@
   이지 05단계의 잘못이 아닙니다.
 - 인용한 `ref`가 하나도 없음 — 볼 것이 없습니다.
 
+## 기각은 두 가지 원인을 섞습니다
+
+이 표는 03단계가 **"어디를 수집할까"**로 쓰는 목록이고, 여기서는 뒤집어
+**"이 증거로 이 기법을 말할 수 있나"**로 씁니다. 방향이 다르므로 목록에
+없다고 근거가 아닌 것은 아닙니다 — 파서가 있는 것만, 작성자가 생각한
+것만 들어 있는 부분집합입니다.
+
+그래서 기각 하나가 둘 중 어느 쪽인지 자동으로는 가릴 수 없습니다.
+
+- **모델이 기법을 잘못 붙였다** — 잡아야 할 것
+- **매핑에 그 아티팩트가 빠져 있다** — 우리 미비
+
+느슨하게 만들 방법이 없습니다. "시나리오의 다른 기법이 그 아티팩트를
+요청했으면 통과"로 완화하려 해도, **레코드가 05단계에 도달했다는 것 자체가
+03단계가 그 아티팩트를 선별했다는 뜻**이라 그 조건은 언제나 참이고 검사가
+사라집니다.
+
+대신 **사람이 가를 수 있게** 합니다. 기각 사유에 ``also_supports`` 를 실어,
+인용한 아티팩트를 근거로 인정하는 **다른 기법**을 함께 보여 줍니다. 프리패치
+레코드로 T1505.003 을 말해 기각됐는데 ``also_supports`` 에 T1543.003 이
+있으면, 그것은 "매핑을 넓힐 것인가 모델이 틀린 것인가"라는 **판정 가능한
+질문**이 됩니다. 그 수치가 두 원인을 섞는다는 사실은
+``docs/limitations.md`` 에 적혀 있습니다.
+
 ## 하나라도 맞으면 통과입니다
 
 인용한 레코드 **전부**가 근거 아티팩트여야 한다고 하지 않습니다. 한 문장이
@@ -82,6 +106,15 @@ def check(finding: dict[str, Any], ctx: CheckContext) -> CheckResult:
     if any(artifact in supported for artifact in artifacts):
         return CheckResult()
 
+    # 인용한 아티팩트를 근거로 인정하는 **다른** 기법. 이 한 줄이 기각을
+    # "판정 불가"에서 "사람이 가를 수 있는 질문"으로 바꾼다 — 위 설명 참조.
+    cited = set(artifacts)
+    also = sorted(
+        other
+        for other, names in ctx.technique_artifacts.items()
+        if other != technique and cited & names
+    )
+
     return CheckResult(
         rejection=Rejection(
             reason="technique_unsupported",
@@ -89,6 +122,7 @@ def check(finding: dict[str, Any], ctx: CheckContext) -> CheckResult:
                 "technique": technique,
                 "cited_artifacts": artifacts,
                 "supported_artifacts": sorted(supported),
+                "also_supports": also,
             },
         )
     )

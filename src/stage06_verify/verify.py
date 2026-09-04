@@ -67,11 +67,25 @@ def technique_artifacts(mappings_dir: "str | Path") -> dict[str, frozenset[str]]
     **새 판단 기준을 만드는 것이 아닙니다** — 03단계가 이 표로 선별하고,
     06단계가 같은 표로 "그 증거로 그 기법을 말했는가"를 봅니다.
 
+    **키는 요청 자신의 기법입니다.** ``Mapping.requests`` 에는 그 파일의
+    ``artifacts:`` 와 ``followups:`` 가 함께 들어 있는데, ``followups`` 는
+    **자기 ``technique`` 을 따로 갖습니다** — "웹셸 다음에 관행적으로 함께
+    보는 것"이라 파일은 T1505.003 인데 항목은 T1543.003 입니다. 파일 키로
+    묶으면 T1505.003 이 ``evtx:System`` 을 자기 근거로 인정하게 되고,
+    그것은 다른 기법의 근거입니다(2026-09-03 에 고쳤습니다).
+
     **OS 를 가리지 않고 합집합으로 읽습니다.** 05단계 산출물에는 대상 OS 가
     없고(시나리오에 있습니다), 같은 기법 번호라도 OS 마다 근거 아티팩트가
     다릅니다. 합치면 판정이 느슨해지는 쪽인데, 이 자리에서는 그쪽이 안전한
     방향입니다 — 판정할 수 없는 것을 기각하면 환각률이 실제 환각이 아니라
     우리 설정을 셉니다(``benchmark/validator_check.py``).
+
+    **이 표는 "어디를 수집할까"의 목록입니다.** 03단계가 그 뜻으로 쓰고,
+    06단계가 뒤집어 "이 기법을 이 증거로 말할 수 있나"로 씁니다. 방향이
+    다르므로 **목록에 없다고 근거가 아닌 것은 아닙니다** — 파서가 있는 것만,
+    작성자가 생각한 것만 들어 있는 부분집합입니다. 그래서 기각 사유에
+    ``also_supports`` 를 함께 실어, 매핑 미비인지 기법 오지정인지 사람이
+    가를 수 있게 합니다(``docs/limitations.md``).
 
     **못 읽으면 빈 표를 냅니다.** 그러면 ``technique_supported`` 가 아무것도
     기각하지 않습니다. 이 단계는 매핑이 없어도 돌아야 하는 결정론적 구간이라,
@@ -92,10 +106,11 @@ def technique_artifacts(mappings_dir: "str | Path") -> dict[str, frozenset[str]]
             loaded = mapping_loader.load_all(directory, os_dir, catalog)
         except (mapping_loader.MappingError, OSError):
             continue
-        for technique, mapping in loaded.items():
-            table.setdefault(technique, set()).update(
-                request.artifact for request in mapping.requests
-            )
+        for mapping in loaded.values():
+            for request in mapping.requests:
+                # 파일의 기법이 아니라 **요청 자신의 기법**으로 묶는다.
+                # followups 는 다른 기법의 것이다 — 위 설명 참조.
+                table.setdefault(request.technique, set()).add(request.artifact)
     return {technique: frozenset(names) for technique, names in table.items()}
 
 

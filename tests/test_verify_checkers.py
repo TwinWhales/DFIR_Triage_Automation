@@ -665,6 +665,36 @@ def test_the_shipped_mapping_table_is_actually_loaded():
     assert "srum:NetworkUsage" not in table["T1505.003"]
 
 
+def test_a_followup_belongs_to_its_own_technique_not_the_file():
+    """``followups:`` 는 자기 ``technique`` 을 갖는다.
+
+    ``T1505.003.yaml`` 의 followup 은 T1543.003(서비스 지속성)의 것이다.
+    파일 키로 묶으면 웹셸이 `evtx:System` 을 자기 근거로 인정하게 되고,
+    그러면 기법을 잘못 붙인 소견이 통과한다.
+    """
+    table = verify_mod.technique_artifacts("mappings")
+
+    assert "evtx:System" not in table["T1505.003"]
+    assert "evtx:System" in table["T1543.003"]
+
+
+def test_a_rejection_says_which_other_techniques_the_evidence_supports():
+    """기각 하나가 "모델이 틀렸다"인지 "매핑이 비었다"인지 자동으로는
+    가릴 수 없다. 그래서 사람이 가를 재료를 함께 싣는다.
+
+    프리패치가 여러 기법의 근거로 등재돼 있는데 이 기법에만 없다면,
+    그것은 매핑을 넓힐 것인가라는 **판정 가능한 질문**이 된다.
+    """
+    ctx = _tech_ctx(technique_artifacts=verify_mod.technique_artifacts("mappings"))
+    finding = _finding(technique="T1505.003", refs=["PF#1"], claims=[])
+
+    detail = _run_tech(finding, ctx).rejection.detail
+
+    assert "T1543.003" in detail["also_supports"]
+    # 기각당한 기법 자신은 빠진다 — 그 목록은 "다른 어디서 근거가 되나"다.
+    assert "T1505.003" not in detail["also_supports"]
+
+
 def test_a_missing_mapping_directory_gives_an_empty_table():
     """매핑이 없어도 06단계는 돌아야 한다 — 결정론적 구간이다."""
     assert verify_mod.technique_artifacts("no/such/directory") == {}
