@@ -518,7 +518,7 @@ SHARED_PROGRAM_DIRS = frozenset(
 
 
 def _parent_is_another_program(record: dict[str, Any], ctx: Context) -> bool:
-    """부모가 **다른 프로그램**인가. 같은 프로그램의 내부 동작이면 아니다.
+    r"""부모가 **다른 프로그램**인가. 같은 프로그램의 내부 동작이면 아니다.
 
     ``unexpected_parent_process`` 가 보는 것은 "누가 실행시켰나"입니다.
     그런데 요즘 응용 프로그램은 자기 자신을 여러 번 띄웁니다 — 브라우저의
