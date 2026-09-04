@@ -1,7 +1,7 @@
 # 02단계 원문 커버리지 검사와 기법 오배정 대응 — 아키텍처 합의
 
 > **문서 상태**: **합의된 설계** (2026-09-05)  
-> **관련 문서**: `work.md` (11번 항목 1차 처리 및 후속 과제), `docs/limitations.md`, `docs/limitations-log.md`  
+> **관련 문서**: `work.md` (7번 항목 — 11번은 1차 처리 뒤 7-2 로 합쳤다), `docs/limitations.md`, `docs/limitations-log.md`  
 > **적용 범위**: `src/stage02_normalize/`, `src/stage03_select/`, `src/stage07_report/`
 
 ---
