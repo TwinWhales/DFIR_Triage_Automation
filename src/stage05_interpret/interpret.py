@@ -57,6 +57,7 @@ __all__ = [
     "build_findings",
     "dump_raw",
     "interpret",
+    "QueryLog",
     "interpret_assembled",
     "main",
 ]
@@ -130,6 +131,70 @@ def dump_raw(
     path.write_text(raw, encoding="utf-8")
 
     return path.name
+
+
+class QueryLog:
+    """05단계가 모델과 주고받은 것을 케이스 디렉터리에 그대로 남긴다.
+
+    **산출물만 보면 05단계는 블랙박스다.** findings 가 왜 그렇게 나왔는지
+    되짚으려면 무엇을 물었고 무엇이 돌아왔는지가 있어야 한다. 특히 질의를
+    조각으로 나누면 "몇 번 물었나·각 조각에 무엇이 실렸나·어느 질의에서 이
+    소견이 나왔나" 가 산출물 어디에도 없다.
+
+    ``errors.jsonl`` 옆의 ``_raw_attempt*.txt`` 와 다르다. 그쪽은 **실패한**
+    시도의 응답만 남긴다 — 성공하면 아무것도 안 남는다. 이쪽은 성공한
+    질의도 남긴다. 프롬프트를 고칠 때 무엇이 달라졌는지 대조할 것이
+    있어야 하기 때문이다.
+
+    파일 하나가 질의 하나다::
+
+        05_llm_queries/
+          01_selection_chunk1of3.txt
+          02_selection_chunk2of3.txt
+          03_selection_chunk3of3.txt
+          04_connections.txt
+    """
+
+    def __init__(self, directory: "Path | None") -> None:
+        self.directory = directory
+        self.count = 0
+
+    def record(
+        self, client: InterpretClient, kind: str, note: str = "", refs: "list[str] | None" = None
+    ) -> "str | None":
+        """방금 보낸 질의와 받은 응답을 파일로. 껐으면 아무것도 안 한다."""
+        if self.directory is None or client.last_user is None:
+            return None
+
+        self.count += 1
+        name = f"{self.count:02d}_{kind}.txt"
+        path = self.directory / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        tokens = getattr(client.backend, "last_prompt_tokens", None)
+        header = [
+            f"# 질의 {self.count} — {kind}",
+            f"# 백엔드: {client.name}",
+        ]
+        if note:
+            header.append(f"# {note}")
+        if refs:
+            header.append(f"# 실은 레코드 {len(refs)}건: {', '.join(refs)}")
+        if tokens:
+            header.append(f"# 프롬프트 실측 {tokens:,}토큰")
+
+        path.write_text(
+            "\n".join(header)
+            + "\n\n===== system =====\n"
+            + (client.last_system or "")
+            + "\n\n===== user =====\n"
+            + client.last_user
+            + "\n\n===== response =====\n"
+            + (client.last_raw or "(응답 없음)")
+            + "\n",
+            encoding="utf-8",
+        )
+        return name
 
 
 def build_findings(
@@ -342,6 +407,7 @@ def interpret(
     log: errlog.ErrorLog,
     *,
     max_attempts: int = MAX_ATTEMPTS,
+    queries: "QueryLog | None" = None,
 ) -> dict[str, Any]:
     """레코드를 해석해 findings 문서를 만든다.
 
@@ -378,6 +444,14 @@ def interpret(
                 records,
                 feedback,
             )
+
+            if queries is not None:
+                queries.record(
+                    client,
+                    "findings",
+                    note=f"시도 {attempt}",
+                    refs=[record["ref"] for record in records],
+                )
 
             findings = build_findings(
                 body,
@@ -522,6 +596,7 @@ def _select_chunk(
     total: int,
     *,
     max_attempts: int = MAX_ATTEMPTS,
+    queries: "QueryLog | None" = None,
 ) -> list[dict[str, Any]]:
     """조각 하나를 모델에게 물어 고른 것을 받는다.
 
@@ -540,6 +615,14 @@ def _select_chunk(
     for attempt in range(1, max_attempts + 1):
         try:
             picked = client.propose_selection(scenario, chunk, feedback)
+            if queries is not None:
+                suffix = f"chunk{index}of{total}" if total > 1 else "all"
+                queries.record(
+                    client,
+                    f"selection_{suffix}",
+                    note=f"시도 {attempt}, 고른 것 {len(picked)}건",
+                    refs=[r["ref"] for r in chunk],
+                )
             # **여기서 검사한다.** 조립까지 미루면 어느 조각이 틀렸는지 알 수
             # 없어 전부 다시 돌게 된다.
             assembly.validate_selection(picked, {r["ref"]: r for r in chunk})
@@ -595,6 +678,7 @@ def _connect(
     client: InterpretClient,
     log: errlog.ErrorLog,
     char_budget: "int | None",
+    queries: "QueryLog | None" = None,
 ) -> list[dict[str, Any]]:
     """고른 항목들 중 서로 이어지는 것을 묶는다 (Reduce).
 
@@ -635,8 +719,15 @@ def _connect(
             return []
 
     try:
-        return client.propose_connections(scenario, picked)
+        found = client.propose_connections(scenario, picked)
+        if queries is not None:
+            queries.record(
+                client, "connections", note=f"단서 {len(picked)}건 → 묶음 {len(found)}건"
+            )
+        return found
     except (llm.LLMError, llm.MalformedOutput) as e:
+        if queries is not None:
+            queries.record(client, "connections_failed", note=str(e))
         log.record(
             STAGE,
             "malformed_output" if isinstance(e, llm.MalformedOutput) else "llm_error",
@@ -654,6 +745,7 @@ def interpret_assembled(
     *,
     max_attempts: int = MAX_ATTEMPTS,
     char_budget: "int | None" = None,
+    queries: "QueryLog | None" = None,
 ) -> dict[str, Any]:
     """모델에게 **고르게만** 하고 findings 는 파이썬이 조립한다.
 
@@ -690,11 +782,18 @@ def interpret_assembled(
     for index, chunk in enumerate(chunks, 1):
         picked.extend(
             _select_chunk(
-                scenario, chunk, client, log, index, len(chunks), max_attempts=max_attempts
+                scenario,
+                chunk,
+                client,
+                log,
+                index,
+                len(chunks),
+                max_attempts=max_attempts,
+                queries=queries,
             )
         )
 
-    connections = _connect(scenario, picked, client, log, char_budget)
+    connections = _connect(scenario, picked, client, log, char_budget, queries)
 
     feedback: str | None = None
     for attempt in range(1, max_attempts + 1):
@@ -914,6 +1013,16 @@ def _parse_args(
         ),
     )
 
+    parser.add_argument(
+        "--queries",
+        default=None,
+        help=(
+            "모델과 주고받은 내역을 남길 디렉터리. 생략하면 --out 옆의 "
+            "05_llm_queries/. **산출물만 보면 이 단계는 블랙박스다** — 무엇을 "
+            "물었고 무엇이 돌아왔는지가 있어야 findings 가 왜 그렇게 나왔는지 "
+            "되짚는다. 'none' 을 주면 남기지 않는다"
+        ),
+    )
     parser.add_argument(
         "--errors",
         default=None,
@@ -1181,6 +1290,15 @@ def main(
             },
         )
 
+    # 질의 내역은 기본으로 남긴다. 실패한 시도만 남기는 _raw_attempt*.txt 와
+    # 달리 성공한 질의도 남긴다 — 프롬프트를 고칠 때 무엇이 달라졌는지
+    # 대조할 것이 있어야 한다.
+    queries = QueryLog(
+        None if args.queries == "none"
+        else Path(args.queries) if args.queries
+        else out_path.parent / "05_llm_queries"
+    )
+
     if assembled:
         findings = interpret_assembled(
             scenario,
@@ -1192,6 +1310,7 @@ def main(
             # 한다. 다른 수를 쓰면 "예산에 맞춰 골랐는데 조각이 창을 넘는"
             # 상태가 조용히 생긴다.
             char_budget=budget_chars,
+            queries=queries,
         )
     else:
         findings = interpret(
@@ -1200,6 +1319,7 @@ def main(
             client,
             log,
             max_attempts=args.max_attempts,
+            queries=queries,
         )
 
     io.write_json(
@@ -1290,6 +1410,8 @@ def main(
             f"출력 {args.reserve_output_tokens}토큰을 뺀 값이다"
         )
 
+    if queries.count:
+        print(f"  질의 내역 {queries.count}건: {queries.directory}")
     print(
         f"{out_path}: "
         f"레코드 {len(parsed)}건 중 "

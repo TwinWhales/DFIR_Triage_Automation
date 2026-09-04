@@ -620,12 +620,19 @@ class Runner:
         )
         if self.args.mode == "assemble":
             cmd += ["--max-chunks", str(self.args.max_chunks)]
-        code, _, _ = self.run_cmd(cmd)
+        code, out, _ = self.run_cmd(cmd)
         if code != 0:
             raise StepFailed(
                 f"05 실패 (코드 {code}). {self.errors_path} 와 "
                 f"{self.case_dir}/05_interpret_raw_attempt*.txt 를 본다"
             )
+
+        # **05가 스스로 말하는 것을 그대로 보여 준다.** 여기서 삼키면 배분·
+        # 조각 수·토큰 추정과 실측이 산출물 어디에도 안 남는다 — 이 도구를
+        # 돌리는 이유가 "관통하는가" 만이 아니라 "어떻게 돌았나" 이기도 하다.
+        for line in out.splitlines():
+            if line.strip():
+                print(f"        {line.rstrip()}")
 
         findings_doc = io.read_json(self.case_dir / "05_findings.json")
         findings = findings_doc["findings"]
@@ -645,10 +652,17 @@ class Runner:
         result.measures["stray_refs"] = stray
         result.measures["findings_without_claims"] = empty_claims
 
+        # 무엇을 물었고 무엇이 돌아왔는지. 두 모드 다 남는다.
+        queries_dir = self.case_dir / "05_llm_queries"
+        query_files = sorted(f.name for f in queries_dir.glob("*.txt")) if queries_dir.is_dir() else []
+        result.measures["llm_queries"] = query_files
+
         note = (
             f"findings {len(findings)}건 / 전달 레코드 {len(allowed)}건 "
             f"(--limit {self.args.limit})"
         )
+        if query_files:
+            note += f" / 질의 {len(query_files)}건 → {queries_dir}"
 
         if self.args.mode == "assemble":
             self.check_assembled(findings, findings_doc, result)
@@ -853,6 +867,16 @@ class Runner:
         archived = REPO_ROOT / "benchmark/results" / f"{self.args.case_id}-{stamp}.json"
         io.write_json(archived, document)
         print(f"      {archived}  (benchmark/collect.py 가 여기를 읽는다)")
+
+        # 05가 어떻게 판단했는지는 산출물이 아니라 여기에 있다. 이 도구를
+        # 돌리는 사람이 가장 자주 여는 자리라 마지막에 한 번 더 말한다.
+        queries_dir = self.case_dir / "05_llm_queries"
+        if queries_dir.is_dir():
+            names = sorted(f.name for f in queries_dir.glob("*.txt"))
+            print()
+            print(f"05 질의 내역 ({len(names)}건) — 무엇을 묻고 무엇이 돌아왔나:")
+            for name in names:
+                print(f"      {queries_dir / name}")
 
 
 def _pad(text: str, width: int) -> str:

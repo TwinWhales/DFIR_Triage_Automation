@@ -355,6 +355,11 @@ class InterpretClient:
         #: 파일로 떨구기 위한 것이다. 파싱 전에 채우므로 JSON 을 못 찾은
         #: 경우에도 남는다. 성공하면 아무도 읽지 않는다.
         self.last_raw: str | None = None
+        #: 마지막으로 보낸 프롬프트. ``last_raw`` 와 짝이다 — 응답만 남기면
+        #: "무엇을 물었길래 이렇게 답했나" 를 되짚을 수 없다. 질의 내역을
+        #: 파일로 떨구는 쪽(``interpret.dump_query``)이 읽는다.
+        self.last_system: str | None = None
+        self.last_user: str | None = None
         #: 이 클라이언트가 보낸 프롬프트 중 **가장 큰 것**의 (글자, 실측 토큰).
         #:
         #: 질의를 여러 번 보내면 ``backend.last_prompt_tokens`` 는 마지막
@@ -470,9 +475,11 @@ class InterpretClient:
         적이 없다. 이 질의가 그것을 말한다 — 없으면 Map-Reduce 가 이름만
         Reduce 이고 실제로는 파이썬 append 다.
         """
+        system, user = self.reduce_system_prompt(), self.reduce_user_prompt(scenario, picked)
+        self.last_system, self.last_user = system, user
         raw = self.backend.complete(
-            self.reduce_system_prompt(),
-            self.reduce_user_prompt(scenario, picked),
+            system,
+            user,
             fmt=connection_schema(scenario, picked) if self.constrain else None,
         )
         self.last_raw = raw
@@ -502,9 +509,11 @@ class InterpretClient:
         from ..stage04_parse.flagging import claim_fields
 
         allowed = claim_fields().names if allowed_fields is None else allowed_fields
+        system, user = self.select_system_prompt(), self.select_user_prompt(scenario, records, feedback)
+        self.last_system, self.last_user = system, user
         raw = self.backend.complete(
-            self.select_system_prompt(),
-            self.select_user_prompt(scenario, records, feedback),
+            system,
+            user,
             fmt=selection_schema(scenario, records, allowed) if self.constrain else None,
         )
         self.last_raw = raw
@@ -610,9 +619,11 @@ class InterpretClient:
         스텁 응답은 헤더와 ``input_refs``가 포함된 완성 문서일 수 있으므로
         본문 필드만 골라낸다.
         """
+        system, user = self.system_prompt(), self.user_prompt(scenario, records, feedback)
+        self.last_system, self.last_user = system, user
         raw = self.backend.complete(
-            self.system_prompt(),
-            self.user_prompt(scenario, records, feedback),
+            system,
+            user,
             fmt=constrained_schema(scenario, records) if self.constrain else None,
         )
         self.last_raw = raw
