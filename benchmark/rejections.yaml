@@ -8,6 +8,10 @@
 # `benchmark/collect.py --rejections` 가 여기를 읽어, 아직 안 본 기각만
 # 남긴다. 판단이 곧 `corroborates:` 에 적을 값이다(`work.md` 10번).
 #
+# **원자료는 여기가 아니다.** 06단계가 실행마다
+# `benchmark/results/rejections.jsonl` 에 덧붙인다(`stage06_verify/runlog.py`).
+# 그쪽은 gitignore 대상이고 — 산출물이지 지식이 아니다 — 이 파일은 커밋된다.
+#
 # ## 적는 법
 #
 #   - technique: T1091

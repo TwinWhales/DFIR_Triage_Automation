@@ -43,7 +43,7 @@ from typing import Any
 from ..common import errors as errlog
 from ..common import io, schema
 from ..stage03_select import mapping_loader
-from . import checkers
+from . import checkers, runlog
 
 __all__ = ["verify", "load_records", "judged_rate", "format_rate", "main"]
 
@@ -240,6 +240,14 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
     parser.add_argument("--parsed", required=True, help="04_parsed/ 디렉터리")
     parser.add_argument("--out", required=True, help="06_verified.json 출력 경로")
     parser.add_argument(
+        "--run-log",
+        default=None,
+        help=(
+            "기각을 덧붙일 대장 경로. 기본은 benchmark/results/rejections.jsonl 이다. "
+            "빈 문자열을 주면 기록하지 않는다"
+        ),
+    )
+    parser.add_argument(
         "--checkers",
         default=None,
         help=(
@@ -335,6 +343,15 @@ def main(argv: "list[str] | None" = None) -> int:
         log.abort(STAGE, "schema_violation", violation.as_detail())
 
     io.write_json(out_path, verified)
+
+    # **입구와 무관하게 남긴다.** 기각 상세는 이 파일에도 있지만 같은
+    # case-id 를 다시 돌리면 덮인다. 매핑을 넓힐 근거는 여러 실행에 걸쳐
+    # 쌓여야 하므로 덮이지 않는 대장에 덧붙인다(`runlog` 의 설명).
+    # 빈 문자열은 "쓰지 않는다"이고 None 은 "기본 자리에 쓴다"이다.
+    # `or None` 으로 합치면 끄려던 것이 기본값으로 되살아난다.
+    written = 0 if args.run_log == "" else runlog.append_rejections(verified, args.run_log)
+    if written:
+        print(f"  기각 {written}건을 대장에 덧붙였다 — benchmark/collect.py --rejections")
 
     stats = verified["stats"]
     print(

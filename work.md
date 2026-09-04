@@ -199,6 +199,10 @@
 기각 하나는 두 원인을 섞는다(모델이 틀렸나, 매핑이 좁나). 기계가 못 가르므로
 사람이 가르고, 가른 결과가 `benchmark/rejections.yaml` 에 남는다.
 
+원자료는 **06단계가 실행마다 덧붙인다**(`stage06_verify/runlog.py` →
+`benchmark/results/rejections.jsonl`). 기각을 만드는 단계 자신이 쓰므로
+`run_pipeline.sh`·웹 UI·`live_check` 어느 입구로 돌려도 남는다.
+
 | `verdict` | 뜻 | 무엇을 하나 |
 |---|---|---|
 | `model_wrong` | 모델이 기법을 잘못 붙였다 | **매핑을 고치지 않는다.** 기각이 옳았다 |
