@@ -717,3 +717,47 @@ def test_an_explicit_reserve_wins_over_the_mode_default(monkeypatch, tmp_path):
 
     assert captured["num_predict"] == 2048
 
+
+def test_a_chunk_failure_stops_instead_of_finishing_with_the_rest(monkeypatch, tmp_path):
+    """**남은 조각으로 완주하면 그것이 폴백이다.**
+
+    증거의 일부만 본 보고서가 전부를 본 것처럼 나가고, 그 사실은 산출물
+    어디에도 없다. 이 프로젝트에서 가장 나쁜 성질이다.
+    """
+    # 세 번 다 JSON 이 아니다 — 한 조각이 재시도를 다 쓴다.
+    backend = FakeBackend("설명만 하고 JSON 을 안 냈다", "또 안 냈다", "여전히 안 냈다")
+
+    with pytest.raises(SystemExit):
+        _run_assembled(monkeypatch, tmp_path, backend)
+
+    recorded = _errors(tmp_path)
+    assert [e["action"] for e in recorded] == ["retry", "retry", "retry", "abort"]
+    assert recorded[-1]["type"] == "malformed_output"
+    assert "일부만 본 보고서" in recorded[-1]["detail"]["message"]
+
+
+def test_each_chunk_is_asked_separately(monkeypatch, tmp_path):
+    """조각마다 자기 질의를 받아야, 어느 조각이 틀렸는지 그 자리에서 안다."""
+    backend = FakeBackend(
+        _selection(_pick("MFT#12345")),
+        _selection(_pick("MFT#12346")),
+        _selection(),
+        _selection(),
+        _selection(),
+    )
+
+    # 레코드 하나가 겨우 들어갈 만큼만 열어 조각을 강제한다. 배분 예산은
+    # --max-chunks 배라 레코드는 전부 골라지고, 질의만 나뉜다.
+    code = _run_assembled(
+        monkeypatch,
+        tmp_path,
+        backend,
+        extra=["--num-ctx", "5400", "--reserve-output-tokens", "4096"],
+    )
+
+    assert code == 0
+    assert len(backend.calls) > 1  # 한 번에 다 묻지 않았다
+    doc = io.read_json(tmp_path / "05_findings.json")
+    # 조각들에서 나온 선별이 하나의 문서로 합쳐진다.
+    assert {f["refs"][0] for f in doc["findings"]} == {"MFT#12345", "MFT#12346"}
+

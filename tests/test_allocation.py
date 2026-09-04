@@ -764,3 +764,78 @@ def test_trimming_lets_more_records_through_the_same_budget():
     )
 
     assert lean.effective_limit > fat.effective_limit
+
+
+# ==================================================================== 분할
+
+
+def _rec(ref, chars=100, artifact="evtx:Sysmon"):
+    return {"ref": ref, "artifact": artifact, "flags": [], "fields": {"v": "y" * chars}}
+
+
+def test_everything_that_fits_stays_one_chunk():
+    """조각 수만 보고 단일 질의인지 분할인지 가릴 수 있어야 한다."""
+    records = [_rec(f"SYSMON#{i}") for i in range(5)]
+
+    assert len(allocation.chunk_records(records, 10_000)) == 1
+
+
+def test_a_chunk_never_exceeds_the_budget():
+    records = [_rec(f"SYSMON#{i}") for i in range(10)]
+    one = allocation.record_chars(records[0])
+
+    chunks = allocation.chunk_records(records, one * 3)
+
+    for chunk in chunks:
+        assert sum(allocation.record_chars(r) for r in chunk) <= one * 3
+
+
+def test_chunking_keeps_the_incoming_order():
+    """``allocate_records`` 가 시간순으로 돌려주므로, 앞에서부터 담으면 한
+    조각이 **한 시간대의 여러 아티팩트**가 된다.
+
+    아티팩트로 묶으면 한 조각에 한 아티팩트만 남아 교차 상관을 처음부터
+    버린다 — Reduce 가 되찾아야 할 것을 미리 없애는 셈이다.
+    """
+    records = [
+        _rec("MFT#1", artifact="$MFT"),
+        _rec("SYSMON#1"),
+        _rec("EVTX-SEC#1", artifact="evtx:Security"),
+        _rec("MFT#2", artifact="$MFT"),
+    ]
+
+    flat = [r["ref"] for chunk in allocation.chunk_records(records, 10_000) for r in chunk]
+
+    assert flat == ["MFT#1", "SYSMON#1", "EVTX-SEC#1", "MFT#2"]
+
+
+def test_no_record_is_dropped_or_duplicated():
+    records = [_rec(f"SYSMON#{i}") for i in range(10)]
+    one = allocation.record_chars(records[0])
+
+    chunks = allocation.chunk_records(records, one * 2)
+
+    flat = [r["ref"] for chunk in chunks for r in chunk]
+    assert flat == [r["ref"] for r in records]
+
+
+def test_a_record_bigger_than_the_budget_gets_its_own_chunk():
+    """더 잘게 자를 수단이 없다 — 레코드를 쪼개면 그것은 그 레코드가 아니다."""
+    records = [_rec("SYSMON#1", chars=10), _rec("SYSMON#2", chars=5_000)]
+
+    chunks = allocation.chunk_records(records, 200)
+
+    assert [len(c) for c in chunks] == [1, 1]
+
+
+def test_an_unknown_budget_does_not_split():
+    """"한 건도 못 들어간다"는 판정은 allocate_records 가 이미 했다.
+    여기서 또 하면 사유가 둘이 된다."""
+    records = [_rec(f"SYSMON#{i}") for i in range(5)]
+
+    assert len(allocation.chunk_records(records, 0)) == 1
+
+
+def test_no_records_means_no_chunks():
+    assert allocation.chunk_records([], 1000) == []
+

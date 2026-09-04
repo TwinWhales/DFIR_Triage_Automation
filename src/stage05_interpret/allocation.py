@@ -80,6 +80,7 @@ __all__ = [
     "Budget",
     "Quota",
     "char_budget",
+    "chunk_records",
     "prompt_token_budget",
     "for_prompt",
     "record_chars",
@@ -402,6 +403,55 @@ def char_budget(
         num_ctx, reserve_output_tokens=reserve_output_tokens
     ) * chars_per_token
     return max(0, int(for_prompt) - overhead_chars)
+
+
+def chunk_records(
+    records: list[dict[str, Any]],
+    char_budget: int,
+    max_list_items: "int | None" = MAX_LIST_ITEMS,
+    drop: "frozenset[str] | None" = None,
+) -> list[list[dict[str, Any]]]:
+    """레코드를 한 질의에 들어갈 크기로 자른다. **시간순을 지킨다.**
+
+    예산 안에 다 들어가면 조각이 하나다. 부르는 쪽이 조각 수만 보고 단일
+    질의인지 분할인지 가릴 수 있다.
+
+    **왜 아티팩트가 아니라 시간으로 자르나.** 원래 설계안은 아티팩트별로
+    묶는 것이었다. 그러면 한 조각 안에 한 아티팩트만 있어 **교차 아티팩트
+    상관을 처음부터 버린다** — `$MFT` 의 드롭과 Sysmon 의 실행과 evtx 의
+    로그온이 한 사건이라는 것을, 모델이 볼 기회 자체가 없어진다.
+
+    ``allocate_records`` 가 이미 시간순으로 돌려주므로, 앞에서부터 담기만
+    하면 한 조각이 **한 시간대의 여러 아티팩트**가 된다. 그 안에서는 모델이
+    연결을 볼 수 있다. 조각을 넘는 연결은 Reduce 질의가 맡는다.
+
+    **한 레코드가 예산보다 크면 혼자 한 조각이 된다.** 더 잘게 자를 수단이
+    없다 — 레코드를 쪼개면 그것은 더 이상 그 레코드가 아니다. 그 조각은
+    프롬프트가 창을 넘을 수 있고, 그 사실은 부르는 쪽이 실측 토큰으로
+    본다(``interpret`` 의 자·토큰 비 경고).
+    """
+    if not records:
+        return []
+    if char_budget <= 0:
+        # 예산을 모르면 자르지 않는다. "한 건도 못 들어간다"는 판정은
+        # allocate_records 가 이미 했고, 여기서 또 하면 사유가 둘이 된다.
+        return [list(records)]
+
+    chunks: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    used = 0
+
+    for record in records:
+        size = record_chars(record, max_list_items, drop=drop)
+        if current and used + size > char_budget:
+            chunks.append(current)
+            current, used = [], 0
+        current.append(record)
+        used += size
+
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def priorities_from_selection(selection: dict[str, Any]) -> dict[str, int]:

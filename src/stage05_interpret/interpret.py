@@ -512,6 +512,82 @@ def interpret(
     )
 
 
+def _select_chunk(
+    scenario: dict[str, Any],
+    chunk: list[dict[str, Any]],
+    client: InterpretClient,
+    log: errlog.ErrorLog,
+    index: int,
+    total: int,
+    *,
+    max_attempts: int = MAX_ATTEMPTS,
+) -> list[dict[str, Any]]:
+    """조각 하나를 모델에게 물어 고른 것을 받는다.
+
+    **조각 하나가 실패하면 파이프라인이 멈춘다.** 남은 조각으로 완주하면
+    그것이 폴백이다 — 증거의 일부만 본 보고서가 전부를 본 것처럼 나가고,
+    그 사실은 산출물 어디에도 없다. 이 프로젝트에서 가장 나쁜 성질이다.
+
+    **잃는 것이 있다.** 조각이 열이고 일곱째가 시간 초과면 앞의 여섯도
+    버려진다. 그래도 멈추는 쪽인 것은, 부분 결과를 들고 가려면 "무엇을 못
+    봤는가"가 07 보고서까지 나가야 하는데 그 통로가 아직 없기 때문이다.
+    `--timeout` 을 올려 다시 도는 것이 지금의 답이다.
+    """
+    feedback: str | None = None
+    where = f"조각 {index}/{total}" if total > 1 else "선별"
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            picked = client.propose_selection(scenario, chunk, feedback)
+            # **여기서 검사한다.** 조립까지 미루면 어느 조각이 틀렸는지 알 수
+            # 없어 전부 다시 돌게 된다.
+            assembly.validate_selection(picked, {r["ref"]: r for r in chunk})
+            return picked
+
+        except assembly.SelectionError as e:
+            detail: dict[str, Any] = {"message": f"{where}: {e}"}
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "claim_validation", detail, action="retry", attempt=attempt)
+            feedback = (
+                "이전 응답의 evidence_fields 가 그 레코드와 맞지 않습니다.\n"
+                f"{e}\n"
+                "각 레코드에 **실제로 있는** 필드 이름만 적으십시오."
+            )
+
+        except llm.MalformedOutput as e:
+            detail = {"message": f"{where}: {e}"}
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "malformed_output", detail, action="retry", attempt=attempt)
+            feedback = f"응답에서 JSON을 찾지 못했습니다: {e}"
+
+        except llm.LLMTimeout as e:
+            log.record(
+                STAGE, "timeout", {"message": f"{where}: {e}"}, action="retry", attempt=attempt
+            )
+            feedback = None
+
+        except llm.LLMError as e:
+            # 02단계와 같은 이유로 재시도하지 않는다 — 모델명 오타·서버
+            # 미기동은 세 번 불러도 같은 답이다.
+            log.abort(STAGE, "llm_error", {"message": f"{where}: {e}"})
+
+    log.abort(
+        STAGE,
+        "malformed_output",
+        {
+            "message": (
+                f"{where} 를 {max_attempts}회 재시도했으나 쓸 수 있는 선별을 받지 못함. "
+                "남은 조각으로 완주하면 증거의 일부만 본 보고서가 전부를 본 것처럼 "
+                f"나간다. 모델 응답 원문은 {log.path.parent}/{STAGE}_raw_attempt*.txt 에 있다"
+            )
+        },
+    )
+
+
 def interpret_assembled(
     scenario: dict[str, Any],
     records: list[dict[str, Any]],
@@ -519,6 +595,7 @@ def interpret_assembled(
     log: errlog.ErrorLog,
     *,
     max_attempts: int = MAX_ATTEMPTS,
+    char_budget: "int | None" = None,
 ) -> dict[str, Any]:
     """모델에게 **고르게만** 하고 findings 는 파이썬이 조립한다.
 
@@ -549,11 +626,19 @@ def interpret_assembled(
     generator = io.make_generator("interpret.py", client.name)
     by_ref = {record["ref"]: record for record in records}
     input_refs = list(by_ref)
-    feedback: str | None = None
 
+    chunks = allocation.chunk_records(records, char_budget) if char_budget else [records]
+    picked: list[dict[str, Any]] = []
+    for index, chunk in enumerate(chunks, 1):
+        picked.extend(
+            _select_chunk(
+                scenario, chunk, client, log, index, len(chunks), max_attempts=max_attempts
+            )
+        )
+
+    feedback: str | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            picked = client.propose_selection(scenario, records, feedback)
             body = assembly.assemble_body(picked, by_ref)
             findings = build_findings(body, case_id, generator, input_refs)
             schema.validate(findings, "findings")
@@ -570,35 +655,6 @@ def interpret_assembled(
         except assembly.AssemblyError as e:
             log.abort(STAGE, "assembly_error", {"message": str(e)})
 
-        except assembly.SelectionError as e:
-            detail: dict[str, Any] = {"message": str(e)}
-            saved = dump_raw(log, attempt, client.last_raw)
-            if saved:
-                detail["raw"] = saved
-            log.record(STAGE, "claim_validation", detail, action="retry", attempt=attempt)
-            feedback = (
-                "이전 응답의 evidence_fields 가 그 레코드와 맞지 않습니다.\n"
-                f"{e}\n"
-                "각 레코드에 **실제로 있는** 필드 이름만 적으십시오."
-            )
-
-        except llm.MalformedOutput as e:
-            detail = {"message": str(e)}
-            saved = dump_raw(log, attempt, client.last_raw)
-            if saved:
-                detail["raw"] = saved
-            log.record(STAGE, "malformed_output", detail, action="retry", attempt=attempt)
-            feedback = f"응답에서 JSON을 찾지 못했습니다: {e}"
-
-        except llm.LLMTimeout as e:
-            log.record(STAGE, "timeout", {"message": str(e)}, action="retry", attempt=attempt)
-            feedback = None
-
-        except llm.LLMError as e:
-            # 02단계와 같은 이유로 재시도하지 않는다 — 모델명 오타·서버
-            # 미기동은 세 번 불러도 같은 답이다.
-            log.abort(STAGE, "llm_error", {"message": str(e)})
-
         except schema.SchemaViolation as violation:
             detail = violation.as_detail()
             saved = dump_raw(log, attempt, client.last_raw)
@@ -613,7 +669,7 @@ def interpret_assembled(
         {
             "field": "<retries>",
             "message": (
-                f"{max_attempts}회 재시도 후에도 쓸 수 있는 선별을 받지 못함. "
+                f"{max_attempts}회 재시도 후에도 조립 결과가 스키마를 만족하지 못함. "
                 f"모델 응답 원문은 {log.path.parent}/{STAGE}_raw_attempt*.txt 에 있다"
             ),
         },
@@ -727,6 +783,17 @@ def _parse_args(
         ),
     )
 
+    parser.add_argument(
+        "--max-chunks",
+        type=int,
+        default=8,
+        help=(
+            "--mode assemble 에서 질의를 몇 번까지 나눠 보낼 것인가. 기본 "
+            "%(default)s. **이 값이 커버리지의 상한이다** — 한 번에 물으면 "
+            "창 하나에 들어가는 만큼만 볼 수 있지만, 나눠 물으면 그 배수만큼 "
+            "본다. 1 이면 분할하지 않는다(예전과 같다)"
+        ),
+    )
     parser.add_argument(
         "--mode",
         choices=["model", "assemble"],
@@ -992,13 +1059,24 @@ def main(
         reserve_output_tokens=args.reserve_output_tokens,
     )
 
+    # **조립 경로는 예산을 조각 수만큼 곱해서 고른다.** 한 번에 물으면 창
+    # 하나에 들어가는 만큼만 볼 수 있는데, 나눠 물으면 그 배수만큼 볼 수
+    # 있다. 여기서 곱하지 않으면 배분이 이미 한 창 크기로 잘라 놓아 분할이
+    # 영영 걸리지 않고, Map-Reduce 가 이름만 남는다.
+    #
+    # 4-3 이 "Tier 1 아티팩트당 4건으로 7단계 체인을 재구성해야 한다"를
+    # 미해결로 둔 자리가 이것이다(`docs/limitations.md`).
+    alloc_budget = budget_chars
+    if assembled and budget_chars > 0:
+        alloc_budget = budget_chars * max(1, args.max_chunks)
+
     records, quotas, budget = allocation.allocate_records(
         parsed.values(),
         priorities=priorities,
         signal_sources=signal_sources,
         limit=args.limit,
         window_seconds=args.window_seconds,
-        char_budget=budget_chars,
+        char_budget=alloc_budget,
         max_list_items=max_list_items,
     )
 
@@ -1037,14 +1115,26 @@ def main(
             },
         )
 
-    run = interpret_assembled if assembled else interpret
-    findings = run(
-        scenario,
-        records,
-        client,
-        log,
-        max_attempts=args.max_attempts,
-    )
+    if assembled:
+        findings = interpret_assembled(
+            scenario,
+            records,
+            client,
+            log,
+            max_attempts=args.max_attempts,
+            # 조각을 나누는 기준이 레코드를 고르는 기준과 같은 예산이어야
+            # 한다. 다른 수를 쓰면 "예산에 맞춰 골랐는데 조각이 창을 넘는"
+            # 상태가 조용히 생긴다.
+            char_budget=budget_chars,
+        )
+    else:
+        findings = interpret(
+            scenario,
+            records,
+            client,
+            log,
+            max_attempts=args.max_attempts,
+        )
 
     io.write_json(
         out_path,

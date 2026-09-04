@@ -44,6 +44,7 @@ __all__ = [
     "SelectionError",
     "assemble_body",
     "claim_for",
+    "validate_selection",
     "walk_field",
 ]
 
@@ -137,6 +138,45 @@ def claim_for(
     return claims
 
 
+def validate_selection(
+    selections: list[dict[str, Any]], records: dict[str, dict[str, Any]]
+) -> None:
+    """모델이 고른 것이 그 레코드와 맞는지 본다. 어긋나면 ``SelectionError``.
+
+    **조립이 아니라 질의 직후에 부른다.** 조각을 나눠 물을 때 어느 조각이
+    틀렸는지 그 자리에서 알아야 **그 조각만** 다시 물을 수 있다. 조립까지
+    미루면 어느 질의를 다시 해야 하는지 알 수 없어 전부 다시 돌게 된다.
+
+    보는 것은 둘이다.
+
+    1. ``reason`` 이 비지 않았는가 — 빈 문장은 소견이 될 수 없다.
+    2. ``evidence_fields`` 가 **그 레코드에** 있는가 — enum 은 배치 전체가
+       가진 이름의 합집합이라 옆 레코드의 필드를 붙이는 것이 문법상 합법이다.
+
+    ``ref`` 가 목록에 없는 것은 여기서 보지 않는다. 그것은 우리가 잘못
+    짝지은 것이라 성질이 다르고, ``assemble_body`` 가 ``AssemblyError`` 로
+    잡는다.
+    """
+    for selection in selections:
+        ref = selection.get("ref")
+        record = records.get(ref) if ref else None
+        if record is None:
+            continue
+
+        if not str(selection.get("reason") or "").strip():
+            raise SelectionError(f"{ref} 의 reason 이 비었다.")
+
+        missing = [
+            name
+            for name in (selection.get("evidence_fields") or [])
+            if name and not walk_field(record, name)[0]
+        ]
+        if missing:
+            raise SelectionError(
+                f"{ref} 에 없는 필드를 근거로 지목했다: {', '.join(missing)}"
+            )
+
+
 def _sort_time(record: dict[str, Any]) -> datetime:
     """타임라인 정렬에 쓸 시각. 못 읽으면 맨 뒤로.
 
@@ -207,20 +247,13 @@ def assemble_body(
             )
         used.add(ref)
 
+        # 모델이 고른 것의 검사는 ``validate_selection`` 이 한다. 질의 직후에
+        # 이미 돌았지만 여기서도 부르는 것은, 이 함수가 그 검사 없이 불릴 수
+        # 있기 때문이다 — 검사를 통과하지 않은 선별로 문서를 만들면 없는
+        # 필드가 claims 에서 조용히 빠진다.
+        validate_selection([selection], {ref: record})
         statement = str(selection.get("reason") or "").strip()
-        if not statement:
-            raise SelectionError(f"{ref} 의 reason 이 비었다.")
-
-        # 모델이 지목한 근거 필드가 **그 레코드에** 있어야 한다. enum 은
-        # 배치 전체가 가진 이름의 합집합이라, 옆 레코드의 필드를 이 레코드에
-        # 붙이는 것은 문법상 합법이다. 조립 경로에서 살아남은 유일한 모델
-        # 오류 채널이라, 조용히 버리지 않고 다시 물어본다.
         chosen = [name for name in (selection.get("evidence_fields") or []) if name]
-        missing = [name for name in chosen if not walk_field(record, name)[0]]
-        if missing:
-            raise SelectionError(
-                f"{ref} 에 없는 필드를 근거로 지목했다: {', '.join(missing)}"
-            )
 
         findings.append(
             {
