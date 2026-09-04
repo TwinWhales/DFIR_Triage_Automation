@@ -63,7 +63,12 @@ load_records = io.read_parsed_records
 def technique_artifacts(mappings_dir: "str | Path") -> dict[str, frozenset[str]]:
     """기법 → 그 기법의 근거로 매핑에 등재된 아티팩트 이름.
 
-    ``mappings/*/T*.yaml`` 의 ``artifacts:`` 를 그대로 뒤집은 표입니다.
+    ``mappings/*/T*.yaml`` 의 ``artifacts:`` 와 ``corroborates:`` 를 합쳐
+    뒤집은 표입니다. **둘의 축이 다릅니다** — ``artifacts:`` 는 03단계가
+    "어디를 수집할까"로 읽어 좁아야 하고, ``corroborates:`` 는 이 표에만
+    더해져 "이 증거로 그 기법을 말할 수 있나"를 넓힙니다. 한 목록을 양쪽에
+    쓰면 넓힐 때 04 가 다 읽어야 하고 좁힐 때 06 이 정탐을 기각합니다
+    (`work.md` 10번).
     **새 판단 기준을 만드는 것이 아닙니다** — 03단계가 이 표로 선별하고,
     06단계가 같은 표로 "그 증거로 그 기법을 말했는가"를 봅니다.
 
@@ -111,6 +116,11 @@ def technique_artifacts(mappings_dir: "str | Path") -> dict[str, frozenset[str]]
                 # 파일의 기법이 아니라 **요청 자신의 기법**으로 묶는다.
                 # followups 는 다른 기법의 것이다 — 위 설명 참조.
                 table.setdefault(request.technique, set()).add(request.artifact)
+            # `corroborates:` 는 03단계가 수집하지 않지만 **근거로는 인정하는**
+            # 것이다. 파일 단위 선언이므로 그 파일의 기법으로 묶는다
+            # (`followups` 와 달리 자기 technique 을 갖지 않는다).
+            if mapping.corroborates:
+                table.setdefault(mapping.technique, set()).update(mapping.corroborates)
     return {technique: frozenset(names) for technique, names in table.items()}
 
 

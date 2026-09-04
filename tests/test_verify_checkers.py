@@ -22,6 +22,8 @@ from src.stage06_verify import checkers, comparators, verify as verify_mod
 from src.stage06_verify.verify import load_records, verify
 from casepaths import FIXTURES, GOLDEN
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 PARSED = FIXTURES / "04_parsed"
 
 
@@ -698,3 +700,38 @@ def test_a_rejection_says_which_other_techniques_the_evidence_supports():
 def test_a_missing_mapping_directory_gives_an_empty_table():
     """매핑이 없어도 06단계는 돌아야 한다 — 결정론적 구간이다."""
     assert verify_mod.technique_artifacts("no/such/directory") == {}
+
+
+def test_corroborates_widens_only_the_verification_side(tmp_path):
+    """`corroborates:` 를 선언하면 06 이 그 아티팩트를 근거로 받아들인다.
+
+    `work.md` 10번. 03단계 수집 목록은 그대로 두고 **판정 쪽만** 넓힌다.
+    """
+    import shutil
+
+    import yaml
+
+    from src.stage03_select import mapping_loader
+    from src.stage06_verify.verify import technique_artifacts
+
+    mappings = tmp_path / "mappings"
+    shutil.copytree(REPO_ROOT / "mappings", mappings)
+    path = mappings / "windows" / "T1091.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert "evtx:Sysmon" not in {entry["name"] for entry in data["artifacts"]}
+    data["corroborates"] = ["evtx:Sysmon"]
+    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    # 06 쪽은 넓어진다.
+    assert "evtx:Sysmon" in technique_artifacts(mappings)["T1091"]
+
+    # 03 쪽은 그대로다 — 넓힌 것을 수집하러 가지 않는다.
+    catalog = mapping_loader.load_catalog(mappings)
+    mapping = mapping_loader.load_all(mappings, "windows", catalog)["T1091"]
+    assert "evtx:Sysmon" not in {request.artifact for request in mapping.requests}
+
+    # 그리고 그 기법의 소견이 통과한다. 넓히기 전이라면 기각이다.
+    finding = {"id": "F1", "technique": "T1091", "refs": ["SYSMON#1"], "claims": []}
+    assert _run_tech(finding, _tech_ctx(technique_artifacts=technique_artifacts(mappings))).rejection is None
+    before = technique_artifacts(REPO_ROOT / "mappings")
+    assert _run_tech(finding, _tech_ctx(technique_artifacts=before)).rejection is not None

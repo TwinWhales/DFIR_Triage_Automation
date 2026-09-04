@@ -728,3 +728,67 @@ def test_the_shipped_mappings_load(catalog):
     # 실제 `mappings/` 가 이 관문을 통과해야 한다. `T1105`·`T1059.001` 이
     # `*` 를 쓴다.
     assert mapping_loader.load_all(MAPPINGS, "windows", catalog)
+
+
+# ============================================ corroborates — 06단계 전용 축
+
+
+def _mapping_with_corroborates(tmp_path: Path, names: list) -> Path:
+    return _write_mapping(
+        tmp_path,
+        {
+            "technique": "T1505.003",
+            "artifacts": [{"name": "$MFT", "tier": 1, "rationale": "x"}],
+            "corroborates": names,
+        },
+        "T1505.003.yaml",
+    )
+
+
+def test_corroborates_does_not_become_a_collection_target(tmp_path, catalog):
+    """**축이 다르다.** 03단계는 이 목록을 보지 않는다.
+
+    한 목록을 양쪽에 쓰면 둘 중 하나가 진다 — 넓히면 04 가 다 읽어야 하고,
+    좁히면 06 이 정탐을 기각한다(`work.md` 10번).
+    """
+    path = _mapping_with_corroborates(tmp_path, ["prefetch", "evtx:Sysmon"])
+    mapping = mapping_loader.load_mapping(path, catalog)
+    assert {request.artifact for request in mapping.requests} == {"$MFT"}
+    assert mapping.corroborates == frozenset({"prefetch", "evtx:Sysmon"})
+
+
+def test_an_unknown_corroborating_artifact_is_refused(tmp_path, catalog):
+    path = _mapping_with_corroborates(tmp_path, ["evtx:NoSuchThing"])
+    with pytest.raises(mapping_loader.MappingError, match="카탈로그에 없는"):
+        mapping_loader.load_mapping(path, catalog)
+
+
+def test_corroborates_defaults_to_empty(tmp_path, catalog):
+    # 안 적으면 06 은 지금과 똑같이 동작해야 한다. 넓히는 것은 기각 기록을
+    # 보고 하는 일이지 기본값이 아니다.
+    path = _write_mapping(
+        tmp_path,
+        {"technique": "T1505.003", "artifacts": [{"name": "$MFT", "tier": 1, "rationale": "x"}]},
+        "T1505.003.yaml",
+    )
+    assert mapping_loader.load_mapping(path, catalog).corroborates == frozenset()
+
+
+def test_no_shipped_mapping_declares_corroborates_yet(catalog):
+    """**아직 아무것도 넓히지 않았다.** 실측 근거가 없기 때문이다.
+
+    2026-09-04 기준으로 나온 소견의 (기법, 인용 아티팩트) 쌍 여섯 중 기각은
+    하나이고 그것은 정탐이었다 — `T1091`(USB) 이 Wazuh 에이전트 재시작
+    레코드를 인용했다. 오기각이 관측되지 않은 상태에서 넓히면, 06 에서
+    유일하게 실제로 판정하는 체커를 가설로 무르게 만드는 것이 된다.
+
+    **이 테스트가 깨졌다면 누군가 넓힌 것이다.** 그 자체는 정상이지만,
+    `technique_unsupported` 기각 기록을 근거로 삼았는지 확인하고 이 테스트를
+    그 근거와 함께 고친다.
+    """
+    declared = {
+        technique: sorted(mapping.corroborates)
+        for technique, mapping in mapping_loader.load_all(MAPPINGS, "windows", catalog).items()
+        if mapping.corroborates
+    }
+    assert declared == {}, declared

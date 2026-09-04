@@ -767,56 +767,80 @@ paths ← ["C:\Users\Public\Documents", "C:\ProgramData"]  입력 서술에 없�
 
 ---
 
-## 10. 매핑 2-Tier 분리 — 수집용(Collect)과 검증용(Corroborate) 아티팩트의 독립
+## 10. 매핑 2-Tier 분리 — 수집용과 검증용의 독립 (**기계는 됐다 2026-09-04. 채우는 것이 남았다**)
 
-### 무슨 현상이 있었나 (문제와 실측)
+### 무엇이 됐나
 
-03단계 `mappings/windows/T*.yaml` 의 `artifacts:` 는 본래 **"이 기법을 조사할 때 어디를 우선 수집·파싱할 것인가(선별용)"** 를 적은 목록이다.
-
-그런데 06단계 `technique_supported` 검사기가 이를 거꾸로 적용해 **"이 기법은 여기에 선언된 아티팩트로만 입증할 수 있다"** 로 해석하면서 문제가 드러났다.
-
-- **간접 증거(Secondary Evidence)의 오기각**: 예컨대 웹셸(`T1505.003`) 공격에서 공격자가 웹셸 파일을 지워버려 `$MFT` 에는 흔적이 없고, 웹셸을 통해 실행된 명령 흔적인 `prefetch` 만 남아 있는 경우. 모델이 실물 프리패치를 근거로 올바른 웹셸 실행 소견을 내도, 웹셸의 `artifacts:` 목록에 `prefetch` 가 없다는 이유로 **정탐인데도 '환각'이라며 기각**된다.
-- **`also_supports` 는 임시 관측 장치일 뿐이다**: 9-2 에서 기각 로그에 `also_supports` 를 달아 사람이 원인(모델 오분류 vs 매핑 결손)을 구분할 수 있게 했지만, **소견 자체는 여전히 파이프라인에서 탈락**하므로 근본적인 해결이 아니다.
-
-### 왜 2-Tier 분리를 사용해야 하는가
-
-03단계(수집/선별)와 06단계(검증/입증)는 **관심사와 최적화 방향이 정반대**다.
-
-1. **수집/선별용 (`collect_artifacts`)**: 
-   - 좁고 날카로워야 한다. 모든 아티팩트를 다 담으면 04단계 파싱 시간과 05단계 토큰 예산이 폭발한다 (Tier 1/2 우선순위가 존재하는 이유).
-2. **검증/입증용 (`corroborate_artifacts`)**:
-   - 넓고 유연해야 한다. 직접적인 파일 생성 흔적뿐만 아니라, 그 공격 행위로 인해 파생된 프로세스 실행(`prefetch`, `evtx:Security`), 네트워크, 레지스트리 등의 정당한 간접 증거까지 폭넓게 포용해야 한다.
-
-### 작업 스펙 (향후 구현 시)
-
-`mappings/windows/T*.yaml` 구조를 두 축으로 분리한다:
+`corroborates:` 키를 매핑 최상위에 둘 수 있다. **06단계만 읽는다.**
 
 ```yaml
-# 예: T1505.003 (Server Software Component: Web Shell)
-id: "T1505.003"
-name: "Web Shell"
+artifacts:            # 03 이 읽는다. 좁고 날카롭게.
+  - name: $MFT
+    tier: 1
+    rationale: 웹셸 파일 생성 흔적
 
-# [Tier 1: 수집/선별] 03단계가 사용 — 좁고 집중된 수집 대상
-collect_artifacts:
-  - "$MFT"
-  - "$UsnJrnl"
-
-# [Tier 2: 검증/입증] 06단계 technique_supported 가 사용 — 정당한 간접/파생 증거 포용
-corroborate_artifacts:
-  - "$MFT"
-  - "$UsnJrnl"
-  - "prefetch"          # 웹셸 경유 프로세스 실행 흔적 인정
-  - "evtx:Security"     # 4688 프로세스 생성 이벤트 인정
-  - "evtx:Sysmon"       # EID 1 프로세스 생성 이벤트 인정
+corroborates:         # 06 만 읽는다. 이름만 적는다.
+  - prefetch          # 웹셸 경유 프로세스 실행
 ```
 
-### 착수 시 할 일
+`technique_artifacts()` 가 둘을 합쳐 뒤집고, 03단계의 수집 목록은 그대로다.
+`docs/mapping-guide.md` 에 두 축의 정의가 있고, 카탈로그에 없는 이름은 로드
+시점에 거부한다. 회귀 테스트는 `tests/test_mapping_loader.py` 와
+`tests/test_verify_checkers.py` 에 있다.
 
-1. **매핑 스키마 및 가이드 갱신**: `docs/mapping-guide.md` 에 두 축의 정의를 명시하고, `corroborate_artifacts` 미지정 시 `collect_artifacts` 로 폴백하도록 호환성 유지.
-2. **03단계·06단계 코드 분기**:
-   - 03단계: `collect_artifacts` (기존 `artifacts`) 사용
-   - 06단계 `technique_supported`: `corroborate_artifacts` 참조
-3. **40개 기법 전수 보완**: 9-2 운영 중 `also_supports` 로 누적된 매핑 결손 빈도 데이터를 기반으로 우선순위가 높은 기법부터 `corroborate_artifacts` 확장.
+**기존 매핑을 하나도 고치지 않았다.** work.md 의 원래 스펙은 `artifacts:` 를
+`collect_artifacts:` 로 바꾸는 것이었는데, 40개 파일을 건드리면서 03단계
+동작을 위협하는 대신 **더하기만 했다.** 안 적으면 06 은 예전과 똑같이 동작
+하므로 호환성 폴백을 따로 만들 필요도 없었다.
+
+### 무엇이 남았나 — 채우려면 근거가 있어야 한다
+
+**아직 아무 매핑도 이 키를 쓰지 않는다.** 채울 근거가 없기 때문이다.
+
+2026-09-04 기준, 지금까지 나온 모든 소견의 (기법, 인용 아티팩트) 쌍은 여섯
+이고 기각은 하나다. 그리고 **그 하나는 정탐이었다.**
+
+```
+PASS  T1059      evtx:Sysmon, prefetch
+PASS  T1059      evtx:Sysmon
+기각  T1091      evtx:Sysmon          ← 확인해 보니 모델이 틀린 것이었다
+PASS  T1136.001  evtx:Security, registry:SOFTWARE
+PASS  T1505.003  $MFT
+PASS  T1136.001  evtx:Security
+```
+
+기각된 F3 은 *"cmd.exe 가 실행됐고 이는 VMware Tools 스크립트를 실행한
+T1091"* 이라고 했는데, 실제 레코드는 **Wazuh 에이전트가 자기를 재시작한
+것**이다(`restart-wazuh.exe` → `cmd.exe /c net stop Wazuh`). USB 와도
+VMware 와도 무관하다. 검사기가 제 일을 했다.
+
+**오기각이 관측되지 않은 상태에서 넓히면 안 된다.** `technique_supported`
+의 설명에 있듯 `--mode assemble` 에서 `value_match` 는 항등식이고 `ref` 는
+출력 문법이 막으므로, **이 체커가 06단계의 유일한 판정자**다. 그것을 가설
+로 무르게 만들면 통과율 100% 는 성과가 아니라 측정의 소멸이 된다
+(`CLAUDE.md`: *"수치를 낮추려고 검증기를 무르게 만들고 싶어진다"*).
+
+### 다음에 할 일 — 데이터를 모으는 쪽
+
+원래 스펙의 3단계(*"`also_supports` 로 누적된 매핑 결손 빈도 데이터를
+기반으로"*)가 요구하는 데이터가 없다. 지금 필요한 것은 그 데이터를 **모으는
+자리**다.
+
+- 실행마다 `technique_unsupported` 기각을 `benchmark/results/` 에 누적하고,
+  `benchmark/collect.py` 가 (기법, 인용 아티팩트, `also_supports`) 빈도표를
+  내게 한다.
+- 기각 하나하나를 **사람이 가른다.** 모델이 틀린 것인가, 매핑이 좁은 것인가.
+  가른 결과가 곧 `corroborates:` 에 적을 값이다.
+- 케이스가 하나뿐이라 8번(정답 데이터)과 같은 병목이다 — 실행이 늘어야
+  기각도 쌓인다.
+
+### 곁가지 — F3 이 가리킨 다른 것
+
+`T1091.yaml` 이 `evtx:Sysmon` 을 **수집 대상으로도** 안 갖는다. USB 에서
+실행된 파일은 Sysmon EID 1 의 `Image` 가 이동식 드라이브를 가리키므로
+직접 증거에 가깝다. 이건 `corroborates` 가 아니라 `artifacts` 쪽 이야기이고,
+넣으려면 실물로 확인해야 한다 — 키오스크 축이 미검증인 것과 같은 이유로
+(0번) 아직 못 했다.
 
 ---
 
