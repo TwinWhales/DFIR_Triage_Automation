@@ -496,7 +496,7 @@ def test_the_report_pairs_each_technique_with_its_evidence_quote():
 
     **오배정을 기계가 판정하지 않는 대신 사람에게 보인다.** 어느 절이 어느
     기법이어야 하는지를 아는 표를 두면 그 표가 곧 분석이 되어 02단계를
-    대체한다(`work.md` 11번). 그래서 나란히 놓기만 한다.
+    대체한다(`work.md` 7-2). 그래서 나란히 놓기만 한다.
 
     실측(`K-LIVE-0902-wide` 3차, 2026-09-04): `계정 관련 변경이` 가
     `T1543.003`(Windows Service 생성)에 붙었는데, 기법 ID 만 인쇄하던

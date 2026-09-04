@@ -96,6 +96,7 @@ Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
 | flags 어휘와 판정 룰 자체 | `mappings/_flags.yaml` |
 | **기각을 사람이 가른 기록** (매핑을 넓힐 근거) | `benchmark/rejections.yaml` |
 | 02·05 LLM 연결 | `docs/llm-handover.md` |
+| 분량이 큰 계획 자료·설계 합의 | `docs/proposals/` |
 | 디렉터리별 역할과 근거 | `docs/project-structure.md` |
 | 어디까지가 우리 코드인가 | `third_party/README.md` |
 | 04단계에 새 파서를 추가하는 절차 | `.claude/skills/add-parser/SKILL.md` |
@@ -174,7 +175,7 @@ Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
   지어내고(`entities.hosts`가 `キオスク`로 나와 보고서 첫 줄 "대상 호스트"에
   그대로 실렸다, `work.md` 7번), 있어야 할 축을 빠뜨린다(입력이 "계정 관련
   변경"을 물었는데 계정 기법이 하나도 안 나와 `evtx:Security` 15.8MB 가
-  선별조차 되지 않았다, `work.md` 11번). 02 의 기법 목록이 03 의 유일한
+  선별조차 되지 않았다 — 2026-09-04 에 닫혔다). 02 의 기법 목록이 03 의 유일한
   입력이라 **놓친 축은 뒤에서 되살릴 자리가 없다.**
 - **문장이 claims 를 뒷받침하는지 아무도 보지 않는다.** `--mode assemble`
   에서 claims 는 파이썬이 원본에서 조립하므로 `value_match`는 항등식이다.
