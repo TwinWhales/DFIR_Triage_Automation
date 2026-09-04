@@ -130,64 +130,107 @@ def evidence_field_names(
     return sorted(present)
 
 
+def record_field_names(
+    record: dict[str, Any], allowed: "tuple[str, ...]"
+) -> list[str]:
+    """이 레코드 **하나**가 근거로 내놓을 수 있는 필드 이름.
+
+    어휘(``claim_fields``)에 있고 그 레코드에 실제로 있는 것만이다.
+    """
+    from .assembly import walk_field
+
+    return [name for name in allowed if walk_field(record, name)[0]]
+
+
+def evidence_field_names(
+    records: list[dict[str, Any]], allowed: "tuple[str, ...]"
+) -> list[str]:
+    """배치 전체가 내놓을 수 있는 필드 이름의 합집합.
+
+    ``--no-constrain`` 실행처럼 레코드별 문법을 걸 수 없을 때의 목록이다.
+    제약을 켠 실행은 ``selection_schema`` 가 레코드마다 따로 묶는다.
+    """
+    seen: set[str] = set()
+    for record in records:
+        seen.update(record_field_names(record, allowed))
+    return sorted(seen)
+
+
 def selection_schema(
     scenario: dict[str, Any],
     records: list[dict[str, Any]],
     allowed_fields: "tuple[str, ...]",
     max_evidence_fields: int = 4,
 ) -> dict[str, Any]:
-    """선별 질의의 출력 스키마. **이 호출에 한정된다.**
+    """선별 질의의 출력 스키마. **레코드마다 갈래를 따로 둔다.**
 
-    ``constrained_schema`` 와 같은 규약이다 — 인용해도 되는 ``ref`` 와 기법을
-    enum 으로 묶어 **걸러 낼 것이 아니라 나오지 않게** 한다. 여기에 근거 필드
-    이름이 하나 더 붙는다.
+    ``ref`` 를 ``const`` 로 못 박은 갈래를 레코드 수만큼 만들고 ``oneOf`` 로
+    잇는다. 그러면 **각 레코드가 자기가 가진 필드만 근거로 내놓을 수 있다.**
 
-    **``pattern`` 은 쓰지 않고 ``minItems``/``maxItems`` 는 쓴다.** 변환기가
-    정규식은 삼키지 못하지만(2026-08-31 실측, ``common.llm.output_schema``)
-    배열의 수량 제약은 문법으로 내려간다(2026-09-03 실측). 그 차이가 중요한
-    이유가 있다 — **상한이 없으면 모델이 배열에서 맴돈다.** 실측에서
-    ``evidence_fields`` 에 같은 이름을 수십 번 반복하다 출력 상한에 잘렸고,
-    ``ref`` 는 그 뒤라 아예 나오지 못했다.
+    **합집합 enum 으로는 부족했다** (2026-09-03 실물). 배치 전체의 필드
+    이름을 하나의 enum 으로 주면, 파일 생성 이벤트(EID 11)에 프로세스 생성
+    이벤트의 ``fields.CommandLine`` 을 붙이는 것이 문법상 합법이다. 실제로
+    모델이 그렇게 했고, `temperature 0` 이라 재시도 세 번이 같은 답을 냈다.
+    걸러 내는 것으로는 안 되고 **나오지 않게** 해야 하는 자리였다
+    (``constrained_schema`` 가 ``ref`` 에 대해 내린 것과 같은 판단).
 
-    **``ref`` 를 맨 앞에 둔다.** 문법이 선언 순서대로 내보내게 하므로, 앞에
-    두면 모델이 **어느 레코드인지 먼저 확정한 뒤** 문장을 쓴다. 뒤에 두면
-    앞의 자유 필드에서 길을 잃었을 때 그 선택이 통째로 사라진다.
+    ``oneOf``·``const`` 가 Ollama 문법으로 내려가는 것을 확인했다(같은 날).
+
+    **근거로 내놓을 것이 하나도 없는 레코드**도 갈래를 받는다. 고를 수는
+    있되 ``evidence_fields`` 가 빈 배열이라 claims 가 비고, 그 소견은
+    06단계에서 ``unverifiable`` 이 된다. 갈래에서 빼면 모델이 그 레코드를
+    아예 못 고르고, 그것은 증거를 조용히 숨기는 쪽이다.
+
+    나머지 규약은 ``constrained_schema`` 와 같다 — ``pattern`` 은 쓰지 않고
+    (변환기가 정규식을 못 삼킨다), 배열에는 상한을 건다(없으면 맴돈다),
+    ``ref`` 를 맨 앞에 둔다(문법이 선언 순서대로 내보낸다).
     """
-    refs = sorted({record["ref"] for record in records if "ref" in record})
     techniques = sorted({t["id"] for t in scenario.get("techniques", []) if "id" in t})
-    names = evidence_field_names(records, allowed_fields)
-
-    properties: dict[str, Any] = {}
-    # 비었으면 갈아 끼우지 않는다. 빈 enum 은 아무 값도 만족시키지 못해
-    # 모델이 무엇을 내든 실패하고, 그 실패는 "레코드를 못 받았다"는 앞
-    # 단계의 문제를 05단계 환각으로 둔갑시킨다(constrained_schema 와 같다).
-    properties["ref"] = {"enum": refs} if refs else {"type": "string"}
-    # 동결 스키마가 null 을 허용한다 — 특정 기법에 귀속되지 않는 소견이 있고,
-    # 기법 목록을 통과 조건으로 만들면 시나리오가 예측 못 한 것이 원리적으로
-    # 안 나온다.
-    properties["technique"] = (
+    technique_schema: dict[str, Any] = (
         {"enum": [*techniques, None]} if techniques else {"type": ["string", "null"]}
     )
-    properties["reason"] = {"type": "string"}
-    properties["severity"] = {"enum": list(SEVERITIES)}
-    properties["evidence_fields"] = {
-        "type": "array",
-        "items": {"enum": names} if names else {"type": "string"},
-        "minItems": 1,
-        "maxItems": max(1, max_evidence_fields),
-    }
 
-    item = {
-        "type": "object",
-        "properties": properties,
-        "required": list(properties),
-        "additionalProperties": False,
-    }
-    picks = {"type": "array", "items": item}
-    if refs:
-        # 보낸 것보다 많이 고를 수 없다. 같은 ref 를 두 번 고르는 것은 조립이
-        # 접지만, 문법에 상한이 없으면 모델이 여기서도 맴돌 수 있다.
-        picks["maxItems"] = len(refs)
+    branches: list[dict[str, Any]] = []
+    for record in records:
+        ref = record.get("ref")
+        if not ref:
+            continue
+        names = record_field_names(record, allowed_fields)
+        evidence: dict[str, Any] = (
+            {
+                "type": "array",
+                "items": {"enum": names},
+                "minItems": 1,
+                "maxItems": min(len(names), max(1, max_evidence_fields)),
+            }
+            if names
+            else {"type": "array", "maxItems": 0}
+        )
+        properties = {
+            "ref": {"const": ref},
+            "technique": technique_schema,
+            "reason": {"type": "string"},
+            "severity": {"enum": list(SEVERITIES)},
+            "evidence_fields": evidence,
+        }
+        branches.append(
+            {
+                "type": "object",
+                "properties": properties,
+                "required": list(properties),
+                "additionalProperties": False,
+            }
+        )
+
+    if not branches:
+        # 비었으면 갈아 끼우지 않는다. 아무 값도 만족시키지 못하는 문법은
+        # 모델이 무엇을 내든 실패시키고, 그 실패는 "레코드를 못 받았다"는
+        # 앞 단계의 문제를 05단계 환각으로 둔갑시킨다.
+        item: dict[str, Any] = {"type": "object"}
+        picks: dict[str, Any] = {"type": "array", "items": item}
+    else:
+        item = branches[0] if len(branches) == 1 else {"oneOf": branches}
+        picks = {"type": "array", "items": item, "maxItems": len(branches)}
 
     return {
         "type": "object",

@@ -2292,3 +2292,61 @@ OneDrive·vmtoolsd 를 띄우는 것은 일반 데스크톱에서 정상이고 �
 
 **이 이미지는 키오스크가 아니다**(`DESKTOP-RJRKJG1`). 실제 키오스크
 스냅샷에서 다시 재야 남는 65건의 성격을 말할 수 있다(`work.md` 0번).
+
+
+## 2026-09-03 · Map-Reduce 실물 관통 (`K-LIVE-0902-wide`, 9,829건)
+
+`--mode assemble` 을 실물 규모로 처음 돌린 기록이다. **창을 4분의 1로
+줄이면서 전달 레코드는 두 배가 됐다.**
+
+```
+.venv/Scripts/python.exe -m src.stage05_interpret.interpret   --in cases/K-LIVE-0902-wide/04_parsed --scenario .../02_scenario.json   --selection .../03_selection.json --out .../05_findings.json   --llm ollama --model qwen2.5:7b --timeout 900   --mode assemble --num-ctx 8192 --max-chunks 8 --limit 200
+```
+
+| | 단일 질의(`--mode model`) | Map-Reduce |
+|---|---|---|
+| 창 | 32,768 | **8,192** |
+| 전달 레코드 | 54건 | **102건** |
+| 질의 횟수 | 1 | 9 (Map 8 + Reduce 1) |
+| 05 소요 | — | **2분 45초** |
+| 프롬프트 추정 / 실측 최대 | — | 7,150 / **7,052**토큰 (예산 7,168 의 99%) |
+
+배분 내역: `evtx:Security` 31건(전량), `evtx:Sysmon` 48건(9,528 중),
+`prefetch` 23건(192 중).
+
+**06·07 결과**: passed 7 / rejected 0 / unverifiable 0.
+07 은 확인된 사항 7건 / 미검증 0건 / 범위 한계 28건.
+
+### 두 번 실패하고 두 번 고쳤다
+
+**① 합집합 enum 으로는 부족했다.** 첫 실행이 조각 1/9 에서 죽었다. 모델이
+파일 생성 이벤트(`SYSMON#19`, EID 11)에 `fields.CommandLine` 을 근거로
+지목했는데, 그 필드는 **다른 레코드의 것**이다. `evidence_fields` 의 enum 이
+배치 전체의 합집합이라 문법상 합법이었고, `temperature 0` 이라 재시도 세 번이
+같은 답을 냈다.
+
+`oneOf` + `const` 로 **레코드마다 갈래를 따로** 두어 각자 자기 필드만 고를 수
+있게 했다(둘 다 Ollama 문법으로 내려간다 — 같은 날 확인). 걸러 낼 것이 아니라
+나오지 않게 하는 쪽으로 옮긴 것이고, `ref` 에 대해 이미 내린 판단과 같다.
+
+**② 프리패치 소견이 껍데기였다.** 모델이 *"자주 실행되며"* 라고 쓴 소견의
+claims 가 `path`·`name`·`timestamp` 였다 — 문장이 기대는 `run_count` 가
+`claim_fields` 어휘에 없었다. 넣자 이렇게 됐다.
+
+```
+[F2] "컴파티블런런너.exe, RUNDLL32.exe, CMD.EXE가 자주 실행되며…"
+     claims: fields.run_count
+[F3] "VMTOOLSD.EXE, AM_DELTA_PATCH…가 실행되며 …"
+     claims: fields.run_count, fields.loaded_file_count
+```
+
+### 남은 것
+
+- **`technique` 이 붙은 소견이 7건 중 둘뿐**이라, `technique_supported` 가
+  실제로 판정한 것도 둘이다. 나머지 다섯은 `null` 이라 그 검사를 지나간다.
+- **F6·F7 이 사실상 같은 소견이다**(둘 다 "svchost.exe 가 WindowsApps 폴더에서
+  DLL 을 생성"). 서로 다른 레코드라 중복 제거에 걸리지 않는다. 모델의 판단
+  품질이고, 환각 유형 표의 마지막 행이라 지금 구조로는 못 잰다.
+- `--limit 200` 을 줬지만 예산이 102건에서 깎았다. 더 보려면 `--max-chunks`
+  를 올려야 한다.
+

@@ -812,6 +812,13 @@ claim_fields:
     - fields.DestinationIp    # evtx:Sysmon 3
     - fields.ServiceName
 
+    # prefetch — "몇 번 실행됐나"가 이 아티팩트 판단의 핵심인데 빠져 있었다.
+    # 실측(2026-09-03)에서 모델이 "자주 실행되며" 라고 쓴 소견의 claims 가
+    # path·name·timestamp 였다. 문장이 기대는 값이 claims 에 없으면 그것이
+    # 껍데기다.
+    - fields.run_count
+    - fields.loaded_file_count
+
     # $MFT — 이 아티팩트의 flag 는 전부 이 값들에 기댄다. 빠뜨렸다가
     # 실측에서 드러났다(2026-09-03): timestamp_mismatch 가 붙은 레코드에
     # 모델이 고를 수 있는 이름이 path 하나뿐이라, 옆 레코드의 필드 이름을

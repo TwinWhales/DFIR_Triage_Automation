@@ -1220,7 +1220,19 @@ def main(
     # 잘라서 받는다. 잘린 실행은 오류 없이 끝나고 findings 만 얇아진다
     # (`allocation.CHARS_PER_TOKEN` 의 실측 참조). 창을 좁히는 작업이
     # 이어질 자리라, 남은 여유가 눈에 보여야 한다.
-    prompt_tokens = int((overhead_chars + budget.used_chars) / allocation.CHARS_PER_TOKEN)
+    # **조립 경로는 조각마다 따로 보낸다.** 전체 글자 수를 조각당 예산에
+    # 견주면 "694%" 같은 수가 나오고, 그것은 거짓말이다. 견줄 것은 **가장
+    # 큰 조각**이다 — 창을 넘는지는 조각 단위로 결정된다.
+    largest_chunk_chars = budget.used_chars
+    if assembled and budget_chars > 0:
+        chunks = allocation.chunk_records(records, budget_chars, max_list_items)
+        largest_chunk_chars = max(
+            (sum(allocation.record_chars(r, max_list_items) for r in chunk) for chunk in chunks),
+            default=0,
+        )
+        print(f"  질의 {len(chunks)}회로 나눔 (조각당 예산 {budget_chars:,}자)")
+
+    prompt_tokens = int((overhead_chars + largest_chunk_chars) / allocation.CHARS_PER_TOKEN)
     budget_tokens = allocation.prompt_token_budget(
         args.num_ctx, reserve_output_tokens=args.reserve_output_tokens
     )
