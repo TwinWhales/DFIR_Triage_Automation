@@ -26,7 +26,8 @@ DFIR_LIVE_MODEL=qwen2.5:14b .venv/Scripts/python.exe -m pytest tests/test_llm_li
 ``DFIR_LIVE_MODEL``     필수. ``ollama list`` 의 이름 그대로
 ``DFIR_LIVE_HOST``      기본 ``http://localhost:11434``
 ``DFIR_LIVE_TIMEOUT``   한 번 호출의 상한(초). 기본 900
-``DFIR_LIVE_NUM_CTX``   컨텍스트 창. 기본 32768
+``DFIR_LIVE_NUM_CTX``   컨텍스트 창. **비우면 ``--mode`` 가 정한다**
+                        (model 32,768 / assemble 8,192)
 ======================  =====================================================
 
 ## 무엇을 확인하나
@@ -40,6 +41,29 @@ DFIR_LIVE_MODEL=qwen2.5:14b .venv/Scripts/python.exe -m pytest tests/test_llm_li
   환각으로 셀 값입니다. 05단계 산출물에서 이미 걸러져야 합니다
 - 산출물이 **어느 모델로 돈 것인지** 남기는가 (`generator`)
 - 모델을 못 부르면 **소리를 내고 멈추는가** — 이건 추론이 없어 빠릅니다
+
+## 조립 경로(``--mode assemble``)에서 더 보는 것
+
+모델이 고르기만 하고 파이썬이 조립하는 경로는 **스텁으로 확인되지 않는 층이
+더 있습니다.** 스텁은 우리가 적어 둔 응답을 그대로 돌려주므로, "모델이
+무엇을 골랐든" 성립해야 할 성질이 실제로 서는지 알 수 없습니다.
+
+- `claims` 의 값이 **원본 레코드와 글자 그대로 같은가** — 이 경로의 논지가
+  "모델은 이름만 고르고 값은 파이썬이 옮긴다" 입니다
+- 레코드가 **다른 레코드의 필드를 근거로 대지 못하는가** — 합집합 enum 으로
+  두었을 때 실물에서 무너진 자리입니다(2026-09-03). 지금은 레코드마다
+  `oneOf` 갈래를 따로 둡니다
+- 조각으로 나눠도 **`input_refs` 가 전부 남는가** — 마지막 조각만 남으면
+  06단계의 `ref_in_input` 검사가 통째로 헐거워집니다
+- 조립한 문서가 **06단계를 통과하는가** — 이 통과는 성능이 아니라 항등식
+  이지만, 떨어지면 조립기가 검증기와 다른 자리를 본다는 뜻입니다
+
+## 선별·종합 스키마의 문법 변환
+
+`oneOf`·`const`·`minItems` 가 Ollama 문법으로 내려가야 합니다. 안 내려가면
+조립 경로가 **통째로** 죽습니다 — HTTP 400 이고 소견이 0건이 아니라 아예
+없습니다. `pattern` 으로 한 번 물린 자리라(2026-08-31) 새 스키마도 같은
+시험을 받습니다.
 """
 
 from __future__ import annotations
@@ -57,7 +81,10 @@ from src.common import io, llm, refs, schema
 from src.stage02_normalize import llm_client as normalize_client
 from src.stage02_normalize import normalize as normalize_mod
 from src.stage05_interpret import interpret as interpret_mod
+from src.stage04_parse import flagging
+from src.stage05_interpret import assembly as assembly_mod
 from src.stage05_interpret import llm_client as interpret_client
+from src.stage06_verify import verify as verify_mod
 from casepaths import FIXTURES, GOLDEN
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -66,7 +93,9 @@ MAPPINGS = REPO_ROOT / "mappings"
 MODEL = os.environ.get("DFIR_LIVE_MODEL", "")
 HOST = os.environ.get("DFIR_LIVE_HOST", "http://localhost:11434")
 TIMEOUT = os.environ.get("DFIR_LIVE_TIMEOUT", "900")
-NUM_CTX = os.environ.get("DFIR_LIVE_NUM_CTX", "32768")
+#: 창을 **비워 두면 `--mode` 가 정한다** (model 32,768 / assemble 8,192).
+#: 값을 주면 두 모드 다 그 값으로 돈다.
+NUM_CTX = os.environ.get("DFIR_LIVE_NUM_CTX", "")
 
 pytestmark = [
     pytest.mark.live,
@@ -109,17 +138,39 @@ def case(tmp_path: Path) -> Path:
     return case_dir
 
 
-def _live_args() -> "list[str]":
-    return [
+def _live_args(mode: "str | None" = None) -> "list[str]":
+    args = [
         "--llm", "ollama",
         "--model", MODEL,
         "--host", HOST,
         "--timeout", TIMEOUT,
-        "--num-ctx", NUM_CTX,
         # 0 이면 재시도가 같은 답을 반복한다(docs/limitations.md 5장 ⑤).
         # 테스트가 모델 사정으로 한 번에 실패하는 것을 막는다.
         "--temperature", "0.3",
     ]
+    if NUM_CTX:
+        args += ["--num-ctx", NUM_CTX]
+    if mode:
+        args += ["--mode", mode]
+    return args
+
+
+def _run_interpret(case: Path, out: str, mode: "str | None" = None, *extra: str) -> Path:
+    """05단계를 실제 모델로 한 번 돌리고 산출물 경로를 돌려준다."""
+    path = case / out
+    code = interpret_mod.main(
+        [
+            "--in", str(case / "04_parsed"),
+            "--scenario", str(case / "02_scenario.json"),
+            "--selection", str(case / "03_selection.json"),
+            "--mappings", str(MAPPINGS),
+            "--out", str(path),
+            *extra,
+        ]
+        + _live_args(mode)
+    )
+    assert code == 0
+    return path
 
 
 # =============================================================== 02단계
@@ -158,36 +209,138 @@ def test_the_scenario_records_which_model_produced_it(case: Path) -> None:
 # =============================================================== 05단계
 
 
-def test_every_ref_the_model_cites_actually_exists(case: Path) -> None:
-    """**이 파일에서 가장 중요한 확인이다.**
+def _assert_refs_exist(findings_doc: dict, known: set) -> None:
+    """소견이 인용한 ref 가 전부 04단계 산출물에 있는가.
 
-    모델이 지어낸 `ref` 는 06단계가 환각으로 셉니다. 05단계 산출물에서
-    이미 걸러져 있어야 하고, 걸러지지 않으면 환각률이 오염됩니다.
+    **``finding["refs"]`` 를 본다.** 예전에는 ``finding["input_refs"]`` 를
+    돌았는데 그 키는 소견이 아니라 **문서**에 있다 — 언제나 빈 목록이라
+    이 검사가 아무것도 보지 않았다(2026-09-03 발견).
     """
-    code = interpret_mod.main(
-        [
-            "--in", str(case / "04_parsed"),
-            "--scenario", str(case / "02_scenario.json"),
-            "--selection", str(case / "03_selection.json"),
-            "--mappings", str(MAPPINGS),
-            "--out", str(case / "05_live.json"),
-        ]
-        + _live_args()
-    )
-    assert code == 0
-
-    findings_doc = io.read_json(case / "05_live.json")
-    schema.validate(findings_doc, "findings")
-
-    known = set(io.read_parsed_records(case / "04_parsed"))
     for finding in findings_doc["findings"]:
-        for ref in finding.get("input_refs", []):
+        for ref in finding.get("refs", []):
             assert refs.is_valid(ref), f"ref 형식 위반: {ref}"
             assert ref in known, f"{ref} 는 04단계 산출물에 없다 (지어낸 참조)"
         for claim in finding.get("claims", []):
             ref = claim.get("ref")
             if ref is not None:
                 assert ref in known, f"claims 의 {ref} 가 04단계 산출물에 없다"
+
+    for ref in findings_doc["input_refs"]:
+        assert ref in known, f"input_refs 의 {ref} 가 04단계 산출물에 없다"
+
+
+@pytest.mark.parametrize("mode", ["model", "assemble"])
+def test_every_ref_the_model_cites_actually_exists(case: Path, mode: str) -> None:
+    """**이 파일에서 가장 중요한 확인이다.**
+
+    모델이 지어낸 `ref` 는 06단계가 환각으로 셉니다. 05단계 산출물에서
+    이미 걸러져 있어야 하고, 걸러지지 않으면 환각률이 오염됩니다.
+
+    두 경로를 다 봅니다 — 모델이 문장을 쓰는 쪽과, 고르기만 하고 파이썬이
+    조립하는 쪽은 ``ref`` 가 나오는 자리가 다릅니다.
+    """
+    out = _run_interpret(case, f"05_live_{mode}.json", mode)
+
+    findings_doc = io.read_json(out)
+    schema.validate(findings_doc, "findings")
+    _assert_refs_exist(findings_doc, set(io.read_parsed_records(case / "04_parsed")))
+
+
+# ============================================ 조립 경로 (Map · Reduce)
+
+
+def test_the_assembled_claims_are_copies_of_the_record_not_the_models_typing(
+    case: Path,
+) -> None:
+    """**조립 경로의 논지가 이것이다.**
+
+    모델은 `ref` 와 근거 **필드 이름**만 고르고, 값은 파이썬이 원본에서
+    옮깁니다. 그래서 옮겨 적기 오류가 원리적으로 없어야 합니다 — 스텁으로는
+    확인이 안 되는 층입니다. 스텁은 우리가 적어 둔 값을 그대로 돌려주므로
+    "모델이 무엇을 골랐든" 이 성질이 서는지 알 수 없습니다.
+    """
+    out = _run_interpret(case, "05_assembled.json", "assemble")
+
+    doc = io.read_json(out)
+    records = io.read_parsed_records(case / "04_parsed")
+    for finding in doc["findings"]:
+        for claim in finding["claims"]:
+            record = records[claim["ref"]]
+            found, actual = assembly_mod.walk_field(record, claim["field"])
+            assert found, f"{claim['ref']} 에 {claim['field']} 가 없다"
+            assert claim["value"] == actual, (
+                f"{claim['ref']}.{claim['field']} 가 원본과 다르다 — "
+                f"조립기가 값을 손댔다: {claim['value']!r} != {actual!r}"
+            )
+
+
+def test_the_grammar_stops_a_record_from_citing_another_records_field(
+    case: Path,
+) -> None:
+    """레코드마다 갈래를 따로 두는 것이 실제 모델에서 서는가.
+
+    **합집합 enum 으로는 실물에서 무너졌습니다** (2026-09-03). 파일 생성
+    이벤트에 프로세스 생성 이벤트의 `fields.CommandLine` 을 붙이는 것이
+    문법상 합법이었고, `temperature 0` 이라 재시도 세 번이 같은 답을 냈습니다.
+    지금은 `oneOf` + `const` 로 각 레코드가 자기 필드만 고릅니다.
+
+    조립이 그것을 뒤에서 잡기는 하지만(`SelectionError`), 잡히면 재시도가
+    돕니다. 여기서 보는 것은 **애초에 나오지 않는가**입니다.
+    """
+    out = _run_interpret(case, "05_fields.json", "assemble")
+
+    doc = io.read_json(out)
+    records = io.read_parsed_records(case / "04_parsed")
+    for finding in doc["findings"]:
+        for claim in finding["claims"]:
+            assert claim["field"] in flagging.claim_fields().names, (
+                f"{claim['field']} 는 claim_fields 어휘에 없다 — "
+                "문법이 어휘 밖 이름을 허용했다"
+            )
+            assert assembly_mod.walk_field(records[claim["ref"]], claim["field"])[0]
+
+
+def test_the_assembled_findings_pass_stage_six(case: Path) -> None:
+    """조립한 문서가 06단계를 통과하는가.
+
+    **이 통과는 성능이 아니라 항등식입니다** — `value_match` 는 우리가
+    복사한 값을 우리가 원본과 대조합니다. 그래도 확인할 값이 있습니다:
+    떨어지면 조립기가 06단계와 다른 자리를 본다는 뜻이고, 그것은 우리
+    버그입니다.
+    """
+    out = _run_interpret(case, "05_verify_me.json", "assemble")
+
+    verified = verify_mod.verify(
+        io.read_json(out),
+        io.read_parsed_records(case / "04_parsed"),
+        supported_artifacts=verify_mod.technique_artifacts(MAPPINGS),
+    )
+    schema.validate(verified, "verified")
+
+    rejected = [r for r in verified["rejected"] if r["reason"] != "technique_unsupported"]
+    assert not rejected, f"조립기와 검증기가 다른 자리를 본다: {rejected}"
+
+
+def test_splitting_the_query_does_not_lose_records(case: Path) -> None:
+    """조각으로 나눠도 전달한 것이 전부 `input_refs` 에 남는가.
+
+    `input_refs` 는 06단계가 "전달하지 않은 레코드를 인용했는가"를 보는
+    근거입니다. 조각이 여럿일 때 합집합이 아니라 마지막 조각만 남으면 그
+    검사가 통째로 헐거워집니다.
+
+    창을 좁혀 조각을 강제합니다 — 픽스처는 작아서 기본 창에서는 한 번에
+    들어갑니다.
+    """
+    out = _run_interpret(
+        case, "05_chunked.json", "assemble",
+        "--num-ctx", "5400", "--reserve-output-tokens", "4096", "--max-chunks", "8",
+    )
+
+    doc = io.read_json(out)
+    known = set(io.read_parsed_records(case / "04_parsed"))
+    assert doc["input_refs"], "전달한 레코드가 하나도 기록되지 않았다"
+    assert len(doc["input_refs"]) == len(set(doc["input_refs"])), "input_refs 에 중복이 있다"
+    _assert_refs_exist(doc, known)
 
 
 # ====================================================== 출력 제약 (문법 변환)
@@ -198,10 +351,31 @@ def test_every_ref_the_model_cites_actually_exists(case: Path) -> None:
     [
         ("02", normalize_client.constrained_schema()),
         (
-            "05",
+            "05 소견",
             interpret_client.constrained_schema(
                 {"techniques": [{"id": "T1505.003", "name": "Web Shell"}]},
                 [{"ref": "MFT#12345"}, {"ref": "EVTX-SEC#88"}],
+            ),
+        ),
+        # 선별 스키마는 레코드마다 `oneOf` 갈래를 만든다. `const` 와 `oneOf`
+        # 가 문법으로 내려가야 하고, 안 내려가면 조립 경로가 통째로 죽는다.
+        (
+            "05 선별",
+            interpret_client.selection_schema(
+                {"techniques": [{"id": "T1505.003", "name": "Web Shell"}]},
+                [
+                    {"ref": "MFT#12345", "path": r"C:\web\shell.aspx"},
+                    {"ref": "SYSMON#88", "fields": {"CommandLine": "cmd /c x"}},
+                ],
+                flagging.claim_fields().names,
+            ),
+        ),
+        # 종합 스키마는 `minItems` 로 "둘 이상" 을 요구한다.
+        (
+            "05 종합",
+            interpret_client.connection_schema(
+                {"techniques": [{"id": "T1505.003", "name": "Web Shell"}]},
+                [{"ref": "MFT#12345"}, {"ref": "SYSMON#88"}],
             ),
         ),
     ],
