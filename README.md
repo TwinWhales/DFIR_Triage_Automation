@@ -311,13 +311,20 @@ PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01 benc
 `MAX_CHUNKS`·`OLLAMA_HOST`. 스크립트 머리말에 각각의 뜻이 있습니다.
 
 ```bash
-MODE=assemble MODEL=qwen2.5:7b TIMEOUT=900 LIMIT=200 MAX_CHUNKS=8 VOLUME=1 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh K-001 evidence/x.001
+MODEL=qwen2.5:7b TIMEOUT=900 LIMIT=200 MAX_CHUNKS=8 VOLUME=1 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh K-001 evidence/x.001
 ```
 
-`MODE=assemble`은 모델에게 **어느 레코드가 의심스러운지만** 묻고 문장·claims·
-타임라인은 파이썬이 원본에서 조립합니다. 질의를 조각으로 나눠 보내므로 창
-하나에 들어가는 것보다 많이 봅니다(실측: 창 8,192에서 102건 — 창 32,768
-단일 질의의 54건보다 많습니다).
+**05단계는 기본이 `MODE=assemble`입니다.** 모델에게 **어느 레코드가
+의심스러운지만** 묻고 문장·claims·타임라인은 파이썬이 원본에서 조립합니다.
+질의를 조각으로 나눠 보내므로 창 하나에 들어가는 것보다 많이 봅니다
+(실측: 창 8,192에서 102건 — 창 32,768 단일 질의의 54건보다 많습니다).
+
+모델이 문장을 직접 쓰는 예전 경로는 `MODE=model`입니다. 둘을 비교할 때
+씁니다.
+
+모델과 주고받은 내역은 `cases/<id>/05_llm_queries/`에 질의 하나가 파일 하나로
+남습니다 — 무엇을 물었고 무엇이 돌아왔는지가 있어야 findings가 왜 그렇게
+나왔는지 되짚습니다.
 
 단계를 하나씩 부르고 싶을 때는 이렇게 합니다.
 
@@ -340,7 +347,7 @@ C=cases/K-001
 .venv/Scripts/python.exe -m src.stage05_interpret.interpret \
   --in $C/04_parsed/ --scenario $C/02_scenario.json --selection $C/03_selection.json \
   --out $C/05_findings.json --llm ollama --model qwen2.5:7b \
-  --temperature 0.3 --timeout 900 --num-ctx 32768
+  --temperature 0.3 --timeout 900 --limit 200 --max-chunks 8
 
 .venv/Scripts/python.exe -m src.stage06_verify.verify \
   --findings $C/05_findings.json --parsed $C/04_parsed/ --out $C/06_verified.json

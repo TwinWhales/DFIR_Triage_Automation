@@ -956,14 +956,16 @@ def _parse_args(
     )
     parser.add_argument(
         "--mode",
-        choices=["model", "assemble"],
-        default="model",
+        choices=["assemble", "model"],
+        default="assemble",
         help=(
             "누가 findings 를 쓰는가. 기본 %(default)s. "
-            "model 은 모델이 문장·claims·타임라인을 전부 쓰고, "
-            "assemble 은 모델이 {ref, 기법, 사유, 근거 필드}만 고르고 "
-            "파이썬이 원본에서 조립한다. **폴백이 아니라 측정용 스위치다** — "
-            "같은 케이스를 두 경로로 돌려야 무엇이 달라졌는지 말할 수 있다 "
+            "assemble 은 모델이 {ref, 기법, 사유, 근거 필드}만 고르고 파이썬이 "
+            "원본에서 조립한다 — 질의를 조각으로 나눠 보내므로 창 하나에 "
+            "들어가는 것보다 많이 본다(실측: 창 8,192에서 102건, 창 32,768 "
+            "단일 질의는 54건). model 은 모델이 문장·claims·타임라인을 전부 "
+            "쓰는 예전 경로다. **폴백이 아니라 측정용 스위치다** — 같은 "
+            "케이스를 두 경로로 돌려야 무엇이 달라졌는지 말할 수 있다 "
             "(--no-constrain 과 같은 규약)"
         ),
     )

@@ -304,6 +304,7 @@ def test_cli_stub_run(tmp_path):
             "--out", str(out),
             "--llm", "stub",
             "--replay", str(FIXTURES / "05_findings.json"),
+            "--mode", "model",
         ]
     )
     assert code == 0
@@ -333,6 +334,8 @@ def test_cli_ties_the_output_cap_to_the_reserved_budget(monkeypatch, tmp_path, r
         "--scenario", str(FIXTURES / "02_scenario.json"),
         "--out", str(tmp_path / "05_findings.json"),
         "--llm", "ollama", "--model", "m",
+        # 이 백엔드가 돌려주는 것이 findings 문서라 예전 경로 시험이다.
+        "--mode", "model",
     ]
     if reserve is not None:
         argv += ["--reserve-output-tokens", str(reserve)]
@@ -353,6 +356,8 @@ def _run_with_tokens(monkeypatch, tmp_path, prompt_tokens):
                 "--scenario", str(FIXTURES / "02_scenario.json"),
                 "--out", str(tmp_path / "05_findings.json"),
                 "--llm", "ollama", "--model", "m",
+                # 이 백엔드가 돌려주는 것이 findings 문서라 예전 경로 시험이다.
+                "--mode", "model",
             ]
         )
         == 0
@@ -396,6 +401,7 @@ def test_the_stub_backend_measures_nothing(tmp_path, capsys):
             "--out", str(tmp_path / "05_findings.json"),
             "--llm", "stub",
             "--replay", str(FIXTURES / "05_findings.json"),
+            "--mode", "model",
         ]
     )
     assert "프롬프트 실측" not in capsys.readouterr().out
@@ -414,6 +420,8 @@ def test_cli_aborts_when_no_record_carries_a_signal(tmp_path):
                 "--out", str(tmp_path / "05_findings.json"),
                 "--llm", "stub",
                 "--replay", str(FIXTURES / "05_findings.json"),
+                "--mode", "model",
+            "--mode", "model",
             ]
         )
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
@@ -434,6 +442,8 @@ def test_cli_aborts_when_the_budget_admits_nothing(tmp_path, capsys):
                 "--out", str(tmp_path / "05_findings.json"),
                 "--llm", "stub",
                 "--replay", str(FIXTURES / "05_findings.json"),
+                "--mode", "model",
+            "--mode", "model",
                 # 출력 자리로 창을 통째로 떼어 레코드에 남는 예산을 0으로.
                 "--num-ctx", "4096",
                 "--reserve-output-tokens", "4096",
@@ -487,6 +497,7 @@ def test_cli_says_so_when_the_budget_trims_seats(tmp_path, capsys):
             "--out", str(out),
             "--llm", "stub",
             "--replay", str(replay),
+            "--mode", "model",
             # 레코드 넷 중 둘만 들어갈 만큼만 연다. 창에서 출력 예약을 빼고
             # 남은 것이 1,056자다 — CHARS_PER_TOKEN 을 실측값으로 낮추면서
             # 같은 예산이 나오도록 창을 함께 옮겼다(2026-09-03).
@@ -523,6 +534,8 @@ def test_replaying_a_reply_that_cites_a_trimmed_record_is_refused(tmp_path, caps
                 "--out", str(tmp_path / "05_findings.json"),
                 "--llm", "stub",
                 "--replay", str(FIXTURES / "05_findings.json"),
+                "--mode", "model",
+            "--mode", "model",
                 # 위 테스트와 같은 창이어야 같은 자르기가 일어난다.
                 # CHARS_PER_TOKEN 을 실측값으로 낮추면서 5300 → 5600
                 # (2026-09-03). 예전 값으로 두면 예산이 한 건도 못 들여보내
@@ -550,6 +563,7 @@ def test_a_roomy_context_says_nothing_about_the_budget(tmp_path, capsys):
             "--out", str(tmp_path / "05_findings.json"),
             "--llm", "stub",
             "--replay", str(FIXTURES / "05_findings.json"),
+            "--mode", "model",
         ]
     )
     assert "토큰 예산" not in capsys.readouterr().out

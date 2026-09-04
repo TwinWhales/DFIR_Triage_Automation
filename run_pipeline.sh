@@ -53,7 +53,7 @@
 # 실행한 사람의 기계 사정에 좌우된다.
 #
 #   MODEL       ollama 모델명 (필수). `ollama list` 의 이름 그대로
-#   MODE        05단계가 findings 를 만드는 방식. model|assemble, 기본 model
+#   MODE        05단계가 findings 를 만드는 방식. assemble|model, 기본 assemble
 #               model    — 모델이 문장·claims·타임라인을 전부 쓴다
 #               assemble — 모델은 {ref, 기법, 사유, 근거 필드}만 고르고 파이썬이
 #                          원본에서 조립한다. 질의를 조각으로 나눠 보내므로
@@ -86,7 +86,7 @@ else
   PARSE_VOLUME=()
 fi
 
-MODE="${MODE:-model}"
+MODE="${MODE:-assemble}"
 if [[ "$MODE" != "model" && "$MODE" != "assemble" ]]; then
   echo "MODE 는 model 또는 assemble 이다 (받은 값: $MODE)" >&2
   exit 2

@@ -474,7 +474,10 @@ def run_pipeline(case_dir: Path) -> None:
         ["--in", f"{c}/04_parsed", "--scenario", f"{c}/02_scenario.json",
          "--selection", f"{c}/03_selection.json", "--mappings", str(MAPPINGS),
          "--out", f"{c}/05_findings.json",
-         "--llm", "stub", "--replay", str(FIXTURES / "05_findings.json")]
+         "--llm", "stub", "--replay", str(FIXTURES / "05_findings.json"),
+         # 이 시험이 보는 것은 모델이 문장을 직접 쓰는 예전 경로다.
+         # 기본이 assemble 로 바뀌었으므로 명시한다.
+         "--mode", "model"]
     ) == 0
     assert verify_mod.main(
         ["--findings", f"{c}/05_findings.json", "--parsed", f"{c}/04_parsed",
