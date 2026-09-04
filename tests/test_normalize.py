@@ -200,7 +200,9 @@ def test_a_bad_first_response_is_retried_and_logged(tmp_path, scenario_body):
     doc = normalize({"case_id": "C-001", "raw": "x", "evidence": {}}, client, log)
     schema.validate(doc, "scenario")
 
-    logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
+    # action="record" 는 실패가 아니라 측정이라 attempt 가 없다. 이 테스트가
+    # 보는 것은 "실패가 재시도로 기록되는가"이므로 흐름을 바꾼 것만 남긴다.
+    logged = [e for e in io.read_jsonl(tmp_path / "errors.jsonl") if e["action"] != "record"]
     assert [(e["type"], e["action"], e["attempt"]) for e in logged] == [
         ("malformed_output", "retry", 1)
     ]

@@ -80,6 +80,10 @@ DEFAULT_SAMPLE = 5
 #: 단계 출력이 길면 화면이 판정으로 안 보인다. 넘는 만큼은 줄 수만 알린다.
 MAX_ECHO_LINES = 40
 
+#: 실패가 아니라 **측정**인 오류 유형. "재시도·실패" 수에서 뺀다 —
+#: 02단계가 입력을 얼마나 옮겼는지를 세는 것이라 조치가 ``record`` 다.
+MEASUREMENT_TYPES = frozenset({"uncovered_input", "nonverbatim_evidence"})
+
 
 @dataclass
 class Plan:
@@ -816,11 +820,22 @@ class Runner:
                 print(f"  검증 불가율  {rate:.1%}  (claims 가 빈 문장)")
         if self.errors_path.is_file():
             counted = errlog.tally(self.errors_path)
-            print(f"  재시도·실패  {counted['total']}건 — {self.errors_path}")
+            # ``record`` 는 실패가 아니라 측정이다(``errors.py`` 어휘 주석).
+            # 같이 세면 "재시도·실패"가 부풀어, 프롬프트를 고쳐 나아졌는지
+            # 볼 자리가 오히려 흐려진다.
+            measured = counted["by_action"].get("record", 0)
+            print(f"  재시도·실패  {counted['total'] - measured}건 — {self.errors_path}")
             for etype, count in sorted(counted["by_type"].items()):
+                if etype in MEASUREMENT_TYPES:
+                    continue
                 print(f"      type {etype}: {count}")
             for field_name, count in sorted(counted["by_field"].items(), key=lambda kv: -kv[1])[:5]:
                 print(f"      field {field_name}: {count}   ← 프롬프트 개선의 근거")
+            if measured:
+                print(f"  02 커버리지  {measured}건 (측정 — 실행을 실패시키지 않는다)")
+                for etype in sorted(MEASUREMENT_TYPES):
+                    if counted["by_type"].get(etype):
+                        print(f"      type {etype}: {counted['by_type'][etype]}")
         else:
             print("  재시도·실패  0건 (errors.jsonl 없음 — 모든 단계가 첫 시도에 통과)")
 

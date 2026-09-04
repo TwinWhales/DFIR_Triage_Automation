@@ -105,6 +105,9 @@ def build_context(
         "timeline": timeline,
         "examined": _examined(manifest),
         "limits": _limits(selection, manifest),
+        # 02단계가 어느 서술도 기법으로 옮기지 못했다면 그 축은 조사에서
+        # 통째로 빠진다. 인쇄하지 않으면 "증거 없음"과 구별되지 않는다.
+        "unmapped_text": (scenario or {}).get("unmapped_text", []),
         "generated_at": io.utc_now(),
         "generator": io.make_generator("report.py"),
     }
