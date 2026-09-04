@@ -329,7 +329,7 @@ def test_si_and_fn_can_disagree():
 
 def _write_csv(path, rows):
     columns = [
-        "EntryNumber", "ParentPath", "FileName",
+        "EntryNumber", "ParentPath", "FileName", "IsAds",
         "Created0x10", "LastModified0x10", "LastRecordChange0x10", "LastAccess0x10",
         "Created0x30", "LastModified0x30", "LastRecordChange0x30",
     ]
@@ -340,11 +340,14 @@ def _write_csv(path, rows):
 
 
 def _mftecmd_row(entry=12345, parent=".\\inetpub\\wwwroot\\upload", name="shell.aspx",
-                 created="2026-07-20 03:14:22.1234567"):
+                 created="2026-07-20 03:14:22.1234567", is_ads="False"):
     return {
         "EntryNumber": entry,
         "ParentPath": parent,
         "FileName": name,
+        # MFTECmd 는 스트림마다 한 행을 내고 ADS 행은 본체와 EntryNumber 가
+        # 같다. 열이 없으면 대조기가 아예 멈추므로 픽스처에도 있어야 한다.
+        "IsAds": is_ads,
         "Created0x10": created,
         "LastModified0x10": created,
         "LastRecordChange0x10": created,
@@ -383,7 +386,7 @@ def test_matching_output_passes(tmp_path):
     _write_csv(csv_path, [_mftecmd_row()])
 
     report = compare_mft.compare(
-        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path), full=True
+        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path).records, full=True
     )
     assert report.passed(), report.summary()
 
@@ -397,7 +400,7 @@ def test_a_wrong_timestamp_is_caught(tmp_path):
     _write_csv(csv_path, [_mftecmd_row()])
 
     report = compare_mft.compare(
-        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path)
+        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path).records
     )
     assert not report.passed()
     assert {mismatch.field for mismatch in report.mismatches} >= {"si_btime"}
@@ -412,7 +415,7 @@ def test_a_wrong_path_is_caught(tmp_path):
     _write_csv(csv_path, [_mftecmd_row()])
 
     report = compare_mft.compare(
-        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path)
+        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path).records
     )
     assert [mismatch.field for mismatch in report.mismatches] == ["path"]
 
@@ -426,7 +429,7 @@ def test_a_record_we_invented_always_fails(tmp_path):
     _write_csv(csv_path, [_mftecmd_row()])
 
     report = compare_mft.compare(
-        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path)
+        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path).records
     )
     assert report.extra_in_ours == [99999]
     assert not report.passed()
@@ -441,7 +444,7 @@ def test_scoped_output_is_not_penalised_for_missing_records(tmp_path):
     csv_path = tmp_path / "mft.csv"
     _write_csv(csv_path, [_mftecmd_row(), _mftecmd_row(entry=12346, name="index.aspx")])
 
-    loaded = (compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path))
+    loaded = (compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path).records)
     assert compare_mft.compare(*loaded).passed()
     assert not compare_mft.compare(*loaded, full=True).passed()
 
@@ -462,10 +465,88 @@ def test_summary_is_pasteable_into_notes(tmp_path):
     _write_csv(csv_path, [_mftecmd_row()])
 
     summary = compare_mft.compare(
-        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path), full=True
+        compare_mft.load_ours(ours), compare_mft.load_mftecmd(csv_path).records, full=True
     ).summary()
     assert "판정: 통과" in summary
     assert summary.startswith("- ")
+
+
+def test_an_ads_row_does_not_overwrite_the_file_it_belongs_to(tmp_path):
+    # MFTECmd 는 Sysmon.exe 와 Sysmon.exe:Zone.Identifier 를 **같은
+    # EntryNumber 의 두 행**으로 낸다. 걸러 내지 않으면 나중 행이 앞 행을
+    # 덮어써 경로가 ADS 이름으로 바뀐다 — 레코드 수로는 드러나지 않는다.
+    from src.common import io
+
+    ours = tmp_path / "mft.jsonl"
+    io.write_jsonl(ours, [_ours_row()])
+    csv_path = tmp_path / "mft.csv"
+    _write_csv(
+        csv_path,
+        [
+            _mftecmd_row(),
+            _mftecmd_row(name="shell.aspx:Zone.Identifier", is_ads="True"),
+        ],
+    )
+
+    loaded = compare_mft.load_mftecmd(csv_path)
+    assert loaded.ads_rows == 1
+    assert set(loaded.records) == {12345}
+    assert loaded.records[12345].path.endswith("shell.aspx")
+
+    report = compare_mft.compare(
+        compare_mft.load_ours(ours), loaded.records, full=True, ads_rows=loaded.ads_rows
+    )
+    assert report.passed(), report.summary()
+    # 조건이 요약에 남아야 같은 CSV 로 같은 숫자가 재현된다.
+    assert "ADS 행 1건 제외" in report.summary()
+
+
+def test_a_duplicate_entry_number_stops_instead_of_overwriting(tmp_path):
+    # ADS 를 걸러 낸 뒤에도 중복이 남으면 이유가 다른 것이다. 조용히
+    # 덮으면 어느 행과 대조했는지 알 수 없다.
+    csv_path = tmp_path / "mft.csv"
+    _write_csv(csv_path, [_mftecmd_row(), _mftecmd_row(name="other.aspx")])
+
+    with pytest.raises(ValueError, match="EntryNumber 가 중복"):
+        compare_mft.load_mftecmd(csv_path)
+
+
+def test_a_missing_ads_column_stops_instead_of_guessing(tmp_path):
+    # 콜론으로 대신 가려낼 수는 있지만 그것은 표기에 기대는 판정이다.
+    csv_path = tmp_path / "mft.csv"
+    columns = [
+        "EntryNumber", "ParentPath", "FileName",
+        "Created0x10", "LastModified0x10", "LastRecordChange0x10", "LastAccess0x10",
+    ]
+    csv_path.write_text(
+        ",".join(columns) + "\n" + ",".join(["1", ".", "x"] + ["2026-07-20 03:14:22"] * 4) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="IsAds"):
+        compare_mft.load_mftecmd(csv_path)
+
+
+def test_an_unknown_ads_value_is_not_read_as_false(tmp_path):
+    # MFTECmd 가 표기를 바꿨는데 False 로 넘기면 ADS 행이 대조에 섞인다.
+    csv_path = tmp_path / "mft.csv"
+    _write_csv(csv_path, [_mftecmd_row(is_ads="Y")])
+
+    with pytest.raises(ValueError, match="IsAds"):
+        compare_mft.load_mftecmd(csv_path)
+
+
+def test_the_reference_comparison_does_not_claim_an_ads_condition(tmp_path):
+    # 참조 구현은 우리 형식이라 ADS 개념이 없다. "0건 제외"라고 적으면
+    # 하지도 않은 조건을 기록에 남기는 것이다.
+    from src.common import io
+
+    ours = tmp_path / "mft.jsonl"
+    io.write_jsonl(ours, [_ours_row()])
+
+    summary = compare_mft.compare(
+        compare_mft.load_ours(ours), compare_mft.load_ours(ours), against="참조 구현"
+    ).summary()
+    assert "ADS" not in summary
 
 
 # ==================================================== 섹터 크기
