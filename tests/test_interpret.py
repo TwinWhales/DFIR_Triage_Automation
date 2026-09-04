@@ -367,7 +367,7 @@ def test_cli_puts_the_measured_token_count_next_to_the_estimate(
     _run_with_tokens(monkeypatch, tmp_path, 2000)
 
     printed = capsys.readouterr()
-    assert "프롬프트 실측 2,000토큰" in printed.out
+    assert "프롬프트 실측 최대 2,000토큰" in printed.out
     assert "경고" not in printed.err
 
 
@@ -760,4 +760,66 @@ def test_each_chunk_is_asked_separately(monkeypatch, tmp_path):
     doc = io.read_json(tmp_path / "05_findings.json")
     # 조각들에서 나온 선별이 하나의 문서로 합쳐진다.
     assert {f["refs"][0] for f in doc["findings"]} == {"MFT#12345", "MFT#12346"}
+
+
+def test_the_reduce_query_ties_records_across_artifacts(monkeypatch, tmp_path):
+    """**이것이 Map-Reduce 의 Reduce 다.**
+
+    없으면 조각마다 따로 판정만 하고 파이썬이 append 할 뿐이라, 조각을 넘는
+    연결은 아무도 말한 적이 없다.
+    """
+    backend = FakeBackend(
+        _selection(_pick("MFT#12345"), _pick("EVTX-SEC#40912", evidence_fields=["event_id"])),
+        json.dumps(
+            {
+                "connections": [
+                    {
+                        "refs": ["MFT#12345", "EVTX-SEC#40912"],
+                        "technique": None,
+                        "reason": "파일이 떨어진 직후 계정이 생겼다",
+                        "severity": "high",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    doc = io.read_json(tmp_path / "05_findings.json")
+    schema.validate(doc, "findings")
+    assert len(doc["findings"]) == 1
+    assert doc["findings"][0]["refs"] == ["MFT#12345", "EVTX-SEC#40912"]
+    # 각 레코드의 근거는 Map 이 골라 둔 것이다.
+    assert {c["field"] for c in doc["findings"][0]["claims"]} == {"path", "event_id"}
+
+
+def test_a_failed_reduce_skips_instead_of_stopping(monkeypatch, tmp_path):
+    """**조각 실패와 다르다.** 여기서 잃는 것은 종합이지 증거가 아니다.
+
+    고른 항목은 전부 단독 소견으로 실리므로 산출물이 부분이 되지 않는다.
+    그래서 abort 가 아니라 skip 이다. 다만 조용히 넘어가지는 않는다.
+    """
+    backend = FakeBackend(
+        _selection(_pick("MFT#12345"), _pick("EVTX-SEC#40912", evidence_fields=["event_id"])),
+        "종합은 못 하겠고 설명만 하겠다",
+    )
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    recorded = _errors(tmp_path)
+    assert [(e["type"], e["action"]) for e in recorded] == [("malformed_output", "skip")]
+    doc = io.read_json(tmp_path / "05_findings.json")
+    # 증거는 다 실렸다 — 묶이지 않았을 뿐이다.
+    assert {f["refs"][0] for f in doc["findings"]} == {"MFT#12345", "EVTX-SEC#40912"}
+
+
+def test_one_pick_needs_no_reduce_query(monkeypatch, tmp_path):
+    """묶을 것이 둘 미만이면 물어볼 것이 없다."""
+    backend = FakeBackend(_selection(_pick("MFT#12345")))
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    assert len(backend.calls) == 1  # 종합 질의를 안 보냈다
 

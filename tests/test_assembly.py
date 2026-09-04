@@ -318,3 +318,108 @@ def test_the_shipped_claim_vocabulary_is_actually_loaded():
     assert fields.max_items > 0
     assert "path" in fields.names
     assert "fields.CommandLine" in fields.names
+
+
+# =========================================== Reduce — 교차 아티팩트 묶음
+
+
+def _conn(refs, **overrides):
+    base = {"refs": list(refs), "technique": None, "reason": "이어진다", "severity": "high"}
+    base.update(overrides)
+    return base
+
+
+def _two():
+    return {
+        "MFT#1": {**_sysmon("MFT#1"), "artifact": "$MFT", "path": r"C:\web\shell.aspx"},
+        "SYSMON#1": _sysmon("SYSMON#1", CommandLine="cmd /c shell.aspx"),
+    }
+
+
+def test_a_connection_becomes_one_finding_over_several_records():
+    """**이것이 Reduce 가 있는 이유다.**
+
+    Map 은 조각마다 따로 판정했을 뿐, 셋이 한 사건이라는 것은 아무도 말한
+    적이 없다.
+    """
+    records = _two()
+    picks = [
+        _pick("MFT#1", evidence_fields=["path"]),
+        _pick("SYSMON#1", evidence_fields=["fields.CommandLine"]),
+    ]
+
+    body = assemble_body(picks, records, FIELDS, connections=[_conn(["MFT#1", "SYSMON#1"])])
+
+    assert len(body["findings"]) == 1
+    assert body["findings"][0]["refs"] == ["MFT#1", "SYSMON#1"]
+
+
+def test_a_connection_carries_the_evidence_fields_map_already_chose():
+    """Reduce 는 원본 레코드를 보지 않았다. 다시 물을 수 없고 물을 필요도 없다 —
+    그 레코드가 왜 의심스러운지는 앞 단계가 정했다."""
+    records = _two()
+    picks = [
+        _pick("MFT#1", evidence_fields=["path"]),
+        _pick("SYSMON#1", evidence_fields=["fields.CommandLine"]),
+    ]
+
+    body = assemble_body(picks, records, FIELDS, connections=[_conn(["MFT#1", "SYSMON#1"])])
+
+    assert [c["field"] for c in body["findings"][0]["claims"]] == [
+        "path",
+        "fields.CommandLine",
+    ]
+
+
+def test_records_left_out_of_a_connection_still_become_findings():
+    """묶이지 않은 것을 버리면 모델이 고른 증거가 소리 없이 사라진다."""
+    records = {**_two(), "SYSMON#2": _sysmon("SYSMON#2")}
+    picks = [_pick(r) for r in records]
+
+    body = assemble_body(picks, records, FIELDS, connections=[_conn(["MFT#1", "SYSMON#1"])])
+
+    assert [f["refs"] for f in body["findings"]] == [["MFT#1", "SYSMON#1"], ["SYSMON#2"]]
+
+
+def test_a_record_in_a_connection_does_not_also_stand_alone():
+    """같은 사실이 두 번 실리면 보고서가 부풀려진다."""
+    records = _two()
+    picks = [_pick(r) for r in records]
+
+    body = assemble_body(picks, records, FIELDS, connections=[_conn(["MFT#1", "SYSMON#1"])])
+
+    assert len(body["findings"]) == 1
+
+
+@pytest.mark.parametrize(
+    "connection",
+    [
+        _conn(["MFT#1"]),                 # 한 항목짜리 묶음은 뜻이 없다
+        _conn(["MFT#1", "MFT#1"]),        # 중복을 걷으면 하나뿐이다
+        _conn(["MFT#1", "MFT#99"]),       # 전달하지 않은 ref 가 섞였다
+    ],
+)
+def test_a_degenerate_connection_is_ignored_not_fatal(connection):
+    """묶음이 성립하지 않으면 항목들은 단독 소견으로 그대로 실린다."""
+    records = _two()
+    picks = [_pick(r) for r in records]
+
+    body = assemble_body(picks, records, FIELDS, connections=[connection])
+
+    assert [f["refs"] for f in body["findings"]] == [["MFT#1"], ["SYSMON#1"]]
+
+
+def test_a_connection_sits_at_the_time_of_its_earliest_record():
+    """사건이 시작된 시각이 그 묶음의 자리다."""
+    records = _two()
+    records["MFT#1"]["timestamp"] = "2026-08-26T05:00:00Z"
+    records["SYSMON#1"]["timestamp"] = "2026-08-26T01:00:00Z"
+    picks = [_pick(r) for r in records]
+
+    body = assemble_body(picks, records, FIELDS, connections=[_conn(["MFT#1", "SYSMON#1"])])
+
+    # 정렬 기준과 찍히는 시각이 같은 레코드에서 나와야 한다. 첫 ref 의
+    # 시각(05:00)을 찍으면 타임라인이 자기가 적은 시각과 다른 자리에 놓인다.
+    assert body["timeline"][0]["ts"] == "2026-08-26T01:00:00Z"
+    assert set(body["timeline"][0]["refs"]) == {"MFT#1", "SYSMON#1"}
+

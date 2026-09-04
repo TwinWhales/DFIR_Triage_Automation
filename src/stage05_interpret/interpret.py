@@ -588,6 +588,63 @@ def _select_chunk(
     )
 
 
+def _connect(
+    scenario: dict[str, Any],
+    picked: list[dict[str, Any]],
+    client: InterpretClient,
+    log: errlog.ErrorLog,
+    char_budget: "int | None",
+) -> list[dict[str, Any]]:
+    """고른 항목들 중 서로 이어지는 것을 묶는다 (Reduce).
+
+    **이것이 없으면 Map-Reduce 가 이름만 Reduce 다.** 조각마다 따로 판정만
+    하고 파이썬이 append 하면, 조각을 넘는 연결은 아무도 말한 적이 없다 —
+    "파일이 떨어졌다"와 "그 파일이 실행됐다"가 각각 실릴 뿐 한 사건이라는
+    말은 어디에도 없다.
+
+    **묶을 것이 둘 미만이면 부르지 않는다.** 물어볼 것이 없다.
+
+    **입력도 예산 판정을 받는다.** 단서가 수십 건이면 한 줄이 120자라도
+    창을 넘는다. 넘으면 **건너뛰고 그 사실을 남긴다** — 조각 실패와 달리
+    여기서 잃는 것은 종합이지 증거가 아니다. 고른 항목은 전부 단독 소견으로
+    실리므로 산출물이 부분이 되지 않는다. 그래서 ``abort`` 가 아니라
+    ``skip`` 이다.
+
+    **실패해도 멈추지 않는다.** 같은 이유다. 종합을 못 했을 뿐 증거는 다
+    실린다. 다만 조용히 넘어가지는 않는다.
+    """
+    if len(picked) < 2:
+        return []
+
+    if char_budget is not None and char_budget > 0:
+        needed = client.reduce_chars(scenario, picked)
+        if needed > char_budget:
+            log.record(
+                STAGE,
+                "empty_result",
+                {
+                    "message": (
+                        f"종합 질의 입력이 예산을 넘음 ({needed:,}자 > {char_budget:,}자, "
+                        f"단서 {len(picked)}건). 교차 아티팩트 종합을 건너뛴다 — "
+                        "고른 항목은 전부 단독 소견으로 실리므로 증거가 빠지지는 않는다"
+                    )
+                },
+                action="skip",
+            )
+            return []
+
+    try:
+        return client.propose_connections(scenario, picked)
+    except (llm.LLMError, llm.MalformedOutput) as e:
+        log.record(
+            STAGE,
+            "malformed_output" if isinstance(e, llm.MalformedOutput) else "llm_error",
+            {"message": f"종합 질의 실패, 건너뜀: {e}"},
+            action="skip",
+        )
+        return []
+
+
 def interpret_assembled(
     scenario: dict[str, Any],
     records: list[dict[str, Any]],
@@ -636,10 +693,12 @@ def interpret_assembled(
             )
         )
 
+    connections = _connect(scenario, picked, client, log, char_budget)
+
     feedback: str | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            body = assembly.assemble_body(picked, by_ref)
+            body = assembly.assemble_body(picked, by_ref, connections=connections)
             findings = build_findings(body, case_id, generator, input_refs)
             schema.validate(findings, "findings")
             try:
@@ -1174,11 +1233,14 @@ def main(
     # 실제로 몇 토큰이었는지는 모델만 안다. 추정 옆에 놓아야 상수가 어긋난
     # 것이 실행 중에 보인다 — 이 자리가 없어서 프롬프트가 잘리고 있다는
     # 사실을 사람이 따로 재서야 찾아냈다(`limitations-log.md`, 2026-09-03).
-    actual_tokens = getattr(client.backend, "last_prompt_tokens", None)
+    # **가장 큰 프롬프트**를 본다. 질의를 여러 번 보내면 마지막 호출의 값은
+    # 추정과 다른 프롬프트라 나란히 놓을 수 없고, 알고 싶은 것은 "어느
+    # 프롬프트라도 창을 넘었는가"다.
+    largest_chars, actual_tokens = client.largest_prompt
     if actual_tokens:
-        observed = (overhead_chars + budget.used_chars) / actual_tokens
+        observed = largest_chars / actual_tokens
         print(
-            f"  프롬프트 실측 {actual_tokens:,}토큰 "
+            f"  프롬프트 실측 최대 {actual_tokens:,}토큰 "
             f"({observed:.2f}자/토큰, 예산이 쓴 값 {allocation.CHARS_PER_TOKEN})"
         )
         # 잘렸는지는 이 수로 직접 볼 수 없다. Ollama 가 앞을 자른 뒤의 수를

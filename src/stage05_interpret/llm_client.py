@@ -196,6 +196,82 @@ def selection_schema(
     }
 
 
+#: Reduce 질의에서 모델이 낼 필드.
+CONNECTION_BODY_FIELD = "connections"
+
+
+def connection_schema(
+    scenario: dict[str, Any], picked: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Reduce 질의의 출력 스키마.
+
+    ``refs`` 의 enum 은 **Map 이 고른 것**뿐이다. 전달 레코드 전체가 아니다 —
+    이 질의에는 원본 레코드가 실려 있지 않으므로, 고르지 않은 레코드를
+    인용하면 모델이 못 본 것을 말하는 셈이 된다.
+
+    ``minItems`` 가 2 인 것은 **한 항목짜리 묶음이 뜻이 없기 때문**이다.
+    이어지는 것이 없으면 그 항목은 단독 소견으로 그대로 실린다.
+    """
+    refs = sorted({item["ref"] for item in picked if item.get("ref")})
+    techniques = sorted({t["id"] for t in scenario.get("techniques", []) if "id" in t})
+
+    properties: dict[str, Any] = {
+        "refs": {
+            "type": "array",
+            "items": {"enum": refs} if refs else {"type": "string"},
+            "minItems": 2,
+            **({"maxItems": len(refs)} if refs else {}),
+        },
+        "technique": (
+            {"enum": [*techniques, None]} if techniques else {"type": ["string", "null"]}
+        ),
+        "reason": {"type": "string"},
+        "severity": {"enum": list(SEVERITIES)},
+    }
+    items = {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
+    connections: dict[str, Any] = {"type": "array", "items": items}
+    if refs:
+        # 상한이 없으면 모델이 배열에서 맴돈다(selection_schema 참조).
+        # 묶음이 항목 수보다 많을 이유가 없다.
+        connections["maxItems"] = len(refs)
+
+    return {
+        "type": "object",
+        "properties": {CONNECTION_BODY_FIELD: connections},
+        "required": [CONNECTION_BODY_FIELD],
+    }
+
+
+def selection_digest(picked: list[dict[str, Any]]) -> str:
+    """Map 이 고른 것을 Reduce 프롬프트에 실을 한 줄씩.
+
+    **원본 레코드를 다시 싣지 않는다.** 이 질의가 싼 이유가 그것이다 —
+    수십 건이라도 한 줄이 120자 남짓이다. 대신 모델은 앞 단계가 요약한
+    ``reason`` 만 보고 잇는다. 그래서 프롬프트가 "주어진 항목이 말하지 않는
+    것을 보태지 말라"고 못 박는다.
+    """
+    lines = []
+    for item in picked:
+        technique = item.get("technique") or "-"
+        lines.append(
+            json.dumps(
+                {
+                    "ref": item.get("ref"),
+                    "technique": technique,
+                    "severity": item.get("severity", "info"),
+                    "reason": item.get("reason", ""),
+                },
+                ensure_ascii=False,
+            )
+        )
+    return "\n".join(lines)
+
+
 class InterpretClient:
     """레코드 → 해석 문장과 claims."""
 
@@ -218,10 +294,23 @@ class InterpretClient:
         #: 파일로 떨구기 위한 것이다. 파싱 전에 채우므로 JSON 을 못 찾은
         #: 경우에도 남는다. 성공하면 아무도 읽지 않는다.
         self.last_raw: str | None = None
+        #: 이 클라이언트가 보낸 프롬프트 중 **가장 큰 것**의 (글자, 실측 토큰).
+        #:
+        #: 질의를 여러 번 보내면 ``backend.last_prompt_tokens`` 는 마지막
+        #: 호출의 값이라, 추정과 나란히 놓으면 서로 다른 프롬프트를 비교하게
+        #: 된다. 실제로 알고 싶은 것은 "어느 프롬프트라도 창을 넘었는가"이고,
+        #: 그 답은 최댓값에 있다.
+        self.largest_prompt: tuple[int, int] = (0, 0)
 
     @property
     def name(self) -> str:
         return self.backend.name
+
+    def _note_prompt(self, chars: int) -> None:
+        """방금 보낸 프롬프트의 크기를 기록한다. 가장 큰 것만 남긴다."""
+        tokens = getattr(self.backend, "last_prompt_tokens", None)
+        if tokens and chars > self.largest_prompt[0]:
+            self.largest_prompt = (chars, tokens)
 
     def system_prompt(self) -> str:
         return (PROMPT_DIR / "interpret_system.txt").read_text(encoding="utf-8")
@@ -281,6 +370,60 @@ class InterpretClient:
             self.select_user_prompt(scenario, [])
         )
 
+    def reduce_system_prompt(self) -> str:
+        return (PROMPT_DIR / "reduce_system.txt").read_text(encoding="utf-8")
+
+    def reduce_user_prompt(
+        self, scenario: dict[str, Any], picked: list[dict[str, Any]]
+    ) -> str:
+        techniques = ", ".join(
+            f"{t['id']}({t['name']})" for t in scenario.get("techniques", [])
+        )
+        return "\n\n".join(
+            [
+                "### 시나리오\n"
+                f"- 대상 OS: {scenario.get('target_os', '?')}\n"
+                f"- 의심 기법: {techniques or '없음'}",
+                f"### 앞 단계가 고른 항목 ({len(picked)}건)\n"
+                + selection_digest(picked),
+                "### 출력",
+            ]
+        )
+
+    def reduce_chars(self, scenario: dict[str, Any], picked: list[dict[str, Any]]) -> int:
+        """Reduce 질의가 차지할 글자 수. **보내기 전에 잰다.**
+
+        단서가 수십 건이면 그것만으로 창을 넘는다. 넘는데도 보내면 앞이
+        잘리고, 잘린 프롬프트는 오류 없이 돌아온다.
+        """
+        return len(self.reduce_system_prompt()) + len(
+            self.reduce_user_prompt(scenario, picked)
+        )
+
+    def propose_connections(
+        self, scenario: dict[str, Any], picked: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """고른 항목들 중 **서로 이어지는 것**을 묶어 달라고 묻는다.
+
+        Map 이 조각마다 따로 판정했으므로, 조각을 넘는 연결은 아무도 말한
+        적이 없다. 이 질의가 그것을 말한다 — 없으면 Map-Reduce 가 이름만
+        Reduce 이고 실제로는 파이썬 append 다.
+        """
+        raw = self.backend.complete(
+            self.reduce_system_prompt(),
+            self.reduce_user_prompt(scenario, picked),
+            fmt=connection_schema(scenario, picked) if self.constrain else None,
+        )
+        self.last_raw = raw
+        self._note_prompt(self.reduce_chars(scenario, picked))
+        parsed = extract_json(raw)
+        found = parsed.get(CONNECTION_BODY_FIELD)
+        if not isinstance(found, list):
+            raise MalformedOutput(
+                f"{CONNECTION_BODY_FIELD} 가 목록이 아님: {type(found).__name__}"
+            )
+        return [item for item in found if isinstance(item, dict)]
+
     def propose_selection(
         self,
         scenario: dict[str, Any],
@@ -304,6 +447,10 @@ class InterpretClient:
             fmt=selection_schema(scenario, records, allowed) if self.constrain else None,
         )
         self.last_raw = raw
+        self._note_prompt(
+            len(self.select_system_prompt())
+            + len(self.select_user_prompt(scenario, records, feedback))
+        )
         parsed = extract_json(raw)
         picked = parsed.get(SELECTION_BODY_FIELD)
         if not isinstance(picked, list):
@@ -408,5 +555,9 @@ class InterpretClient:
             fmt=constrained_schema(scenario, records) if self.constrain else None,
         )
         self.last_raw = raw
+        self._note_prompt(
+            len(self.system_prompt())
+            + len(self.user_prompt(scenario, records, feedback))
+        )
         parsed = extract_json(raw)
         return {key: parsed.get(key, []) for key in FINDINGS_BODY_FIELDS}

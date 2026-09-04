@@ -57,7 +57,7 @@ dfir-triage/
 │   │   │   └── claims_extract.txt # 문장→claims 분리 시 2차 호출용
 │   │   ├── record_filter.py       # 신호 판정·활동 시각
 │   │   ├── allocation.py          # 아티팩트별 자릿수 배분(쿼터)
-│   │   ├── assembly.py           # 모델이 고른 ref → claims·timeline 결정론적 조립
+│   │   ├── assembly.py           # 모델이 고른 ref → claims·timeline 결정론적 조립 (Map·Reduce 결과를 받는다)
 │   │   └── llm_client.py
 │   │
 │   ├── stage06_verify/

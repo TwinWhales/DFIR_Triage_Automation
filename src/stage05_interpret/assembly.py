@@ -206,6 +206,7 @@ def assemble_body(
     selections: list[dict[str, Any]],
     records: dict[str, dict[str, Any]],
     fields: "ClaimFields | None" = None,
+    connections: "list[dict[str, Any]] | None" = None,
 ) -> dict[str, Any]:
     """모델이 고른 목록 → findings 본문(``findings`` + ``timeline``).
 
@@ -228,9 +229,49 @@ def assemble_body(
     문자열이 없으면 타임라인에는 오르지 않는다.
     """
     fields = claim_fields() if fields is None else fields
+    chosen_by_ref = {
+        item["ref"]: [name for name in (item.get("evidence_fields") or []) if name]
+        for item in selections
+        if item.get("ref")
+    }
 
     findings: list[dict[str, Any]] = []
     used: set[str] = set()
+
+    # **묶음이 먼저다.** Reduce 가 "이 셋이 한 사건이다"라고 한 것이 보고서의
+    # 앞머리여야 하고, 묶인 레코드가 단독 소견으로 또 나오면 같은 사실이 두
+    # 번 실린다.
+    for connection in connections or []:
+        refs = [ref for ref in (connection.get("refs") or []) if ref in records]
+        # 중복을 걷어내되 순서는 지킨다 — 모델이 적은 순서가 인과의 순서다.
+        refs = list(dict.fromkeys(refs))
+        if len(refs) < 2 or any(ref in used for ref in refs):
+            # 한 항목짜리 묶음은 뜻이 없고(단독 소견으로 그대로 실린다),
+            # 이미 묶인 레코드를 다시 묶으면 같은 증거가 두 소견을 받는다.
+            continue
+
+        statement = str(connection.get("reason") or "").strip()
+        if not statement:
+            raise SelectionError("묶음의 reason 이 비었다.")
+
+        claims: list[dict[str, Any]] = []
+        for ref in refs:
+            # 각 레코드의 근거 필드는 **Map 이 이미 골라 뒀다.** Reduce 는
+            # 원본 레코드를 보지 않았으므로 다시 물을 수 없고, 물을 필요도
+            # 없다 — 그 레코드가 왜 의심스러운지는 앞 단계가 정한 것이다.
+            claims.extend(claim_for(records[ref], fields, chosen_by_ref.get(ref)))
+        used.update(refs)
+
+        findings.append(
+            {
+                "id": f"F{len(findings) + 1}",
+                "statement": statement,
+                "refs": refs,
+                "claims": claims,
+                "technique": connection.get("technique") or None,
+                "severity": connection.get("severity") or "info",
+            }
+        )
 
     for selection in selections:
         ref = selection.get("ref")
@@ -267,8 +308,18 @@ def assemble_body(
         )
 
     timeline = []
-    for finding in sorted(findings, key=lambda f: _sort_time(records[f["refs"][0]])):
-        record = records[finding["refs"][0]]
+
+    # 묶음은 레코드가 여럿이라 **가장 이른 것**으로 자리를 잡는다. 사건이
+    # 시작된 시각이 그 묶음의 자리다.
+    #
+    # **정렬 기준과 찍히는 시각이 같은 레코드에서 나와야 한다.** 첫 ref 의
+    # 시각을 찍으면서 가장 이른 시각으로 정렬하면, 타임라인이 자기가 적은
+    # 시각과 다른 자리에 놓인다.
+    def _anchor(finding: dict[str, Any]) -> dict[str, Any]:
+        return min(finding["refs"], key=lambda ref: _sort_time(records[ref]))
+
+    for finding in sorted(findings, key=lambda f: _sort_time(records[_anchor(f)])):
+        record = records[_anchor(finding)]
         ts = _timeline_ts(record)
         if ts is not None:
             timeline.append(
