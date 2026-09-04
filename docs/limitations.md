@@ -1367,6 +1367,29 @@ ref 가 나올 토큰 경로가 없습니다.
 `{ref, artifact, timestamp, details, description}` 꼴로 내 **스키마와 무관한
 구조**였습니다 — `temperature 0` 이면 재시도해도 같은 것이 옵니다.
 
+#### 근거 필드 어휘가 비면 모델에게 옳은 선택지가 없습니다 (2026-09-03)
+
+`--mode assemble` 을 처음 실물로 돌렸을 때 3회 재시도 끝에 중단했습니다.
+원인은 모델이 아니라 **우리 어휘**였습니다.
+
+`MFT#12345` 는 `timestamp_mismatch` 가 붙은 레코드라 그 판단이 `si_*` 와
+`fn_*` 의 어긋남에 기대는데, `claim_fields` 어휘에 그 이름이 하나도 없었습니다.
+모델이 고를 수 있는 이름은 `path` 하나뿐이었고, 시각을 말하려다 **옆 레코드의
+필드 이름**(`fields.TargetUserName`)을 가져다 붙였습니다. `SelectionError` 가
+매번 그것을 잡아 재시도했고, `temperature 0` 이라 같은 답이 세 번 나왔습니다.
+
+어휘에 `si_*`·`fn_*`·`allocated`·`size` 를 넣자 같은 입력에서 이렇게 됩니다.
+
+```
+[F1] "…생성되었지만 …수정된 시각이 어긋난다"   claims: si_ctime, fn_mtime
+[F2] "svc_backup 라는 사용자가 …생성되었다"      claims: fields.TargetUserName
+```
+
+**어휘가 곧 모델의 선택지다.** 새 파서를 붙이면서 그 아티팩트의 판단 근거
+필드를 `claim_fields` 에 넣지 않으면, 그 아티팩트의 소견은 claims 가 비어
+`unverifiable` 이 되거나 — 더 나쁘게 — 모델이 엉뚱한 이름을 골라 재시도만
+태웁니다. `docs/mapping-guide.md` 의 해당 절에 적어 두었습니다.
+
 #### 수량 제약은 문법으로 갑니다 — 그리고 없으면 모델이 맴돕니다 (2026-09-03)
 
 `pattern` 과 달리 **`minItems`·`maxItems` 는 Ollama 문법으로 내려갑니다.**

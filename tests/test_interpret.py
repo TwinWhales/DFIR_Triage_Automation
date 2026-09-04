@@ -553,3 +553,167 @@ def test_a_roomy_context_says_nothing_about_the_budget(tmp_path, capsys):
         ]
     )
     assert "토큰 예산" not in capsys.readouterr().out
+
+
+# ================================================ --mode assemble · 실패 처리
+
+
+def _selection(*items):
+    """선별 질의의 응답 원문."""
+    return json.dumps({"suspicious_records": list(items)}, ensure_ascii=False)
+
+
+def _pick(ref, **overrides):
+    base = {
+        "ref": ref,
+        "technique": None,
+        "reason": "의심 정황",
+        "severity": "medium",
+        "evidence_fields": ["path"],
+    }
+    base.update(overrides)
+    return base
+
+
+def _run_assembled(monkeypatch, tmp_path, backend, extra=()):
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", lambda kind, **kw: backend)
+    return interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "ollama", "--model", "m",
+            "--mode", "assemble",
+            *extra,
+        ]
+    )
+
+
+def _errors(tmp_path):
+    path = tmp_path / "errors.jsonl"
+    if not path.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_assemble_mode_builds_the_document_from_what_the_model_chose(
+    monkeypatch, tmp_path
+):
+    """모델은 고르고 파이썬이 옮긴다. 문장 하나만 모델의 것이다."""
+    backend = FakeBackend(_selection(_pick("MFT#12345")))
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    doc = io.read_json(tmp_path / "05_findings.json")
+    schema.validate(doc, "findings")
+    finding = doc["findings"][0]
+    assert finding["statement"] == "의심 정황"
+    assert [c["field"] for c in finding["claims"]] == ["path"]
+    # 값은 모델이 아니라 원본에서 왔다.
+    assert finding["claims"][0]["value"].endswith("shell.aspx")
+
+
+def test_a_field_the_record_lacks_is_retried_with_feedback(monkeypatch, tmp_path):
+    """**모델 잘못이라 다시 물어보면 고쳐질 수 있다.**
+
+    조립 경로에서 살아남은 유일한 모델 오류 채널이다.
+    """
+    backend = FakeBackend(
+        _selection(_pick("MFT#12345", evidence_fields=["fields.CommandLine"])),
+        _selection(_pick("MFT#12345")),
+    )
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    recorded = _errors(tmp_path)
+    assert [(e["type"], e["action"]) for e in recorded] == [("claim_validation", "retry")]
+    assert len(backend.calls) == 2  # 다시 물어봤고 두 번째가 통과했다
+    # 지적이 프롬프트에 실려 나갔는가. 안 실리면 재시도가 같은 답을 부른다.
+    assert "evidence_fields" in backend.calls[1][1]
+
+
+def test_our_own_bug_stops_at_once_instead_of_burning_three_calls(
+    monkeypatch, tmp_path
+):
+    """**조립기 오류는 재시도해도 같은 답이 나온다.**
+
+    같은 코드가 같은 입력으로 같은 답을 낸다. 재시도하면 모델을 세 번 더
+    부르고 똑같이 죽으며, 그 실패가 claim_validation 으로 쌓여 "모델이
+    틀렸다"와 "우리가 틀렸다"를 한 통계에 섞는다.
+    """
+    # 보내지 않은 ref 를 골랐다고 하면 조립기가 짝을 못 짓는다.
+    backend = FakeBackend(_selection(_pick("MFT#99999")))
+
+    with pytest.raises(SystemExit):
+        _run_assembled(monkeypatch, tmp_path, backend)
+
+    recorded = _errors(tmp_path)
+    assert [(e["type"], e["action"]) for e in recorded] == [("assembly_error", "abort")]
+    assert len(backend.calls) == 1  # 한 번만 부르고 멈췄다
+
+
+def test_the_two_failures_do_not_share_a_name(monkeypatch, tmp_path):
+    """한 이름으로 세면 어느 쪽이 몇 건이었는지 나중에 못 가른다."""
+    assert "assembly_error" in errlog.ERROR_TYPES
+    assert "claim_validation" in errlog.ERROR_TYPES
+
+
+@pytest.mark.parametrize(
+    "mode, expected",
+    [("model", allocation.RESERVE_FINDINGS_TOKENS), ("assemble", allocation.RESERVE_SELECTION_TOKENS)],
+)
+def test_the_output_reserve_follows_the_query_kind(monkeypatch, tmp_path, mode, expected):
+    """선별 질의는 답 쓸 자리가 소견 질의의 4분의 1이다.
+
+    큰 쪽에 맞춰 두면 작은 질의가 쓰지도 않을 자리를 창에서 떼어 간다.
+    """
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        body = (
+            _selection(_pick("MFT#12345"))
+            if mode == "assemble"
+            else (FIXTURES / "05_findings.json").read_text(encoding="utf-8")
+        )
+        return FakeBackend(body)
+
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", fake_build_backend)
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "ollama", "--model", "m",
+            "--mode", mode,
+        ]
+    )
+
+    assert captured["num_predict"] == expected
+
+
+def test_an_explicit_reserve_wins_over_the_mode_default(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        return FakeBackend(_selection(_pick("MFT#12345")))
+
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", fake_build_backend)
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "ollama", "--model", "m",
+            "--mode", "assemble",
+            "--reserve-output-tokens", "2048",
+        ]
+    )
+
+    assert captured["num_predict"] == 2048
+

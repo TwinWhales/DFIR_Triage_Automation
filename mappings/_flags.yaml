@@ -811,5 +811,20 @@ claim_fields:
     - fields.ParentImage
     - fields.DestinationIp    # evtx:Sysmon 3
     - fields.ServiceName
+
+    # $MFT — 이 아티팩트의 flag 는 전부 이 값들에 기댄다. 빠뜨렸다가
+    # 실측에서 드러났다(2026-09-03): timestamp_mismatch 가 붙은 레코드에
+    # 모델이 고를 수 있는 이름이 path 하나뿐이라, 옆 레코드의 필드 이름을
+    # 가져다 붙이고 재시도 세 번 끝에 중단했다.
+    - si_ctime                # timestamp_mismatch·zero_timestamp 의 근거
+    - si_mtime
+    - si_btime
+    - si_atime
+    - fn_ctime                # $SI 와 어긋나는 것이 조작의 신호다
+    - fn_mtime
+    - fn_btime
+    - allocated               # deleted 의 근거
+    - size
+
     - event_id                # evtx:* — 무슨 사건이었나
     - timestamp

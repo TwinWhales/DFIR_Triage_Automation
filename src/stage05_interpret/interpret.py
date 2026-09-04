@@ -43,7 +43,7 @@ from ..common import io, llm, schema
 from ..common.llm import DEFAULT_TIMEOUT
 from ..stage03_select import mapping_loader
 from ..stage06_verify import comparators
-from . import allocation, record_filter
+from . import allocation, assembly, record_filter
 from .llm_client import (
     DEFAULT_MODEL,
     DEFAULT_NUM_CTX,
@@ -56,6 +56,7 @@ __all__ = [
     "build_findings",
     "dump_raw",
     "interpret",
+    "interpret_assembled",
     "main",
 ]
 
@@ -511,6 +512,114 @@ def interpret(
     )
 
 
+def interpret_assembled(
+    scenario: dict[str, Any],
+    records: list[dict[str, Any]],
+    client: InterpretClient,
+    log: errlog.ErrorLog,
+    *,
+    max_attempts: int = MAX_ATTEMPTS,
+) -> dict[str, Any]:
+    """모델에게 **고르게만** 하고 findings 는 파이썬이 조립한다.
+
+    ``interpret`` 과 무엇이 다른가.
+
+    .. code-block:: text
+
+        interpret            모델이 문장·claims·타임라인을 전부 쓴다
+        interpret_assembled  모델은 {ref, 기법, 사유, 근거 필드}만 고른다
+
+    **실패 처리가 갈린다.** 이 경로에는 두 가지 실패가 있고 성질이 반대다.
+
+    - ``SelectionError`` — 모델이 그 레코드에 없는 필드를 근거로 지목했다.
+      **모델 잘못이라 다시 물어보면 고쳐질 수 있다.** 피드백을 주고 재시도.
+    - ``AssemblyError`` — 조립기가 자기 일을 못 했다. **우리 잘못이라 같은
+      코드가 같은 입력으로 같은 답을 낸다.** 재시도하면 모델을 세 번 더
+      부르고 똑같이 죽으므로 한 번에 중단한다.
+
+    이 갈림이 없으면 우리 버그가 모델 호출 세 번을 태우고, 그 실패가
+    ``claim_validation`` 으로 쌓여 환각 통계를 오염시킨다.
+
+    **claim 관문(``validate_model_claims``)은 여기서도 돈다.** 다만 뜻이
+    다르다 — claims 를 파이썬이 원본에서 복사했으므로 통과는 항등식이고,
+    실패는 **조립기의 버그**다. 그래서 이 경로에서는 그 실패도
+    ``AssemblyError`` 로 다룬다. 공짜로 얻는 회귀 점검이라 끄지 않는다.
+    """
+    case_id = scenario["case_id"]
+    generator = io.make_generator("interpret.py", client.name)
+    by_ref = {record["ref"]: record for record in records}
+    input_refs = list(by_ref)
+    feedback: str | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            picked = client.propose_selection(scenario, records, feedback)
+            body = assembly.assemble_body(picked, by_ref)
+            findings = build_findings(body, case_id, generator, input_refs)
+            schema.validate(findings, "findings")
+            try:
+                validate_model_claims(findings, records)
+            except ClaimValidationError as e:
+                # 이 경로의 claims 는 우리가 만들었다. 불일치는 모델이 아니라
+                # 조립기의 버그다 — 위 설명 참조.
+                raise assembly.AssemblyError(
+                    f"조립한 claim 이 원본과 어긋난다: {e}"
+                ) from e
+            return findings
+
+        except assembly.AssemblyError as e:
+            log.abort(STAGE, "assembly_error", {"message": str(e)})
+
+        except assembly.SelectionError as e:
+            detail: dict[str, Any] = {"message": str(e)}
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "claim_validation", detail, action="retry", attempt=attempt)
+            feedback = (
+                "이전 응답의 evidence_fields 가 그 레코드와 맞지 않습니다.\n"
+                f"{e}\n"
+                "각 레코드에 **실제로 있는** 필드 이름만 적으십시오."
+            )
+
+        except llm.MalformedOutput as e:
+            detail = {"message": str(e)}
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "malformed_output", detail, action="retry", attempt=attempt)
+            feedback = f"응답에서 JSON을 찾지 못했습니다: {e}"
+
+        except llm.LLMTimeout as e:
+            log.record(STAGE, "timeout", {"message": str(e)}, action="retry", attempt=attempt)
+            feedback = None
+
+        except llm.LLMError as e:
+            # 02단계와 같은 이유로 재시도하지 않는다 — 모델명 오타·서버
+            # 미기동은 세 번 불러도 같은 답이다.
+            log.abort(STAGE, "llm_error", {"message": str(e)})
+
+        except schema.SchemaViolation as violation:
+            detail = violation.as_detail()
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "schema_violation", detail, action="retry", attempt=attempt)
+            feedback = f"{violation.field}: {violation.message}"
+
+    log.abort(
+        STAGE,
+        "schema_violation",
+        {
+            "field": "<retries>",
+            "message": (
+                f"{max_attempts}회 재시도 후에도 쓸 수 있는 선별을 받지 못함. "
+                f"모델 응답 원문은 {log.path.parent}/{STAGE}_raw_attempt*.txt 에 있다"
+            ),
+        },
+    )
+
+
 def _parse_args(
     argv: "list[str] | None" = None,
 ) -> argparse.Namespace:
@@ -619,11 +728,26 @@ def _parse_args(
     )
 
     parser.add_argument(
+        "--mode",
+        choices=["model", "assemble"],
+        default="model",
+        help=(
+            "누가 findings 를 쓰는가. 기본 %(default)s. "
+            "model 은 모델이 문장·claims·타임라인을 전부 쓰고, "
+            "assemble 은 모델이 {ref, 기법, 사유, 근거 필드}만 고르고 "
+            "파이썬이 원본에서 조립한다. **폴백이 아니라 측정용 스위치다** — "
+            "같은 케이스를 두 경로로 돌려야 무엇이 달라졌는지 말할 수 있다 "
+            "(--no-constrain 과 같은 규약)"
+        ),
+    )
+    parser.add_argument(
         "--reserve-output-tokens",
         type=int,
-        default=allocation.RESERVE_FINDINGS_TOKENS,
+        default=None,
         help=(
-            "모델이 답을 쓸 자리로 남겨 둘 토큰. 기본 %(default)s. "
+            "모델이 답을 쓸 자리로 남겨 둘 토큰. 생략하면 --mode 가 정한다 "
+            f"(model {allocation.RESERVE_FINDINGS_TOKENS}, "
+            f"assemble {allocation.RESERVE_SELECTION_TOKENS}). "
             "프롬프트가 창을 꽉 채우면 응답이 잘려 malformed_output 으로 온다. "
             "**이 값은 num_predict 로도 그대로 나간다** — "
             "자리를 비워 두는 것과 그만큼만 쓰게 하는 것이 "
@@ -676,6 +800,18 @@ def main(
     io.configure_console()
 
     args = _parse_args(argv)
+
+    # **질의 종류가 예산을 정한다.** 선별 질의는 ref 와 한 줄 사유만 내므로
+    # 답 쓸 자리가 소견 질의의 4분의 1이다. 큰 쪽에 맞춰 두면 작은 질의가
+    # 쓰지도 않을 자리를 창에서 떼어 가고, 창이 좁을수록 그 낭비가 곧
+    # 레코드 수다. 사용자가 직접 준 값은 그대로 존중한다.
+    assembled = args.mode == "assemble"
+    if args.reserve_output_tokens is None:
+        args.reserve_output_tokens = (
+            allocation.RESERVE_SELECTION_TOKENS
+            if assembled
+            else allocation.RESERVE_FINDINGS_TOKENS
+        )
 
     out_path = Path(args.out)
 
@@ -841,7 +977,14 @@ def main(
     )
     # 프롬프트의 고정 부분을 **실제로 조립해서** 잰다. 아래 요약에서 한 번
     # 더 쓰므로 이름을 붙여 둔다 — 두 번 재면 두 값이 갈라질 수 있다.
-    overhead_chars = client.prompt_overhead_chars(scenario)
+    # **질의 종류마다 다르다.** 선별 질의의 시스템 프롬프트가 더 짧다.
+    # 한쪽 값으로 두 질의의 예산을 잡으면 그 차이만큼 레코드가 덜
+    # 실리거나 프롬프트가 창을 넘는다.
+    overhead_chars = (
+        client.selection_overhead_chars(scenario)
+        if assembled
+        else client.prompt_overhead_chars(scenario)
+    )
 
     budget_chars = allocation.char_budget(
         args.num_ctx,
@@ -894,7 +1037,8 @@ def main(
             },
         )
 
-    findings = interpret(
+    run = interpret_assembled if assembled else interpret
+    findings = run(
         scenario,
         records,
         client,
