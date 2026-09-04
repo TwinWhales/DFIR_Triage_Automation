@@ -631,6 +631,14 @@
 </main>
 
 
+<!--
+  Evidence Ref 접두어. src/common/refs.py 가 원본이고 ui/evidence_refs.py
+  가 유도해 여기까지 실어 온다 — report.js 에 목록을 적지 않는다.
+-->
+<script>
+    window.EVIDENCE_REF_PREFIXES = {{ ref_prefixes | tojson }};
+</script>
+
 <script src="/static/js/report.js"></script>
 <script src="/static/js/app.js"></script>
 

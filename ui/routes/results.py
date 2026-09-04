@@ -6,6 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from ui.evidence_refs import EVIDENCE_FILES
+
 
 router = APIRouter(
     prefix="/api/results",
@@ -15,16 +17,6 @@ router = APIRouter(
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CASES_DIR = PROJECT_ROOT / "cases"
-
-
-# Evidence Ref prefix → Stage 04 JSONL 파일
-EVIDENCE_FILES = {
-    "USN": "usnjrnl.jsonl",
-    "REG-SYS": "registry_system.jsonl",
-
-    # 추후 $MFT 파서가 추가되면 자동으로 사용할 수 있도록 예약
-    "MFT": "mft.jsonl",
-}
 
 
 def _case_dir(case_id: str) -> Path:
@@ -307,10 +299,9 @@ async def get_evidence(
     Evidence Ref를 이용하여
     Stage 04 원본 레코드를 조회한다.
 
-    지원 Ref:
-        USN#...
-        REG-SYS#...
-        MFT#...      (추후 mft.jsonl 생성 시 사용)
+    지원 Ref는 ``ui/evidence_refs.py`` 가 ``src/common/refs.py`` 에서
+    유도한다 — 여기 목록을 적지 않는다. 04단계가 만드는 아티팩트가
+    늘면 함께 늘어난다.
     """
 
     case_dir = _case_dir(case_id)

@@ -1,9 +1,15 @@
 from __future__ import annotations
 
-import tkinter as tk
-from tkinter import filedialog
+from ui.tcl_paths import ensure_tcl_library
 
-from fastapi import APIRouter, HTTPException
+# tkinter 를 들이기 전에 Tcl 경로를 맞춘다. venv 에서는 이것이 없으면
+# ``Tk()`` 가 ``Can't find a usable init.tcl`` 로 죽는다 — ui/tcl_paths.py.
+ensure_tcl_library()
+
+import tkinter as tk  # noqa: E402  (위 경로 설정 뒤에 와야 한다)
+from tkinter import filedialog  # noqa: E402
+
+from fastapi import APIRouter, HTTPException  # noqa: E402
 
 
 router = APIRouter(

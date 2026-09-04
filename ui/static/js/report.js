@@ -3,12 +3,55 @@ window.ReportRenderer = (() => {
     /*
      * 지원 Evidence Reference
      *
-     * USN#503461160
-     * REG-SYS#9735092
-     * MFT#12345
+     * 접두어 목록을 여기 적지 않는다. src/common/refs.py 가 원본이고,
+     * ui/evidence_refs.py 를 거쳐 index.html 이 실어 보낸다. 손으로
+     * 적었을 때 3종만 있어서 EVTX-SEC#... 이 눌리지 않았다.
+     *
+     * 예: MFT#12345 · USN#503461160 · EVTX-SEC#40912 · SYSMON#8817
+     */
+    const REF_PREFIXES =
+        Array.isArray(window.EVIDENCE_REF_PREFIXES)
+            ? window.EVIDENCE_REF_PREFIXES
+            : [];
+
+
+    if (!REF_PREFIXES.length) {
+        // 폴백을 두지 않는다. 여기서 임의의 목록을 되살리면 서버가 보낸
+        // 것과 어긋난 채로 일부만 눌리는, 방금 고친 그 상태가 된다.
+        console.error(
+            "[8vidence] Evidence Ref 접두어를 받지 못했습니다. " +
+            "index.html 의 EVIDENCE_REF_PREFIXES 를 확인하십시오. " +
+            "보고서의 ref 는 눌리지 않습니다."
+        );
+    }
+
+
+    function escapeRegExp(value) {
+        return value.replace(
+            /[.*+?^${}()|[\]\\-]/g,
+            "\\$&"
+        );
+    }
+
+
+    /*
+     * 접두어는 긴 것부터 온다 (ui/evidence_refs.py). 교대는 왼쪽부터
+     * 맞춰 보므로 순서를 다시 정렬하면 안 된다.
+     *
+     * 뒤쪽 \b 를 쓰지 않는 이유: ref 값은 '.' 이나 ':' 로 끝날 수 있고
+     * 그것은 단어 경계가 아니라, \b 를 붙이면 그런 ref 가 통째로 빠진다.
      */
     const EVIDENCE_REF_PATTERN =
-        /\b(?:REG-SYS|USN|MFT)#[A-Za-z0-9._:-]+\b/g;
+        REF_PREFIXES.length
+            ? new RegExp(
+                "\\b(?:" +
+                REF_PREFIXES
+                    .map(escapeRegExp)
+                    .join("|") +
+                ")#[A-Za-z0-9._:-]+",
+                "g"
+            )
+            : null;
 
 
     // ------------------------------------------------------------
@@ -30,6 +73,10 @@ window.ReportRenderer = (() => {
     // ------------------------------------------------------------
 
     function renderEvidenceRefs(value) {
+        if (!EVIDENCE_REF_PATTERN) {
+            return value;
+        }
+
         return value.replace(
             EVIDENCE_REF_PATTERN,
             (ref) => {
