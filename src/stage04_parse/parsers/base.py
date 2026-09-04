@@ -26,13 +26,69 @@
 
 from __future__ import annotations
 
+import fnmatch
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, BinaryIO, Iterator, Protocol
 
 from ...common.io import normalize_path, parse_timestamp
 
-__all__ = ["Scope", "Parser", "ParseError"]
+__all__ = [
+    "Scope",
+    "Parser",
+    "ParseError",
+    "path_in_prefix",
+    "path_leads_to_prefix",
+]
+
+
+def _segments_lead(path_parts: list[str], prefix_parts: list[str]) -> bool:
+    """짧은 쪽 길이만큼 세그먼트가 앞에서부터 맞는가.
+
+    ``zip`` 이 짧은 쪽에서 멈추는 것을 그대로 쓴다. 경로가 더 길면
+    "범위 안", 접두어가 더 길면 "범위로 내려가는 길목"이 된다 — 두 판정이
+    같은 비교를 쓰므로 갈라질 수 없다.
+    """
+    return all(
+        fnmatch.fnmatchcase(actual, expected)
+        for actual, expected in zip(path_parts, prefix_parts)
+    )
+
+
+def path_in_prefix(path: str, prefix: str) -> bool:
+    r"""정규화된 경로가 접두어 범위 안인가.
+
+    ``*`` 는 **세그먼트 하나 안에서만** 확장된다. 매핑이
+    ``C:\Users\*\AppData\Local\Temp`` 라고 적으면 사용자 이름 자리만
+    비워 둔 것이지 ``AppData`` 아래 전부를 뜻하지 않는다. 구분자를 넘는
+    ``**`` 는 로드 시점에 거부한다(``mapping_loader``).
+
+    두 인자 모두 ``normalize_path`` 를 이미 거친 값이어야 한다. 부르는
+    쪽이 접두어 여럿을 도는 동안 경로를 한 번만 정규화하기 위해서다.
+    """
+    if "*" not in prefix:
+        # 와일드카드가 없으면 뜻이 같고 훨씬 빠르다. 49MB 하이브를 걷는
+        # 동안 키마다 부르는 자리라 이 분기가 그대로 시간이 된다.
+        return path == prefix or path.startswith(prefix + "/")
+    path_parts = path.split("/")
+    prefix_parts = prefix.split("/")
+    if len(path_parts) < len(prefix_parts):
+        return False
+    return _segments_lead(path_parts, prefix_parts)
+
+
+def path_leads_to_prefix(path: str, prefix: str) -> bool:
+    """이 경로를 더 내려가면 접두어에 닿을 수 있는가.
+
+    가지치기용입니다. 범위 안인지는 보지 않고 **길목인지만** 봅니다.
+    """
+    if "*" not in prefix:
+        return prefix.startswith(path + "/")
+    path_parts = path.split("/")
+    prefix_parts = prefix.split("/")
+    if len(prefix_parts) <= len(path_parts):
+        return False
+    return _segments_lead(path_parts, prefix_parts)
 
 
 class ParseError(Exception):
@@ -83,10 +139,7 @@ class Scope:
         if not self.path_prefix:
             return True
         normalized = normalize_path(path)
-        return any(
-            normalized == prefix or normalized.startswith(prefix + "/")
-            for prefix in self.path_prefix
-        )
+        return any(path_in_prefix(normalized, prefix) for prefix in self.path_prefix)
 
     def matches_extension(self, path: str) -> bool:
         if not self.extensions:

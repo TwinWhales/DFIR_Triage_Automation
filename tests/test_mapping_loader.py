@@ -678,3 +678,53 @@ def test_every_shipped_mapping_only_uses_known_keys(mappings):
     ``load_all`` 이라 로드 자체가 실패한다.
     """
     assert mappings
+
+
+# ================================================== path_prefix 의 glob
+
+
+def _mapping_with_prefix(tmp_path: Path, prefix: str) -> Path:
+    return _write_mapping(
+        tmp_path,
+        {
+            "technique": "T1505.003",
+            "artifacts": [
+                {
+                    "name": "$MFT",
+                    "tier": 1,
+                    "rationale": "x",
+                    "scope_template": {"path_prefix": [prefix]},
+                }
+            ],
+        },
+        "T1505.003.yaml",
+    )
+
+
+@pytest.mark.parametrize(
+    "prefix, message",
+    [
+        (r"C:\Users\?\AppData", "한 글자"),
+        (r"C:\Users\**\Temp", "재귀 glob"),
+        (r"C:\Users\[ab]\Temp", "문자 클래스"),
+    ],
+)
+def test_unsupported_glob_in_path_prefix_is_refused(tmp_path, catalog, prefix, message):
+    # 04단계는 이것들을 **글자 그대로** 읽는다. 물음표가 든 경로는 없으니
+    # 결과는 조용한 0건이고, 0건은 "그 범위에 흔적이 없었다"로 보고된다.
+    # 증거를 놓친 것과 구별이 안 되므로 로드에서 멈춘다.
+    with pytest.raises(mapping_loader.MappingError, match=message):
+        mapping_loader.load_mapping(_mapping_with_prefix(tmp_path, prefix), catalog)
+
+
+def test_a_single_star_is_accepted(tmp_path, catalog):
+    # `*` 하나는 04단계가 세그먼트 하나로 확장한다(`parsers.base.path_in_prefix`).
+    prefix = r"C:\Users\*\AppData\Local\Temp"
+    mapping = mapping_loader.load_mapping(_mapping_with_prefix(tmp_path, prefix), catalog)
+    assert mapping.requests[0].scope_template["path_prefix"] == [prefix]
+
+
+def test_the_shipped_mappings_load(catalog):
+    # 실제 `mappings/` 가 이 관문을 통과해야 한다. `T1105`·`T1059.001` 이
+    # `*` 를 쓴다.
+    assert mapping_loader.load_all(MAPPINGS, "windows", catalog)

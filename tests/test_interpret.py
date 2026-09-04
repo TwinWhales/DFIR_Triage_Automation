@@ -898,3 +898,27 @@ def test_an_explicit_window_wins_over_the_mode_default(monkeypatch, tmp_path):
 
     assert captured["num_ctx"] == 16384
 
+
+
+# ============================================ 프롬프트 예시가 새지 않는가
+
+
+def test_prompt_examples_are_templates_not_sentences():
+    """`좋음:` 예시는 **빈칸이 있는 형태**여야 한다.
+
+    완성된 서술문을 예시로 두면 모델이 그대로 옮겨 적는다. 실측:
+    `reduce_system.txt` 의 "임시 폴더에 떨어진 실행 파일이 3분 뒤 실행되고
+    외부로 접속했다" 가 K-LIVE-0902-wide(USB 시나리오)의 소견 F4 에 거의
+    글자 그대로 실렸다 — 06단계는 claims 만 대조하므로 잡지 못한다.
+    """
+    from src.stage05_interpret.llm_client import PROMPT_DIR
+
+    for prompt in sorted(PROMPT_DIR.glob("*.txt")):
+        for number, line in enumerate(prompt.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if not stripped.startswith("- 좋음:"):
+                continue
+            assert "<" in stripped and ">" in stripped, (
+                f"{prompt.name}:{number} 의 좋음 예시에 빈칸(<...>)이 없다 — "
+                f"완성된 문장은 소견으로 새어 나간다: {stripped}"
+            )
