@@ -489,3 +489,32 @@ def test_cli_aborts_on_a_schema_violating_input(tmp_path):
         )
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
     assert logged[0]["type"] == "schema_violation"
+
+
+def test_the_report_pairs_each_technique_with_its_evidence_quote():
+    """기법 옆에 02단계가 근거로 삼은 구간이 실린다.
+
+    **오배정을 기계가 판정하지 않는 대신 사람에게 보인다.** 어느 절이 어느
+    기법이어야 하는지를 아는 표를 두면 그 표가 곧 분석이 되어 02단계를
+    대체한다(`work.md` 11번). 그래서 나란히 놓기만 한다.
+
+    실측(`K-LIVE-0902-wide` 3차, 2026-09-04): `계정 관련 변경이` 가
+    `T1543.003`(Windows Service 생성)에 붙었는데, 기법 ID 만 인쇄하던
+    때에는 보고서 어디에도 드러나지 않았다.
+    """
+    scenario = io.read_json(FIXTURES / "02_scenario.json")
+    context = report_mod.build_context(
+        io.read_json(GOLDEN / "06_verified.json"),
+        io.read_json(FIXTURES / "05_findings.json"),
+        io.read_json(GOLDEN / "03_selection.json"),
+        manifest=io.read_json(FIXTURES / "04_parsed" / "_manifest.json"),
+        scenario=scenario,
+    )
+    pairs = {item["id"]: item["evidence_text"] for item in context["technique_evidence"]}
+    assert pairs, "기법-근거 쌍이 비었다"
+    for technique in scenario["techniques"]:
+        assert pairs[technique["id"]] == technique["evidence_text"]
+
+    rendered = report_mod.render(context)
+    for technique in scenario["techniques"]:
+        assert technique["evidence_text"] in rendered
