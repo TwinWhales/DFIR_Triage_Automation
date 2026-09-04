@@ -8,6 +8,10 @@
 # 배선만 확인할 때 쓴다. 프롬프트 조립·응답 파싱·스키마 검증·재시도까지
 # 실제 경로를 그대로 지나가고 네트워크 호출만 대체된다.
 #
+# MODE=assemble 이면 05단계가 다른 파일을 재생한다 — 05_findings.json 이
+# 아니라 05_selection.json 이다. 질의 모양이 다르기 때문이다(모델이 문장을
+# 쓰는 대신 고르기만 한다).
+#
 #   ./run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 #       benchmark/fixtures/C-001-webshell
 #
@@ -38,13 +42,26 @@
 #   MODEL=qwen2.5:14b NUM_CTX=32768 TIMEOUT=900 TEMPERATURE=0.3 \
 #   VOLUME=1 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh K-001 evidence/x.001
 #
+# 조립 경로로 돌리려면(창이 좁아도 더 많이 본다):
+#
+#   MODE=assemble MODEL=qwen2.5:7b TIMEOUT=900 LIMIT=200 MAX_CHUNKS=8 \
+#   VOLUME=1 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh K-001 evidence/x.001
+#
 # **MODEL 은 필수다.** 단계에도 기본값이 있지만 여기서는 받지 않는다 —
 # 산출물의 generator 필드가 "어느 모델로 돌린 결과인가"를 들고 있어야
 # 모델별 비교가 성립하는데(io.make_generator), 기본값에 기대면 그 값이
 # 실행한 사람의 기계 사정에 좌우된다.
 #
 #   MODEL       ollama 모델명 (필수). `ollama list` 의 이름 그대로
-#   NUM_CTX     컨텍스트 창. 기본값은 단계가 정한다(32768)
+#   MODE        05단계가 findings 를 만드는 방식. model|assemble, 기본 model
+#               model    — 모델이 문장·claims·타임라인을 전부 쓴다
+#               assemble — 모델은 {ref, 기법, 사유, 근거 필드}만 고르고 파이썬이
+#                          원본에서 조립한다. 질의를 조각으로 나눠 보내므로
+#                          창 하나에 들어가는 것보다 많이 본다
+#   NUM_CTX     컨텍스트 창. 안 주면 **MODE 가 정한다** (model 32768,
+#               assemble 8192). 조립 경로는 나눠 보내므로 좁아도 된다
+#   MAX_CHUNKS  MODE=assemble 에서 질의를 몇 번까지 나눌 것인가. 기본 8.
+#               **이 값이 커버리지의 상한이다** — LIMIT 과 함께 올려야 는다
 #   TIMEOUT     한 번 호출의 상한(초). 60GB 급에서 120초는 부족하다는 실측이 있다
 #   TEMPERATURE 0 이면 재시도가 같은 답을 반복한다. 실측에서 존재하지 않는
 #               하위기법을 다섯 번 연속 냈다(docs/limitations.md 5장 ⑤)
@@ -69,10 +86,32 @@ else
   PARSE_VOLUME=()
 fi
 
+MODE="${MODE:-model}"
+if [[ "$MODE" != "model" && "$MODE" != "assemble" ]]; then
+  echo "MODE 는 model 또는 assemble 이다 (받은 값: $MODE)" >&2
+  exit 2
+fi
+
+# --mode 는 05단계에만 있다. 02단계에 붙이면 argparse 가 거부한다.
+INTERPRET_MODE=(--mode "$MODE")
+
 if [[ -n "$REPLAY" ]]; then
   NORMALIZE_LLM=(--llm stub --replay "$REPLAY/02_scenario.json")
-  INTERPRET_LLM=(--llm stub --replay "$REPLAY/05_findings.json")
-  echo "== 스텁 모드: $REPLAY (실제 추론 없음) =="
+  # 질의 모양이 다르므로 재생할 파일도 다르다. 조립 경로의 스텁 응답은
+  # 선별(suspicious_records)과 종합(connections)을 한 파일에 담는다 —
+  # StubBackend 가 호출마다 같은 파일을 돌려주기 때문이다.
+  if [[ "$MODE" == "assemble" ]]; then
+    REPLAY_05="$REPLAY/05_selection.json"
+  else
+    REPLAY_05="$REPLAY/05_findings.json"
+  fi
+  if [[ ! -f "$REPLAY_05" ]]; then
+    echo "MODE=$MODE 의 스텁 응답이 없다: $REPLAY_05" >&2
+    echo "  조립 경로는 05_selection.json 을, 기본 경로는 05_findings.json 을 쓴다." >&2
+    exit 2
+  fi
+  INTERPRET_LLM=(--llm stub --replay "$REPLAY_05")
+  echo "== 스텁 모드: $REPLAY (실제 추론 없음, mode=$MODE) =="
 else
   if [[ -z "${MODEL:-}" ]]; then
     echo "MODEL 이 필요하다 — 실제 모델로 돌리려면 모델명을 준다." >&2
@@ -94,8 +133,9 @@ else
   INTERPRET_LLM=("${COMMON_LLM[@]}")
   # --limit 은 05단계에만 있다. 02단계에 붙이면 argparse 가 거부한다.
   [[ -n "${LIMIT:-}" ]] && INTERPRET_LLM+=(--limit "$LIMIT")
+  [[ -n "${MAX_CHUNKS:-}" ]] && INTERPRET_LLM+=(--max-chunks "$MAX_CHUNKS")
 
-  echo "== 실제 모델: $MODEL${NUM_CTX:+ (num_ctx $NUM_CTX)} =="
+  echo "== 실제 모델: $MODEL${NUM_CTX:+ (num_ctx $NUM_CTX)}  (mode=$MODE) =="
   if [[ -z "${TEMPERATURE:-}" ]]; then
     # 조용히 0 으로 도는 것이 함정이라 여기서 말한다. 실측 근거는 위 주석에.
     echo "   temperature 를 안 줬다 — 0 이면 재시도가 같은 답을 반복한다"
@@ -119,7 +159,7 @@ echo "== 05 해석 =="
 $PY -m src.stage05_interpret.interpret \
     --in "$C/04_parsed/" --scenario "$C/02_scenario.json" \
     --selection "$C/03_selection.json" \
-    --out "$C/05_findings.json" "${INTERPRET_LLM[@]}"
+    --out "$C/05_findings.json" "${INTERPRET_MODE[@]}" "${INTERPRET_LLM[@]}"
 
 echo "== 06 검증 =="
 $PY -m src.stage06_verify.verify \
