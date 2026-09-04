@@ -42,6 +42,7 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, schema
+from ..stage03_select import mapping_loader
 from . import checkers
 
 __all__ = ["verify", "load_records", "judged_rate", "format_rate", "main"]
@@ -59,12 +60,67 @@ DuplicateRefError = io.DuplicateRefError
 load_records = io.read_parsed_records
 
 
+def technique_artifacts(mappings_dir: "str | Path") -> dict[str, frozenset[str]]:
+    """기법 → 그 기법의 근거로 매핑에 등재된 아티팩트 이름.
+
+    ``mappings/*/T*.yaml`` 의 ``artifacts:`` 를 그대로 뒤집은 표입니다.
+    **새 판단 기준을 만드는 것이 아닙니다** — 03단계가 이 표로 선별하고,
+    06단계가 같은 표로 "그 증거로 그 기법을 말했는가"를 봅니다.
+
+    **키는 요청 자신의 기법입니다.** ``Mapping.requests`` 에는 그 파일의
+    ``artifacts:`` 와 ``followups:`` 가 함께 들어 있는데, ``followups`` 는
+    **자기 ``technique`` 을 따로 갖습니다** — "웹셸 다음에 관행적으로 함께
+    보는 것"이라 파일은 T1505.003 인데 항목은 T1543.003 입니다. 파일 키로
+    묶으면 T1505.003 이 ``evtx:System`` 을 자기 근거로 인정하게 되고,
+    그것은 다른 기법의 근거입니다(2026-09-03 에 고쳤습니다).
+
+    **OS 를 가리지 않고 합집합으로 읽습니다.** 05단계 산출물에는 대상 OS 가
+    없고(시나리오에 있습니다), 같은 기법 번호라도 OS 마다 근거 아티팩트가
+    다릅니다. 합치면 판정이 느슨해지는 쪽인데, 이 자리에서는 그쪽이 안전한
+    방향입니다 — 판정할 수 없는 것을 기각하면 환각률이 실제 환각이 아니라
+    우리 설정을 셉니다(``benchmark/validator_check.py``).
+
+    **이 표는 "어디를 수집할까"의 목록입니다.** 03단계가 그 뜻으로 쓰고,
+    06단계가 뒤집어 "이 기법을 이 증거로 말할 수 있나"로 씁니다. 방향이
+    다르므로 **목록에 없다고 근거가 아닌 것은 아닙니다** — 파서가 있는 것만,
+    작성자가 생각한 것만 들어 있는 부분집합입니다. 그래서 기각 사유에
+    ``also_supports`` 를 함께 실어, 매핑 미비인지 기법 오지정인지 사람이
+    가를 수 있게 합니다(``docs/limitations.md``).
+
+    **못 읽으면 빈 표를 냅니다.** 그러면 ``technique_supported`` 가 아무것도
+    기각하지 않습니다. 이 단계는 매핑이 없어도 돌아야 하는 결정론적 구간이라,
+    표가 없다고 멈추면 04단계 산출물만으로 검증하던 경로가 막힙니다.
+    """
+    directory = Path(mappings_dir)
+    if not directory.is_dir():
+        return {}
+
+    try:
+        catalog = mapping_loader.load_catalog(directory)
+    except (mapping_loader.MappingError, OSError):
+        return {}
+
+    table: dict[str, set[str]] = {}
+    for os_dir in sorted(p.name for p in directory.iterdir() if p.is_dir()):
+        try:
+            loaded = mapping_loader.load_all(directory, os_dir, catalog)
+        except (mapping_loader.MappingError, OSError):
+            continue
+        for mapping in loaded.values():
+            for request in mapping.requests:
+                # 파일의 기법이 아니라 **요청 자신의 기법**으로 묶는다.
+                # followups 는 다른 기법의 것이다 — 위 설명 참조.
+                table.setdefault(request.technique, set()).add(request.artifact)
+    return {technique: frozenset(names) for technique, names in table.items()}
+
+
 def verify(
     findings_doc: dict[str, Any],
     records: dict[str, dict[str, Any]],
     *,
     checker_names: "list[str] | None" = None,
     tolerance_seconds: float = DEFAULT_TOLERANCE_SECONDS,
+    supported_artifacts: "dict[str, frozenset[str]] | None" = None,
     generator: str = "verify.py",
 ) -> dict[str, Any]:
     """판정을 수행하고 ``06_verified.json`` 문서를 만든다.
@@ -77,6 +133,7 @@ def verify(
         records=records,
         input_refs=frozenset(findings_doc.get("input_refs", [])),
         tolerance_seconds=tolerance_seconds,
+        technique_artifacts=supported_artifacts or {},
     )
 
     passed: list[dict[str, Any]] = []
@@ -181,6 +238,15 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--mappings",
+        default="mappings",
+        help=(
+            "매핑 디렉터리. 기법마다 어느 아티팩트가 근거인지 읽어 "
+            "technique_supported 가 쓴다. 기본 %(default)s. "
+            "없거나 못 읽으면 그 체커는 아무것도 기각하지 않는다"
+        ),
+    )
+    parser.add_argument(
         "--tolerance-seconds",
         type=float,
         default=DEFAULT_TOLERANCE_SECONDS,
@@ -233,11 +299,23 @@ def main(argv: "list[str] | None" = None) -> int:
             {"message": f"파싱 결과가 비어 있음: {args.parsed}. 04단계를 먼저 실행한다."},
         )
 
+    supported = technique_artifacts(args.mappings)
+    if not supported:
+        # 조용히 넘어가면 technique_supported 가 아무것도 안 잡는데 통과율만
+        # 올라가고, 그것을 성능으로 읽게 된다. 실패는 아니므로 멈추지는
+        # 않지만 말은 한다.
+        print(
+            f"[{STAGE}] 경고: {args.mappings} 에서 기법-아티팩트 표를 읽지 못했습니다. "
+            "technique_supported 가 아무것도 기각하지 않습니다.",
+            file=sys.stderr,
+        )
+
     verified = verify(
         findings_doc,
         records,
         checker_names=checker_names,
         tolerance_seconds=args.tolerance_seconds,
+        supported_artifacts=supported,
     )
 
     # 출력 검증

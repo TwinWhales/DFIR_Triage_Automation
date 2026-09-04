@@ -2192,3 +2192,161 @@ A=evidence/KAPE_Results/KIOSK_snapshotA_20260831T094536/C
 
 **`--volume` 을 주지 않습니다.** KAPE 수집물이라 `<수집폴더>/C` 가 볼륨
 루트입니다.
+
+
+## 2026-09-03 · 프롬프트 필드 다이어트 — 아티팩트별 절감량
+
+`mappings/_flags.yaml` 의 `prompt_drop_fields` 를 넣으면서 잰 값이다.
+**아티팩트별로 남기는 이유가 있다** — 나중에 "`Company` 를 지워서 놓친
+건가"를 되짚으려면 어느 아티팩트가 무엇을 잃었는지가 있어야 한다.
+
+대상: `K-LIVE-0902-wide` 의 04 산출물 9,829건. 레코드 하나가 프롬프트에서
+차지하는 글자 수(`allocation.record_chars`, 목록 절단 20개 적용 후)의 평균.
+
+| 아티팩트 | 건수 | 전 | 후 | 절감 |
+|---|---|---|---|---|
+| `evtx:Sysmon` | 9,606 | 1,043자 | 790자 | **25%** |
+| `prefetch` | 192 | 1,789자 | 1,789자 | 0% |
+| `evtx:Security` | 31 | 774자 | 774자 | 0% |
+| 전체 | 9,829 | 1,057자 | 809자 | **24%** |
+
+**절감은 전부 Sysmon 에서 나온다.** 뺀 이름들이 Sysmon 이벤트의 필드이기
+때문이고, 다른 아티팩트는 그 이름을 애초에 갖고 있지 않다.
+
+`evtx:Sysmon` 안에서 필드별 몫(전체 10,016,421자 대비):
+
+```
+TargetFilename    813,796자  8.1%   ← 남긴다 (파일 생성 경로)
+Hashes            591,201자  5.9%   ← 뺀다
+ProcessGuid       547,542자  5.5%   ← 뺀다
+Image             540,529자  5.4%   ← 남긴다
+CommandLine       501,229자  5.0%   ← 남긴다
+Provider          384,240자  3.8%   ← 남긴다
+UtcTime           365,028자  3.6%   ← 남긴다
+ParentCommandLine 339,911자  3.4%   ← 남긴다
+User              312,656자  3.1%   ← 남긴다
+ParentProcessGuid 228,501자  2.3%   ← 뺀다
+LogonGuid         199,485자  2.0%   ← 뺀다
+FileVersion       188,898자  1.9%   ← 뺀다
+```
+
+**`prefetch` 는 이 목록으로 줄지 않는다.** `loaded_files` 하나가 그
+아티팩트 전체의 **89.7%**(1,187,394 / 1,323,145자)라, 프리패치 쪽을 줄이는
+것은 `MAX_LIST_ITEMS` 와 `prompt_keep_paths` 의 일이다. 필드를 빼는 것으로는
+손댈 자리가 없다.
+
+**남긴 것에도 이유가 있다.** `UtcTime` 은 최상위 `timestamp` 와 값이 다를
+수 있어(이벤트 시각 대 기록 시각) 중복으로 보고 빼지 않았다. `Provider` 는
+2026-08-31 A/B 에서 06 을 통과한 소견 하나가 실제로 인용한 필드다.
+`IntegrityLevel`·`LogonId` 는 권한과 세션을 가르는 판정에 쓰인다.
+
+**효과(같은 케이스, 같은 창).** 32,768 창에서 전달 레코드가 **54건 → 58건**
+이 됐다. 창을 그대로 두고 증거를 더 싣는 쪽으로 먼저 쓴 것이고, 창을
+좁히는 것은 분할 질의가 들어온 뒤다(`work.md` 9-3).
+
+
+## 2026-09-03 · `unexpected_parent_process` — 오탐 넷 중 셋이 한 구조였다
+
+`K-LIVE-0902-wide`(`evtx:Sysmon` 9,606건)에서 이 flag 가 **258건** 붙었다.
+부모 이름만 보는 룰이라 브라우저의 자기 자식이 통째로 걸려 있었다.
+
+| | 건수 | 비중 |
+|---|---|---|
+| `Image == ParentImage` (msedge → msedge) | 157 | 60% |
+| 자식이 부모 전용 디렉터리 하위 (msedge → identity_helper) | 36 | 14% |
+| 남는 것 | 65 | 25% |
+
+`parent_is_another_program` handler 를 붙여 **258건 → 65건(74% 제외)**.
+`evtx:Sysmon` 의 신호 레코드는 6,358건 → 6,165건이고, 이 flag 가 유일한
+신호였던 193건이 05단계 후보에서 빠진다.
+
+**이름이 아니라 관계로 본다.** 특정 프로그램을 아는 것이 아니라 두 필드가
+서로 어떤 관계인지만 보므로, Edge 말고 다른 다중 프로세스 프로그램도 함께
+걸러진다. 화이트리스트 역탐지를 넣지 않기로 한 판단(`docs/limitations.md`)과
+부딪히지 않는 이유가 이것이다.
+
+**공유 설치 자리 예외가 없으면 신호를 지운다.** 부모가
+`C:\Windows\explorer.exe` 이면 `System32` 전체가 "부모 디렉터리 하위"라
+아래 것들이 함께 사라진다. 이 룰이 잡으라고 있는 바로 그것이다.
+
+```
+남는 65건 (handler 적용 후)
+   11  explorer.exe -> msedge.exe
+    9  explorer.exe -> cmd.exe               ← 지우면 안 되는 것
+    6  userinit.exe -> explorer.exe
+    6  explorer.exe -> SecurityHealthSystray.exe
+    6  explorer.exe -> vmtoolsd.exe
+    6  explorer.exe -> OneDrive.exe
+    6  explorer.exe -> m365copilot_autostarter.exe
+    5  explorer.exe -> powershell.exe        ← 지우면 안 되는 것
+    4  explorer.exe -> mmc.exe               ← 지우면 안 되는 것
+    3  explorer.exe -> tailscale-ipn.exe
+    1  explorer.exe -> ie4uinit.exe / rundll32.exe / runonce.exe
+```
+
+**남는 것 중 자동 시작 앱은 이 handler 로 못 고친다.** explorer 가
+OneDrive·vmtoolsd 를 띄우는 것은 일반 데스크톱에서 정상이고 키오스크에서는
+정상이 아니다 — 룰의 전제가 이 이미지에서 성립하지 않는 것이지 룰이 틀린
+것이 아니다. 이름 목록으로 지우는 것은 화이트리스트 역탐지이고, Stage 0
+베이스라인 없이 넣지 않기로 했다.
+
+**이 이미지는 키오스크가 아니다**(`DESKTOP-RJRKJG1`). 실제 키오스크
+스냅샷에서 다시 재야 남는 65건의 성격을 말할 수 있다(`work.md` 0번).
+
+
+## 2026-09-03 · Map-Reduce 실물 관통 (`K-LIVE-0902-wide`, 9,829건)
+
+`--mode assemble` 을 실물 규모로 처음 돌린 기록이다. **창을 4분의 1로
+줄이면서 전달 레코드는 두 배가 됐다.**
+
+```
+.venv/Scripts/python.exe -m src.stage05_interpret.interpret   --in cases/K-LIVE-0902-wide/04_parsed --scenario .../02_scenario.json   --selection .../03_selection.json --out .../05_findings.json   --llm ollama --model qwen2.5:7b --timeout 900   --mode assemble --num-ctx 8192 --max-chunks 8 --limit 200
+```
+
+| | 단일 질의(`--mode model`) | Map-Reduce |
+|---|---|---|
+| 창 | 32,768 | **8,192** |
+| 전달 레코드 | 54건 | **102건** |
+| 질의 횟수 | 1 | 9 (Map 8 + Reduce 1) |
+| 05 소요 | — | **2분 45초** |
+| 프롬프트 추정 / 실측 최대 | — | 7,150 / **7,052**토큰 (예산 7,168 의 99%) |
+
+배분 내역: `evtx:Security` 31건(전량), `evtx:Sysmon` 48건(9,528 중),
+`prefetch` 23건(192 중).
+
+**06·07 결과**: passed 7 / rejected 0 / unverifiable 0.
+07 은 확인된 사항 7건 / 미검증 0건 / 범위 한계 28건.
+
+### 두 번 실패하고 두 번 고쳤다
+
+**① 합집합 enum 으로는 부족했다.** 첫 실행이 조각 1/9 에서 죽었다. 모델이
+파일 생성 이벤트(`SYSMON#19`, EID 11)에 `fields.CommandLine` 을 근거로
+지목했는데, 그 필드는 **다른 레코드의 것**이다. `evidence_fields` 의 enum 이
+배치 전체의 합집합이라 문법상 합법이었고, `temperature 0` 이라 재시도 세 번이
+같은 답을 냈다.
+
+`oneOf` + `const` 로 **레코드마다 갈래를 따로** 두어 각자 자기 필드만 고를 수
+있게 했다(둘 다 Ollama 문법으로 내려간다 — 같은 날 확인). 걸러 낼 것이 아니라
+나오지 않게 하는 쪽으로 옮긴 것이고, `ref` 에 대해 이미 내린 판단과 같다.
+
+**② 프리패치 소견이 껍데기였다.** 모델이 *"자주 실행되며"* 라고 쓴 소견의
+claims 가 `path`·`name`·`timestamp` 였다 — 문장이 기대는 `run_count` 가
+`claim_fields` 어휘에 없었다. 넣자 이렇게 됐다.
+
+```
+[F2] "컴파티블런런너.exe, RUNDLL32.exe, CMD.EXE가 자주 실행되며…"
+     claims: fields.run_count
+[F3] "VMTOOLSD.EXE, AM_DELTA_PATCH…가 실행되며 …"
+     claims: fields.run_count, fields.loaded_file_count
+```
+
+### 남은 것
+
+- **`technique` 이 붙은 소견이 7건 중 둘뿐**이라, `technique_supported` 가
+  실제로 판정한 것도 둘이다. 나머지 다섯은 `null` 이라 그 검사를 지나간다.
+- **F6·F7 이 사실상 같은 소견이다**(둘 다 "svchost.exe 가 WindowsApps 폴더에서
+  DLL 을 생성"). 서로 다른 레코드라 중복 제거에 걸리지 않는다. 모델의 판단
+  품질이고, 환각 유형 표의 마지막 행이라 지금 구조로는 못 잰다.
+- `--limit 200` 을 줬지만 예산이 102건에서 깎았다. 더 보려면 `--max-chunks`
+  를 올려야 한다.
+

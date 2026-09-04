@@ -61,7 +61,7 @@ from ..stage03_select.mapping_loader import (
     DEFAULT_SIGNAL_SOURCE,
     PRIORITIES,
 )
-from ..stage04_parse.flagging import KeepPaths, prompt_keep_paths
+from ..stage04_parse.flagging import KeepPaths, prompt_drop_fields, prompt_keep_paths
 from .record_filter import (
     DEFAULT_LIMIT,
     DEFAULT_WINDOW_SECONDS,
@@ -74,11 +74,14 @@ from .record_filter import (
 __all__ = [
     "CHARS_PER_TOKEN",
     "MAX_LIST_ITEMS",
-    "RESERVE_OUTPUT_TOKENS",
+    "RESERVE_FINDINGS_TOKENS",
+    "RESERVE_SELECTION_TOKENS",
     "PRIORITY_WEIGHT",
     "Budget",
     "Quota",
     "char_budget",
+    "chunk_records",
+    "prompt_token_budget",
     "for_prompt",
     "record_chars",
     "priorities_from_selection",
@@ -86,24 +89,61 @@ __all__ = [
     "allocate_records",
 ]
 
-#: 글자 하나가 몇 토큰인가 — 의 역수. **토크나이저를 돌린 값이 아니라
-#: 추정치다.**
+#: 글자 하나가 몇 토큰인가 — 의 역수. **이제 실측값이다** (2026-09-03).
 #:
-#: 우리 레코드는 ASCII 경로가 대부분이고 한글이 섞인다. 순수 ASCII 는
-#: 토큰당 3~4자, 한글은 1~1.5자라 그 사이를 잡았다. 2026-08-26 실측에서
-#: 71,476자를 28,600토큰으로 환산할 때 쓴 값과 같다.
+#: 실제 05단계 프롬프트를 `qwen2.5:7b` 에 넣고 Ollama 가 돌려주는
+#: `prompt_eval_count` 로 쟀다 (`K-LIVE-0902-wide`, 프롬프트마다 난스를
+#: 앞에 붙여 KV 캐시 재사용을 깼다).
 #:
-#: **틀리는 방향이 중요하다.** 실제보다 크게 잡으면(글자를 적은 토큰으로
-#: 세면) 예산이 헐거워져 창을 넘고, 그러면 지금 고치는 증상 그대로다.
-#: 작게 잡으면 자리를 덜 쓸 뿐이다. 그래서 의심스러우면 낮춘다.
-CHARS_PER_TOKEN = 2.5
+#: .. code-block:: text
+#:
+#:     10건  10,122자 →  4,997토큰   2.03
+#:     20건  17,744자 →  8,679토큰   2.04
+#:     40건  37,863자 → 17,978토큰   2.11
+#:     55건  62,713자 → 29,910토큰   2.10
+#:
+#: 구간 전체에서 2.0~2.1 로 안정적이다. 경로 문자열이 대부분이라 ASCII 라도
+#: 토큰이 잘게 쪼개진다 — 역슬래시·확장자·레지스트리 키마다 경계가 생긴다.
+#: "순수 ASCII 는 토큰당 3~4자"라는 일반론은 우리 데이터에 맞지 않았다.
+#:
+#: **예전 값 2.5 는 안전한 쪽으로 틀리지 않았다.** 여기 적혀 있던 "작게
+#: 잡으면 자리를 덜 쓸 뿐"이 거꾸로였다 — 2.5 는 같은 글자를 **적은** 토큰
+#: 으로 세므로 예산이 실제보다 19% 헐거웠고, 그만큼 프롬프트가 창을 넘었다.
+#: 같은 케이스 60건(69,875자)이 32,768 창에서 16,386토큰만 평가됐다. 보낸
+#: 것의 절반이다 — 넘은 프롬프트는 거부되지 않고 **조용히 앞이 잘린다**
+#: (`docs/limitations.md`).
+#:
+#: **관측된 최솟값보다 낮게 잡는다.** 위 표의 최솟값이 2.03 이고, 아티팩트
+#: 구성이 달라지면 값도 달라진다. 상수가 실측보다 크면 곧바로 창을 넘는
+#: 쪽이므로, 여유를 상수 안에 넣어 둔다. 의심스러우면 낮춘다 — 이제는 그
+#: 방향이 실제로 안전한 쪽이다.
+CHARS_PER_TOKEN = 2.0
 
-#: 모델이 답을 쓸 자리로 남겨 두는 토큰. 프롬프트가 창을 꽉 채우면 출력할
-#: 자리가 없어 응답이 잘리고, 잘린 응답은 ``malformed_output`` 으로 온다.
+#: 소견 질의가 답을 쓸 자리로 남겨 두는 토큰. 프롬프트가 창을 꽉 채우면
+#: 출력할 자리가 없어 응답이 잘리고, 잘린 응답은 ``malformed_output`` 으로
+#: 온다.
 #:
 #: findings 여러 건과 timeline 을 담은 JSON 이 이 정도다. 실측 소견 4건이
 #: 약 1,800토큰이었고, 재시도 없이 한 번에 끝나려면 여유가 있어야 한다.
-RESERVE_OUTPUT_TOKENS = 4096
+#:
+#: **이름에 질의 종류를 박은 이유가 있다.** 이 단계가 갖게 될 질의는 출력
+#: 크기가 전혀 다르다 — 어느 레코드가 의심스러운지만 고르는 질의는 ref 와
+#: 한 줄 사유를 낼 뿐이고, 문장과 타임라인을 쓰는 질의는 그 몇 배다. 상수
+#: 하나로 두면 큰 쪽에 맞춰야 하고, 그러면 작은 질의가 쓰지도 않을 자리를
+#: 창에서 떼어 간다. 창이 좁을수록 그 낭비가 곧 레코드 수다.
+RESERVE_FINDINGS_TOKENS = 4096
+
+#: 선별 질의(Map)의 출력 예약 토큰.
+#:
+#: 소견 질의의 4분의 1이다. 이쪽이 내는 것은 레코드마다 ``ref``·기법·한 줄
+#: 사유·근거 필드 이름 몇 개뿐이라, 문장과 타임라인을 쓰는 쪽과 크기가
+#: 몇 배 차이 난다. **큰 쪽에 맞춰 두면 작은 질의가 쓰지도 않을 자리를
+#: 창에서 떼어 가고, 창이 좁을수록 그 낭비가 곧 레코드 수다.**
+#:
+#: 항목 하나가 대략 60~90토큰이다(``ref`` 8, 기법 6, 사유 30~50, 필드
+#: 이름 둘 15). 60건을 전부 고르는 최악에도 5,400토큰이지만, 그렇게 고르면
+#: 선별이 아니다 — 20건 안팎을 상정하고 여유를 뒀다.
+RESERVE_SELECTION_TOKENS = 1024
 
 #: 프롬프트에 실을 때 ``fields`` 안의 목록을 몇 개까지 남길 것인가
 #: (``for_prompt`` 참조). ``None`` 이면 안 자른다.
@@ -220,11 +260,25 @@ def for_prompt(
     record: dict[str, Any],
     max_list_items: int | None = MAX_LIST_ITEMS,
     keep: "KeepPaths | None" = None,
+    drop: "frozenset[str] | None" = None,
 ) -> dict[str, Any]:
     """레코드를 프롬프트에 실을 모양으로. ``04_parsed/``의 원본은 안 건드립니다.
 
-    ``fields`` 안의 긴 목록을 ``max_list_items``개까지만 남깁니다.
-    ``None``이면 자르지 않습니다.
+    두 가지를 합니다. **어느 필드를 뺄지**(``drop``,
+    ``mappings/_flags.yaml``의 ``prompt_drop_fields``)와 **남은 필드 안의 긴
+    목록을 몇 개까지 실을지**(``max_list_items``)입니다. 순서가 있습니다 —
+    뺄 것을 먼저 빼고 남은 것에서 목록을 자릅니다. 반대로 하면 어차피 뺄
+    필드의 목록을 자르느라 keep 어휘를 헛돌립니다.
+
+    ``max_list_items``가 ``None``이면 목록을 자르지 않고, ``drop``이 비면
+    필드를 하나도 빼지 않습니다.
+
+    **왜 필드를 빼나.** 해시·GUID·PE 버전 리소스처럼 **우리가 판단에 쓰지
+    않는** 값이 evtx:Sysmon 레코드의 4분의 1을 차지합니다(실측 1,043자 →
+    790자). 모델이 그 값으로 무언가를 말한다면 그것은 레코드가 아니라
+    학습된 지식에서 나온 것이라, 빼는 것이 프롬프트를 줄이는 동시에
+    환각의 입구를 하나 막습니다. 어느 필드가 그런지는 코드가 아니라 어휘에
+    적혀 있고, 근거도 거기 붙어 있습니다.
 
     **어느 것을 남기는가.** ``mappings/_flags.yaml``의
     ``prompt_keep_paths``에 적힌 자리(드롭 자리·사용자 폴더 등)에 걸리는
@@ -263,16 +317,27 @@ def for_prompt(
     맞지 않아 기각됩니다.
     """
     fields = record.get("fields")
-    if max_list_items is None or not isinstance(fields, dict):
+    if not isinstance(fields, dict):
         return record
 
-    keep = prompt_keep_paths() if keep is None else keep
-    trimmed = {
-        key: _trim_list(value, max_list_items, keep)
-        if isinstance(value, list) and len(value) > max_list_items
-        else value
-        for key, value in fields.items()
-    }
+    drop = prompt_drop_fields() if drop is None else drop
+    kept = (
+        {key: value for key, value in fields.items() if key.lower() not in drop}
+        if drop
+        else fields
+    )
+
+    if max_list_items is None:
+        trimmed = kept
+    else:
+        keep = prompt_keep_paths() if keep is None else keep
+        trimmed = {
+            key: _trim_list(value, max_list_items, keep)
+            if isinstance(value, list) and len(value) > max_list_items
+            else value
+            for key, value in kept.items()
+        }
+
     if trimmed == fields:
         return record
 
@@ -285,6 +350,7 @@ def record_chars(
     record: dict[str, Any],
     max_list_items: int | None = MAX_LIST_ITEMS,
     keep: "KeepPaths | None" = None,
+    drop: "frozenset[str] | None" = None,
 ) -> int:
     """레코드 하나가 프롬프트에서 차지할 글자 수.
 
@@ -293,14 +359,35 @@ def record_chars(
     잽니다.** 다르게 재면 예산이 맞아도 프롬프트가 넘칩니다. 줄바꿈 한
     글자를 더합니다.
     """
-    return len(json.dumps(for_prompt(record, max_list_items, keep), ensure_ascii=False)) + 1
+    return (
+        len(json.dumps(for_prompt(record, max_list_items, keep, drop), ensure_ascii=False)) + 1
+    )
+
+
+def prompt_token_budget(
+    num_ctx: int,
+    *,
+    reserve_output_tokens: int = RESERVE_FINDINGS_TOKENS,
+) -> int:
+    """프롬프트에 쓸 수 있는 토큰. 창에서 답 쓸 자리를 뺀 값입니다.
+
+    **질의를 쪼갤지 정하는 임계값은 이 함수여야 합니다.** 그 자리에
+    "6,000 토큰" 같은 수를 따로 적어 두면 창이나 예약이 바뀌는 순간
+    임계값만 옛날 값으로 남고, 그 어긋남은 조용합니다 — 넘은 프롬프트를
+    Ollama 는 거부하지 않고 앞을 잘라 버립니다(``CHARS_PER_TOKEN`` 참조).
+
+    ``char_budget`` 은 여기에 글자 환산과 프롬프트 고정분을 더 뺀 값입니다.
+    두 함수로 나뉜 것은 묻는 쪽의 단위가 다르기 때문입니다 — 창과 분기는
+    토큰으로 묻고, 레코드를 몇 건 실을지는 글자로 묻습니다.
+    """
+    return max(0, num_ctx - reserve_output_tokens)
 
 
 def char_budget(
     num_ctx: int,
     overhead_chars: int,
     *,
-    reserve_output_tokens: int = RESERVE_OUTPUT_TOKENS,
+    reserve_output_tokens: int = RESERVE_FINDINGS_TOKENS,
     chars_per_token: float = CHARS_PER_TOKEN,
 ) -> int:
     """레코드에 쓸 수 있는 글자 수. 음수면 0.
@@ -312,8 +399,59 @@ def char_budget(
     출력 자리를 토큰으로 떼는 것은 그쪽이 모델의 단위이기 때문이고,
     레코드를 글자로 재는 것은 우리가 가진 것이 글자이기 때문입니다.
     """
-    for_prompt = (num_ctx - reserve_output_tokens) * chars_per_token
+    for_prompt = prompt_token_budget(
+        num_ctx, reserve_output_tokens=reserve_output_tokens
+    ) * chars_per_token
     return max(0, int(for_prompt) - overhead_chars)
+
+
+def chunk_records(
+    records: list[dict[str, Any]],
+    char_budget: int,
+    max_list_items: "int | None" = MAX_LIST_ITEMS,
+    drop: "frozenset[str] | None" = None,
+) -> list[list[dict[str, Any]]]:
+    """레코드를 한 질의에 들어갈 크기로 자른다. **시간순을 지킨다.**
+
+    예산 안에 다 들어가면 조각이 하나다. 부르는 쪽이 조각 수만 보고 단일
+    질의인지 분할인지 가릴 수 있다.
+
+    **왜 아티팩트가 아니라 시간으로 자르나.** 원래 설계안은 아티팩트별로
+    묶는 것이었다. 그러면 한 조각 안에 한 아티팩트만 있어 **교차 아티팩트
+    상관을 처음부터 버린다** — `$MFT` 의 드롭과 Sysmon 의 실행과 evtx 의
+    로그온이 한 사건이라는 것을, 모델이 볼 기회 자체가 없어진다.
+
+    ``allocate_records`` 가 이미 시간순으로 돌려주므로, 앞에서부터 담기만
+    하면 한 조각이 **한 시간대의 여러 아티팩트**가 된다. 그 안에서는 모델이
+    연결을 볼 수 있다. 조각을 넘는 연결은 Reduce 질의가 맡는다.
+
+    **한 레코드가 예산보다 크면 혼자 한 조각이 된다.** 더 잘게 자를 수단이
+    없다 — 레코드를 쪼개면 그것은 더 이상 그 레코드가 아니다. 그 조각은
+    프롬프트가 창을 넘을 수 있고, 그 사실은 부르는 쪽이 실측 토큰으로
+    본다(``interpret`` 의 자·토큰 비 경고).
+    """
+    if not records:
+        return []
+    if char_budget <= 0:
+        # 예산을 모르면 자르지 않는다. "한 건도 못 들어간다"는 판정은
+        # allocate_records 가 이미 했고, 여기서 또 하면 사유가 둘이 된다.
+        return [list(records)]
+
+    chunks: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    used = 0
+
+    for record in records:
+        size = record_chars(record, max_list_items, drop=drop)
+        if current and used + size > char_budget:
+            chunks.append(current)
+            current, used = [], 0
+        current.append(record)
+        used += size
+
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def priorities_from_selection(selection: dict[str, Any]) -> dict[str, int]:

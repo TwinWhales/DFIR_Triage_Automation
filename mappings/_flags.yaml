@@ -442,7 +442,27 @@ flags:
 
       스크립트 호스트와 문서 뷰어를 함께 넣은 것은, 그것이 부모라는 것이
       곧 "문서/스크립트가 무언가를 실행시켰다"이기 때문이다.
+
+      **handler 가 같은 프로그램의 내부 동작을 걷어낸다.** 아래 목록에는
+      브라우저가 들어 있는데, 요즘 브라우저는 탭·GPU·유틸리티 프로세스로
+      자기 자신을 여러 번 띄운다. 그것은 "누가 실행시켰나"에 대해 아무 말도
+      하지 않으면서 부모 이름만 보는 이 룰에 걸린다. 실측(K-LIVE-0902-wide,
+      2026-09-03)에서 **258건 중 193건(75%)**이 그 경우였다 —
+      msedge → msedge 157건, msedge → identity_helper 36건.
+
+      handler 는 이름이 아니라 **관계**를 본다(Image 와 ParentImage 가 같은가,
+      자식이 부모 전용 디렉터리 하위인가). 그래서 Edge 를 아는 것이 아니라
+      다중 프로세스 프로그램 전반이 함께 걸러지고, explorer → cmd.exe 아홉
+      건과 explorer → powershell.exe 다섯 건은 그대로 남는다.
+
+      **남는 오탐은 이 handler 로 못 고친다.** explorer 가 자동 시작 앱
+      (OneDrive·vmtoolsd 등)을 띄우는 것은 일반 데스크톱에서 정상이고,
+      키오스크에서는 정상이 아니다 — 즉 룰의 전제가 이 이미지에서 성립하지
+      않는 것이지 룰이 틀린 것이 아니다. 그것을 이름 목록으로 지우는 것은
+      화이트리스트 역탐지이고, 베이스라인 없이 넣지 않기로 했다
+      (docs/limitations.md).
     rule:
+      handler: parent_is_another_program
       when:
         - artifact: evtx:Sysmon
           event_ids: [1]
@@ -694,3 +714,124 @@ prompt_keep_paths:
     - '\perflogs\'
     - '\programdata\'
     - '\downloads\'
+
+# 05단계가 프롬프트에 실을 때 fields 에서 **통째로 빼는** 필드 이름이다.
+# allocation.for_prompt 가 읽는다. 위 prompt_keep_paths 와 짝이지만 방향이
+# 반대다 — 저쪽은 긴 목록에서 무엇을 남길지, 이쪽은 어떤 필드를 아예 뺄지다.
+#
+# **화이트리스트가 아니라 블랙리스트인 이유.** 남길 것을 적으면 목록에 없는
+# 아티팩트가 조용히 빈 껍데기가 된다. $MFT 에는 timestamp 가 없고
+# (si_*/fn_* 여덟이다), $UsnJrnl 은 reason 과 name 이 판단의 전부인데,
+# "공통으로 남길 필드" 목록을 짜면 그런 자리가 반드시 빠진다. 그리고
+# add-parser 로 새 파서가 붙을 때 목록을 빠뜨려도 아무 데도 안 남는다.
+# 뺄 것을 적으면 모르는 필드는 그대로 간다.
+#
+# **이름은 대소문자를 무시하고 본다.** 같은 뜻의 필드가 아티팩트마다 다른
+# 표기로 오는 것을 놓치는 쪽이, 열거한 이름을 지우는 것보다 나쁘다.
+#
+# **04_parsed/ 의 원본과 06단계 검증은 영향받지 않는다.** 프롬프트에 실을
+# 사본만 얇아진다. 다만 모델이 못 본 필드는 인용할 수 없으므로, 여기 이름을
+# 넣는 것은 "이 필드로는 판단하지 않기로 한다"는 뜻이다.
+#
+# **뺐다는 사실은 프롬프트가 말한다**(llm_client._trim_notice). 말하지 않으면
+# 모델이 "해시 정보가 없다"를 근거로 쓰고, 그것은 우리가 유발한 환각이다.
+#
+# 실측(K-LIVE-0902-wide, 04 산출물 9,829건, 2026-09-03): 레코드 평균
+# 1,057자 → 809자로 **24%** 줄었다. 절감은 전부 evtx:Sysmon 에서 나왔고
+# (1,043자 → 790자, 25%), prefetch 와 evtx:Security 는 0% 다 — 프리패치는
+# loaded_files 하나가 89.7% 라 이 목록으로는 줄지 않는다(그쪽은
+# prompt_keep_paths 와 MAX_LIST_ITEMS 가 맡는다).
+prompt_drop_fields:
+  # 해시. **우리가 대조할 해시 DB 가 없다.** 06단계는 값 일치만 보므로
+  # 해시가 있어도 악성 여부는 판정하지 못하고, 모델이 학습된 지식으로
+  # "이 해시는 알려진 악성"이라고 쓰면 그것이 정확히 우리가 막으려는
+  # 환각이다. evtx:Sysmon 전체의 5.9%.
+  - Hashes
+
+  # 상관용 GUID. **우리는 GUID 로 잇지 않는다** — 05단계는 레코드 단위로
+  # 보고 ref 로 잇는다. 모델에게는 128비트 난수일 뿐이고, 넷을 합쳐
+  # evtx:Sysmon 전체의 9.8% 다. 프로세스 계보가 필요해지면(3대 상관분석,
+  # work.md 4번) 그때는 파이썬이 원본에서 읽어 잇는 것이 맞다.
+  - ProcessGuid
+  - ParentProcessGuid
+  - LogonGuid
+  - SourceProcessGuid
+  - TargetProcessGuid
+
+  # PE 버전 리소스. 위조할 수 있고, 우리 flags 룰 중 이 값을 보는 것이
+  # 없다. 서명 검증은 이 필드가 아니라 Signed/Signature 쪽인데 그것은
+  # 남긴다.
+  - FileVersion
+  - Company
+  - Description
+  - Product
+  - OriginalFileName
+
+  # 터미널 세션 번호. 세션을 가르는 판정은 LogonId 로 하고 있고
+  # (privileged_group_add 등), 그쪽은 남긴다.
+  - TerminalSessionId
+
+# 05단계가 소견의 claims 를 조립할 때 레코드에서 꺼내는 필드다. **순서가
+# 뜻을 갖는다** — 앞에 있는 것부터 쓰고, 레코드에 있는 것만 골라 상한까지
+# 채운다. src/stage05_interpret/assembly.py 가 읽는다.
+#
+# **왜 어휘인가.** claims 는 06단계가 원본과 대조하는 유일한 대상이다. 어느
+# 필드를 claim 으로 삼을지는 아티팩트마다 다르고(아래 참조), 새 파서가 붙을
+# 때 함께 늘어야 한다. 코드에 박으면 add-parser 절차에서 빠뜨려도 아무 데도
+# 안 남는다 — prompt_drop_fields 와 같은 이유다.
+#
+# **최상위와 fields 를 함께 적는다.** 실측(2026-09-03)에서 아티팩트마다
+# 값이 사는 층이 다르다:
+#
+#   $UsnJrnl      fields 가 아예 없다. name·reason 이 전부 최상위다
+#   prefetch      name 이 최상위, 나머지는 fields
+#   registry:*    path·name 이 최상위
+#   evtx:*        event_id·timestamp 가 최상위, 나머지는 fields
+#   $MFT          path 와 si_*/fn_* 여덟이 최상위
+#
+# **하나도 없으면 claims 가 빈다.** 그 소견은 06단계에서 unverifiable 로
+# 분류되고, 그것이 정직한 결과다 — 없는 필드를 지어내 채우면 그 순간
+# 06단계가 우리가 만든 값을 검증하게 된다.
+claim_fields:
+  # 상한. claims 하나하나가 06 의 대조 한 번이라, 많을수록 좋은 것이 아니라
+  # **문장이 실제로 주장하는 것**과 같아야 한다. 넷이면 "무엇이·어디서·
+  # 언제·누가" 를 대개 덮는다.
+  max_items: 4
+
+  # 순서가 우선순위다. 경로·이름처럼 그 레코드를 특정하는 것이 앞이고,
+  # 시각은 맨 뒤다 — 어느 레코드에나 있어서 앞에 두면 다른 필드를 밀어낸다.
+  fields:
+    - path                    # $MFT, registry:*
+    - name                    # $UsnJrnl, prefetch, registry:*
+    - reason                  # $UsnJrnl — 이 아티팩트 판단의 핵심이다
+    - fields.CommandLine      # evtx:Sysmon 1
+    - fields.Image
+    - fields.TargetFilename   # evtx:Sysmon 11
+    - fields.TargetUserName   # evtx:Security 4720·4728·4732
+    - fields.ParentImage
+    - fields.DestinationIp    # evtx:Sysmon 3
+    - fields.ServiceName
+
+    # prefetch — "몇 번 실행됐나"가 이 아티팩트 판단의 핵심인데 빠져 있었다.
+    # 실측(2026-09-03)에서 모델이 "자주 실행되며" 라고 쓴 소견의 claims 가
+    # path·name·timestamp 였다. 문장이 기대는 값이 claims 에 없으면 그것이
+    # 껍데기다.
+    - fields.run_count
+    - fields.loaded_file_count
+
+    # $MFT — 이 아티팩트의 flag 는 전부 이 값들에 기댄다. 빠뜨렸다가
+    # 실측에서 드러났다(2026-09-03): timestamp_mismatch 가 붙은 레코드에
+    # 모델이 고를 수 있는 이름이 path 하나뿐이라, 옆 레코드의 필드 이름을
+    # 가져다 붙이고 재시도 세 번 끝에 중단했다.
+    - si_ctime                # timestamp_mismatch·zero_timestamp 의 근거
+    - si_mtime
+    - si_btime
+    - si_atime
+    - fn_ctime                # $SI 와 어긋나는 것이 조작의 신호다
+    - fn_mtime
+    - fn_btime
+    - allocated               # deleted 의 근거
+    - size
+
+    - event_id                # evtx:* — 무슨 사건이었나
+    - timestamp

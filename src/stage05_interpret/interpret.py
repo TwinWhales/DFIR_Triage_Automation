@@ -40,17 +40,25 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, llm, schema
-from ..common.llm import DEFAULT_NUM_CTX, DEFAULT_TIMEOUT
+from ..common.llm import DEFAULT_TIMEOUT
 from ..stage03_select import mapping_loader
 from ..stage06_verify import comparators
-from . import allocation, record_filter
-from .llm_client import DEFAULT_MODEL, FINDINGS_BODY_FIELDS, InterpretClient
+from . import allocation, assembly, record_filter
+from .llm_client import (
+    ASSEMBLE_NUM_CTX,
+    DEFAULT_MODEL,
+    DEFAULT_NUM_CTX,
+    FINDINGS_BODY_FIELDS,
+    InterpretClient,
+)
 
 __all__ = [
     "STAGE",
     "build_findings",
     "dump_raw",
     "interpret",
+    "QueryLog",
+    "interpret_assembled",
     "main",
 ]
 
@@ -123,6 +131,70 @@ def dump_raw(
     path.write_text(raw, encoding="utf-8")
 
     return path.name
+
+
+class QueryLog:
+    """05단계가 모델과 주고받은 것을 케이스 디렉터리에 그대로 남긴다.
+
+    **산출물만 보면 05단계는 블랙박스다.** findings 가 왜 그렇게 나왔는지
+    되짚으려면 무엇을 물었고 무엇이 돌아왔는지가 있어야 한다. 특히 질의를
+    조각으로 나누면 "몇 번 물었나·각 조각에 무엇이 실렸나·어느 질의에서 이
+    소견이 나왔나" 가 산출물 어디에도 없다.
+
+    ``errors.jsonl`` 옆의 ``_raw_attempt*.txt`` 와 다르다. 그쪽은 **실패한**
+    시도의 응답만 남긴다 — 성공하면 아무것도 안 남는다. 이쪽은 성공한
+    질의도 남긴다. 프롬프트를 고칠 때 무엇이 달라졌는지 대조할 것이
+    있어야 하기 때문이다.
+
+    파일 하나가 질의 하나다::
+
+        05_llm_queries/
+          01_selection_chunk1of3.txt
+          02_selection_chunk2of3.txt
+          03_selection_chunk3of3.txt
+          04_connections.txt
+    """
+
+    def __init__(self, directory: "Path | None") -> None:
+        self.directory = directory
+        self.count = 0
+
+    def record(
+        self, client: InterpretClient, kind: str, note: str = "", refs: "list[str] | None" = None
+    ) -> "str | None":
+        """방금 보낸 질의와 받은 응답을 파일로. 껐으면 아무것도 안 한다."""
+        if self.directory is None or client.last_user is None:
+            return None
+
+        self.count += 1
+        name = f"{self.count:02d}_{kind}.txt"
+        path = self.directory / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        tokens = getattr(client.backend, "last_prompt_tokens", None)
+        header = [
+            f"# 질의 {self.count} — {kind}",
+            f"# 백엔드: {client.name}",
+        ]
+        if note:
+            header.append(f"# {note}")
+        if refs:
+            header.append(f"# 실은 레코드 {len(refs)}건: {', '.join(refs)}")
+        if tokens:
+            header.append(f"# 프롬프트 실측 {tokens:,}토큰")
+
+        path.write_text(
+            "\n".join(header)
+            + "\n\n===== system =====\n"
+            + (client.last_system or "")
+            + "\n\n===== user =====\n"
+            + client.last_user
+            + "\n\n===== response =====\n"
+            + (client.last_raw or "(응답 없음)")
+            + "\n",
+            encoding="utf-8",
+        )
+        return name
 
 
 def build_findings(
@@ -335,6 +407,7 @@ def interpret(
     log: errlog.ErrorLog,
     *,
     max_attempts: int = MAX_ATTEMPTS,
+    queries: "QueryLog | None" = None,
 ) -> dict[str, Any]:
     """레코드를 해석해 findings 문서를 만든다.
 
@@ -371,6 +444,14 @@ def interpret(
                 records,
                 feedback,
             )
+
+            if queries is not None:
+                queries.record(
+                    client,
+                    "findings",
+                    note=f"시도 {attempt}",
+                    refs=[record["ref"] for record in records],
+                )
 
             findings = build_findings(
                 body,
@@ -506,6 +587,254 @@ def interpret(
     )
 
 
+def _select_chunk(
+    scenario: dict[str, Any],
+    chunk: list[dict[str, Any]],
+    client: InterpretClient,
+    log: errlog.ErrorLog,
+    index: int,
+    total: int,
+    *,
+    max_attempts: int = MAX_ATTEMPTS,
+    queries: "QueryLog | None" = None,
+) -> list[dict[str, Any]]:
+    """조각 하나를 모델에게 물어 고른 것을 받는다.
+
+    **조각 하나가 실패하면 파이프라인이 멈춘다.** 남은 조각으로 완주하면
+    그것이 폴백이다 — 증거의 일부만 본 보고서가 전부를 본 것처럼 나가고,
+    그 사실은 산출물 어디에도 없다. 이 프로젝트에서 가장 나쁜 성질이다.
+
+    **잃는 것이 있다.** 조각이 열이고 일곱째가 시간 초과면 앞의 여섯도
+    버려진다. 그래도 멈추는 쪽인 것은, 부분 결과를 들고 가려면 "무엇을 못
+    봤는가"가 07 보고서까지 나가야 하는데 그 통로가 아직 없기 때문이다.
+    `--timeout` 을 올려 다시 도는 것이 지금의 답이다.
+    """
+    feedback: str | None = None
+    where = f"조각 {index}/{total}" if total > 1 else "선별"
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            picked = client.propose_selection(scenario, chunk, feedback)
+            if queries is not None:
+                suffix = f"chunk{index}of{total}" if total > 1 else "all"
+                queries.record(
+                    client,
+                    f"selection_{suffix}",
+                    note=f"시도 {attempt}, 고른 것 {len(picked)}건",
+                    refs=[r["ref"] for r in chunk],
+                )
+            # **여기서 검사한다.** 조립까지 미루면 어느 조각이 틀렸는지 알 수
+            # 없어 전부 다시 돌게 된다.
+            assembly.validate_selection(picked, {r["ref"]: r for r in chunk})
+            return picked
+
+        except assembly.SelectionError as e:
+            detail: dict[str, Any] = {"message": f"{where}: {e}"}
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "claim_validation", detail, action="retry", attempt=attempt)
+            feedback = (
+                "이전 응답의 evidence_fields 가 그 레코드와 맞지 않습니다.\n"
+                f"{e}\n"
+                "각 레코드에 **실제로 있는** 필드 이름만 적으십시오."
+            )
+
+        except llm.MalformedOutput as e:
+            detail = {"message": f"{where}: {e}"}
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "malformed_output", detail, action="retry", attempt=attempt)
+            feedback = f"응답에서 JSON을 찾지 못했습니다: {e}"
+
+        except llm.LLMTimeout as e:
+            log.record(
+                STAGE, "timeout", {"message": f"{where}: {e}"}, action="retry", attempt=attempt
+            )
+            feedback = None
+
+        except llm.LLMError as e:
+            # 02단계와 같은 이유로 재시도하지 않는다 — 모델명 오타·서버
+            # 미기동은 세 번 불러도 같은 답이다.
+            log.abort(STAGE, "llm_error", {"message": f"{where}: {e}"})
+
+    log.abort(
+        STAGE,
+        "malformed_output",
+        {
+            "message": (
+                f"{where} 를 {max_attempts}회 재시도했으나 쓸 수 있는 선별을 받지 못함. "
+                "남은 조각으로 완주하면 증거의 일부만 본 보고서가 전부를 본 것처럼 "
+                f"나간다. 모델 응답 원문은 {log.path.parent}/{STAGE}_raw_attempt*.txt 에 있다"
+            )
+        },
+    )
+
+
+def _connect(
+    scenario: dict[str, Any],
+    picked: list[dict[str, Any]],
+    client: InterpretClient,
+    log: errlog.ErrorLog,
+    char_budget: "int | None",
+    queries: "QueryLog | None" = None,
+) -> list[dict[str, Any]]:
+    """고른 항목들 중 서로 이어지는 것을 묶는다 (Reduce).
+
+    **이것이 없으면 Map-Reduce 가 이름만 Reduce 다.** 조각마다 따로 판정만
+    하고 파이썬이 append 하면, 조각을 넘는 연결은 아무도 말한 적이 없다 —
+    "파일이 떨어졌다"와 "그 파일이 실행됐다"가 각각 실릴 뿐 한 사건이라는
+    말은 어디에도 없다.
+
+    **묶을 것이 둘 미만이면 부르지 않는다.** 물어볼 것이 없다.
+
+    **입력도 예산 판정을 받는다.** 단서가 수십 건이면 한 줄이 120자라도
+    창을 넘는다. 넘으면 **건너뛰고 그 사실을 남긴다** — 조각 실패와 달리
+    여기서 잃는 것은 종합이지 증거가 아니다. 고른 항목은 전부 단독 소견으로
+    실리므로 산출물이 부분이 되지 않는다. 그래서 ``abort`` 가 아니라
+    ``skip`` 이다.
+
+    **실패해도 멈추지 않는다.** 같은 이유다. 종합을 못 했을 뿐 증거는 다
+    실린다. 다만 조용히 넘어가지는 않는다.
+    """
+    if len(picked) < 2:
+        return []
+
+    if char_budget is not None and char_budget > 0:
+        needed = client.reduce_chars(scenario, picked)
+        if needed > char_budget:
+            log.record(
+                STAGE,
+                "empty_result",
+                {
+                    "message": (
+                        f"종합 질의 입력이 예산을 넘음 ({needed:,}자 > {char_budget:,}자, "
+                        f"단서 {len(picked)}건). 교차 아티팩트 종합을 건너뛴다 — "
+                        "고른 항목은 전부 단독 소견으로 실리므로 증거가 빠지지는 않는다"
+                    )
+                },
+                action="skip",
+            )
+            return []
+
+    try:
+        found = client.propose_connections(scenario, picked)
+        if queries is not None:
+            queries.record(
+                client, "connections", note=f"단서 {len(picked)}건 → 묶음 {len(found)}건"
+            )
+        return found
+    except (llm.LLMError, llm.MalformedOutput) as e:
+        if queries is not None:
+            queries.record(client, "connections_failed", note=str(e))
+        log.record(
+            STAGE,
+            "malformed_output" if isinstance(e, llm.MalformedOutput) else "llm_error",
+            {"message": f"종합 질의 실패, 건너뜀: {e}"},
+            action="skip",
+        )
+        return []
+
+
+def interpret_assembled(
+    scenario: dict[str, Any],
+    records: list[dict[str, Any]],
+    client: InterpretClient,
+    log: errlog.ErrorLog,
+    *,
+    max_attempts: int = MAX_ATTEMPTS,
+    char_budget: "int | None" = None,
+    queries: "QueryLog | None" = None,
+) -> dict[str, Any]:
+    """모델에게 **고르게만** 하고 findings 는 파이썬이 조립한다.
+
+    ``interpret`` 과 무엇이 다른가.
+
+    .. code-block:: text
+
+        interpret            모델이 문장·claims·타임라인을 전부 쓴다
+        interpret_assembled  모델은 {ref, 기법, 사유, 근거 필드}만 고른다
+
+    **실패 처리가 갈린다.** 이 경로에는 두 가지 실패가 있고 성질이 반대다.
+
+    - ``SelectionError`` — 모델이 그 레코드에 없는 필드를 근거로 지목했다.
+      **모델 잘못이라 다시 물어보면 고쳐질 수 있다.** 피드백을 주고 재시도.
+    - ``AssemblyError`` — 조립기가 자기 일을 못 했다. **우리 잘못이라 같은
+      코드가 같은 입력으로 같은 답을 낸다.** 재시도하면 모델을 세 번 더
+      부르고 똑같이 죽으므로 한 번에 중단한다.
+
+    이 갈림이 없으면 우리 버그가 모델 호출 세 번을 태우고, 그 실패가
+    ``claim_validation`` 으로 쌓여 환각 통계를 오염시킨다.
+
+    **claim 관문(``validate_model_claims``)은 여기서도 돈다.** 다만 뜻이
+    다르다 — claims 를 파이썬이 원본에서 복사했으므로 통과는 항등식이고,
+    실패는 **조립기의 버그**다. 그래서 이 경로에서는 그 실패도
+    ``AssemblyError`` 로 다룬다. 공짜로 얻는 회귀 점검이라 끄지 않는다.
+    """
+    case_id = scenario["case_id"]
+    generator = io.make_generator("interpret.py", client.name)
+    by_ref = {record["ref"]: record for record in records}
+    input_refs = list(by_ref)
+
+    chunks = allocation.chunk_records(records, char_budget) if char_budget else [records]
+    picked: list[dict[str, Any]] = []
+    for index, chunk in enumerate(chunks, 1):
+        picked.extend(
+            _select_chunk(
+                scenario,
+                chunk,
+                client,
+                log,
+                index,
+                len(chunks),
+                max_attempts=max_attempts,
+                queries=queries,
+            )
+        )
+
+    connections = _connect(scenario, picked, client, log, char_budget, queries)
+
+    feedback: str | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            body = assembly.assemble_body(picked, by_ref, connections=connections)
+            findings = build_findings(body, case_id, generator, input_refs)
+            schema.validate(findings, "findings")
+            try:
+                validate_model_claims(findings, records)
+            except ClaimValidationError as e:
+                # 이 경로의 claims 는 우리가 만들었다. 불일치는 모델이 아니라
+                # 조립기의 버그다 — 위 설명 참조.
+                raise assembly.AssemblyError(
+                    f"조립한 claim 이 원본과 어긋난다: {e}"
+                ) from e
+            return findings
+
+        except assembly.AssemblyError as e:
+            log.abort(STAGE, "assembly_error", {"message": str(e)})
+
+        except schema.SchemaViolation as violation:
+            detail = violation.as_detail()
+            saved = dump_raw(log, attempt, client.last_raw)
+            if saved:
+                detail["raw"] = saved
+            log.record(STAGE, "schema_violation", detail, action="retry", attempt=attempt)
+            feedback = f"{violation.field}: {violation.message}"
+
+    log.abort(
+        STAGE,
+        "schema_violation",
+        {
+            "field": "<retries>",
+            "message": (
+                f"{max_attempts}회 재시도 후에도 조립 결과가 스키마를 만족하지 못함. "
+                f"모델 응답 원문은 {log.path.parent}/{STAGE}_raw_attempt*.txt 에 있다"
+            ),
+        },
+    )
+
+
 def _parse_args(
     argv: "list[str] | None" = None,
 ) -> argparse.Namespace:
@@ -584,9 +913,10 @@ def _parse_args(
     parser.add_argument(
         "--num-ctx",
         type=int,
-        default=DEFAULT_NUM_CTX,
+        default=None,
         help=(
-            "모델에게 열어 줄 컨텍스트 창(토큰). 기본 %(default)s. "
+            "모델에게 열어 줄 컨텍스트 창(토큰). 생략하면 --mode 가 정한다 "
+            f"(model {DEFAULT_NUM_CTX}, assemble {ASSEMBLE_NUM_CTX}). "
             "작으면 프롬프트가 조용히 잘린다"
         ),
     )
@@ -614,11 +944,39 @@ def _parse_args(
     )
 
     parser.add_argument(
+        "--max-chunks",
+        type=int,
+        default=8,
+        help=(
+            "--mode assemble 에서 질의를 몇 번까지 나눠 보낼 것인가. 기본 "
+            "%(default)s. **이 값이 커버리지의 상한이다** — 한 번에 물으면 "
+            "창 하나에 들어가는 만큼만 볼 수 있지만, 나눠 물으면 그 배수만큼 "
+            "본다. 1 이면 분할하지 않는다(예전과 같다)"
+        ),
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["assemble", "model"],
+        default="assemble",
+        help=(
+            "누가 findings 를 쓰는가. 기본 %(default)s. "
+            "assemble 은 모델이 {ref, 기법, 사유, 근거 필드}만 고르고 파이썬이 "
+            "원본에서 조립한다 — 질의를 조각으로 나눠 보내므로 창 하나에 "
+            "들어가는 것보다 많이 본다(실측: 창 8,192에서 102건, 창 32,768 "
+            "단일 질의는 54건). model 은 모델이 문장·claims·타임라인을 전부 "
+            "쓰는 예전 경로다. **폴백이 아니라 측정용 스위치다** — 같은 "
+            "케이스를 두 경로로 돌려야 무엇이 달라졌는지 말할 수 있다 "
+            "(--no-constrain 과 같은 규약)"
+        ),
+    )
+    parser.add_argument(
         "--reserve-output-tokens",
         type=int,
-        default=allocation.RESERVE_OUTPUT_TOKENS,
+        default=None,
         help=(
-            "모델이 답을 쓸 자리로 남겨 둘 토큰. 기본 %(default)s. "
+            "모델이 답을 쓸 자리로 남겨 둘 토큰. 생략하면 --mode 가 정한다 "
+            f"(model {allocation.RESERVE_FINDINGS_TOKENS}, "
+            f"assemble {allocation.RESERVE_SELECTION_TOKENS}). "
             "프롬프트가 창을 꽉 채우면 응답이 잘려 malformed_output 으로 온다. "
             "**이 값은 num_predict 로도 그대로 나간다** — "
             "자리를 비워 두는 것과 그만큼만 쓰게 하는 것이 "
@@ -658,6 +1016,16 @@ def _parse_args(
     )
 
     parser.add_argument(
+        "--queries",
+        default=None,
+        help=(
+            "모델과 주고받은 내역을 남길 디렉터리. 생략하면 --out 옆의 "
+            "05_llm_queries/. **산출물만 보면 이 단계는 블랙박스다** — 무엇을 "
+            "물었고 무엇이 돌아왔는지가 있어야 findings 가 왜 그렇게 나왔는지 "
+            "되짚는다. 'none' 을 주면 남기지 않는다"
+        ),
+    )
+    parser.add_argument(
         "--errors",
         default=None,
     )
@@ -671,6 +1039,23 @@ def main(
     io.configure_console()
 
     args = _parse_args(argv)
+
+    # **질의 종류가 예산을 정한다.** 선별 질의는 ref 와 한 줄 사유만 내므로
+    # 답 쓸 자리가 소견 질의의 4분의 1이다. 큰 쪽에 맞춰 두면 작은 질의가
+    # 쓰지도 않을 자리를 창에서 떼어 가고, 창이 좁을수록 그 낭비가 곧
+    # 레코드 수다. 사용자가 직접 준 값은 그대로 존중한다.
+    assembled = args.mode == "assemble"
+    if args.num_ctx is None:
+        # **창도 질의 종류를 따라간다.** 단일 질의는 창이 곧 커버리지라 넓어야
+        # 하고, 분할 질의는 여러 번 보내므로 좁혀도 커버리지를 잃지 않는다 —
+        # 오히려 GPU 에 다 올라가 빨라진다(`llm_client.ASSEMBLE_NUM_CTX`).
+        args.num_ctx = ASSEMBLE_NUM_CTX if assembled else DEFAULT_NUM_CTX
+    if args.reserve_output_tokens is None:
+        args.reserve_output_tokens = (
+            allocation.RESERVE_SELECTION_TOKENS
+            if assembled
+            else allocation.RESERVE_FINDINGS_TOKENS
+        )
 
     out_path = Path(args.out)
 
@@ -834,14 +1219,33 @@ def main(
         max_list_items=max_list_items,
         constrain=not args.no_constrain,
     )
+    # 프롬프트의 고정 부분을 **실제로 조립해서** 잰다. 아래 요약에서 한 번
+    # 더 쓰므로 이름을 붙여 둔다 — 두 번 재면 두 값이 갈라질 수 있다.
+    # **질의 종류마다 다르다.** 선별 질의의 시스템 프롬프트가 더 짧다.
+    # 한쪽 값으로 두 질의의 예산을 잡으면 그 차이만큼 레코드가 덜
+    # 실리거나 프롬프트가 창을 넘는다.
+    overhead_chars = (
+        client.selection_overhead_chars(scenario)
+        if assembled
+        else client.prompt_overhead_chars(scenario)
+    )
 
     budget_chars = allocation.char_budget(
         args.num_ctx,
-        client.prompt_overhead_chars(
-            scenario
-        ),
+        overhead_chars,
         reserve_output_tokens=args.reserve_output_tokens,
     )
+
+    # **조립 경로는 예산을 조각 수만큼 곱해서 고른다.** 한 번에 물으면 창
+    # 하나에 들어가는 만큼만 볼 수 있는데, 나눠 물으면 그 배수만큼 볼 수
+    # 있다. 여기서 곱하지 않으면 배분이 이미 한 창 크기로 잘라 놓아 분할이
+    # 영영 걸리지 않고, Map-Reduce 가 이름만 남는다.
+    #
+    # 4-3 이 "Tier 1 아티팩트당 4건으로 7단계 체인을 재구성해야 한다"를
+    # 미해결로 둔 자리가 이것이다(`docs/limitations.md`).
+    alloc_budget = budget_chars
+    if assembled and budget_chars > 0:
+        alloc_budget = budget_chars * max(1, args.max_chunks)
 
     records, quotas, budget = allocation.allocate_records(
         parsed.values(),
@@ -849,7 +1253,7 @@ def main(
         signal_sources=signal_sources,
         limit=args.limit,
         window_seconds=args.window_seconds,
-        char_budget=budget_chars,
+        char_budget=alloc_budget,
         max_list_items=max_list_items,
     )
 
@@ -888,13 +1292,37 @@ def main(
             },
         )
 
-    findings = interpret(
-        scenario,
-        records,
-        client,
-        log,
-        max_attempts=args.max_attempts,
+    # 질의 내역은 기본으로 남긴다. 실패한 시도만 남기는 _raw_attempt*.txt 와
+    # 달리 성공한 질의도 남긴다 — 프롬프트를 고칠 때 무엇이 달라졌는지
+    # 대조할 것이 있어야 한다.
+    queries = QueryLog(
+        None if args.queries == "none"
+        else Path(args.queries) if args.queries
+        else out_path.parent / "05_llm_queries"
     )
+
+    if assembled:
+        findings = interpret_assembled(
+            scenario,
+            records,
+            client,
+            log,
+            max_attempts=args.max_attempts,
+            # 조각을 나누는 기준이 레코드를 고르는 기준과 같은 예산이어야
+            # 한다. 다른 수를 쓰면 "예산에 맞춰 골랐는데 조각이 창을 넘는"
+            # 상태가 조용히 생긴다.
+            char_budget=budget_chars,
+            queries=queries,
+        )
+    else:
+        findings = interpret(
+            scenario,
+            records,
+            client,
+            log,
+            max_attempts=args.max_attempts,
+            queries=queries,
+        )
 
     io.write_json(
         out_path,
@@ -916,7 +1344,62 @@ def main(
             f"후보 {quota.candidates}건 / "
             f"전달 {quota.seats}건 ({short})"
         )
+    # 창을 얼마나 쓰고 있는지는 **늘** 말한다. 넘었는지는 사후에 알 방법이
+    # 없기 때문이다 — Ollama 는 창을 넘은 프롬프트를 거부하지 않고 앞을
+    # 잘라서 받는다. 잘린 실행은 오류 없이 끝나고 findings 만 얇아진다
+    # (`allocation.CHARS_PER_TOKEN` 의 실측 참조). 창을 좁히는 작업이
+    # 이어질 자리라, 남은 여유가 눈에 보여야 한다.
+    # **조립 경로는 조각마다 따로 보낸다.** 전체 글자 수를 조각당 예산에
+    # 견주면 "694%" 같은 수가 나오고, 그것은 거짓말이다. 견줄 것은 **가장
+    # 큰 조각**이다 — 창을 넘는지는 조각 단위로 결정된다.
+    largest_chunk_chars = budget.used_chars
+    if assembled and budget_chars > 0:
+        chunks = allocation.chunk_records(records, budget_chars, max_list_items)
+        largest_chunk_chars = max(
+            (sum(allocation.record_chars(r, max_list_items) for r in chunk) for chunk in chunks),
+            default=0,
+        )
+        print(f"  질의 {len(chunks)}회로 나눔 (조각당 예산 {budget_chars:,}자)")
 
+    prompt_tokens = int((overhead_chars + largest_chunk_chars) / allocation.CHARS_PER_TOKEN)
+    budget_tokens = allocation.prompt_token_budget(
+        args.num_ctx, reserve_output_tokens=args.reserve_output_tokens
+    )
+    print(
+        f"  프롬프트 추정 {prompt_tokens:,}토큰 "
+        f"(쓸 수 있는 {budget_tokens:,}토큰의 {prompt_tokens * 100 // max(1, budget_tokens)}%, "
+        f"창 {args.num_ctx:,} − 출력 예약 {args.reserve_output_tokens:,})"
+    )
+
+    # 실제로 몇 토큰이었는지는 모델만 안다. 추정 옆에 놓아야 상수가 어긋난
+    # 것이 실행 중에 보인다 — 이 자리가 없어서 프롬프트가 잘리고 있다는
+    # 사실을 사람이 따로 재서야 찾아냈다(`limitations-log.md`, 2026-09-03).
+    # **가장 큰 프롬프트**를 본다. 질의를 여러 번 보내면 마지막 호출의 값은
+    # 추정과 다른 프롬프트라 나란히 놓을 수 없고, 알고 싶은 것은 "어느
+    # 프롬프트라도 창을 넘었는가"다.
+    largest_chars, actual_tokens = client.largest_prompt
+    if actual_tokens:
+        observed = largest_chars / actual_tokens
+        print(
+            f"  프롬프트 실측 최대 {actual_tokens:,}토큰 "
+            f"({observed:.2f}자/토큰, 예산이 쓴 값 {allocation.CHARS_PER_TOKEN})"
+        )
+        # 잘렸는지는 이 수로 직접 볼 수 없다. Ollama 가 앞을 자른 뒤의 수를
+        # 돌려주기 때문이다. 드러나는 것은 **비율**이다 — 절반이 잘리면
+        # 자·토큰 비가 두 배가 된다. 그래서 크게 벗어나면 말한다.
+        #
+        # **중단하지는 않는다.** 비율이 벗어나는 데는 잘림 말고 다른 이유도
+        # 있다(레코드 구성이 달라져 상수가 이 케이스에 안 맞는 경우). 증명
+        # 없이 중단하면 새로운 실패 모드를 만드는 것이라, 사람이 보게만 한다.
+        if observed > allocation.CHARS_PER_TOKEN * 1.5:
+            print(
+                f"[{STAGE}] 경고: 자·토큰 비가 예산의 가정({allocation.CHARS_PER_TOKEN})보다 "
+                f"{observed / allocation.CHARS_PER_TOKEN:.1f}배 큽니다. 프롬프트가 창을 넘어 "
+                f"앞이 잘렸을 수 있습니다 — 모델이 받은 것이 보낸 것보다 적으면 "
+                f"findings 는 조용히 얇아집니다. --num-ctx 를 올리거나 --limit 을 낮춰 "
+                f"다시 재 보십시오.",
+                file=sys.stderr,
+            )
     if budget.trimmed:
         print(
             f"  토큰 예산: "
@@ -929,6 +1412,8 @@ def main(
             f"출력 {args.reserve_output_tokens}토큰을 뺀 값이다"
         )
 
+    if queries.count:
+        print(f"  질의 내역 {queries.count}건: {queries.directory}")
     print(
         f"{out_path}: "
         f"레코드 {len(parsed)}건 중 "

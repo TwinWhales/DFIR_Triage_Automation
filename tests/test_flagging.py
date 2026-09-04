@@ -543,7 +543,7 @@ def test_a_binary_in_a_normal_install_location_is_not_flagged():
 
 
 def test_the_path_fragments_carry_separators():
-    """구분자 없이 조각만 쓰면 엉뚱한 데서 걸린다.
+    r"""구분자 없이 조각만 쓰면 엉뚱한 데서 걸린다.
 
     ``temp`` 로 썼다면 ``C:\Program Files\Tempo\app.exe`` 가 걸린다.
     """
@@ -567,6 +567,64 @@ def test_a_child_of_a_script_host_or_document_viewer_is_flagged():
     for parent in (r"C:\Windows\System32\wscript.exe", r"C:\Program Files\Adobe\AcroRd32.exe"):
         record = _sysmon(1, Image=r"C:\kiosk\tool.exe", ParentImage=parent)
         assert "unexpected_parent_process" in flagging.apply(record)["flags"], parent
+
+
+def test_a_browser_spawning_itself_is_not_evidence_of_who_launched_it():
+    """이 룰이 보는 것은 "누가 실행시켰나"다.
+
+    브라우저가 탭·GPU 프로세스로 자기 자신을 여러 번 띄우는 것은 그 질문에
+    아무 말도 하지 않으면서 부모 이름만 보는 룰에는 걸린다. 실측
+    (`K-LIVE-0902-wide`, 2026-09-03)에서 258건 중 157건이 이것이었다.
+    """
+    edge = r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+    record = _sysmon(1, Image=edge, ParentImage=edge)
+
+    assert "unexpected_parent_process" not in flagging.apply(record)["flags"]
+
+
+def test_a_helper_inside_the_parents_own_install_tree_is_not_flagged():
+    """같은 설치 트리 안의 도우미 프로세스. 실측에서 36건이었다.
+
+    **이름이 아니라 관계로 본다.** Edge 를 아는 것이 아니라 "자식이 부모
+    전용 디렉터리 하위인가"를 보므로, 다른 다중 프로세스 프로그램도 함께
+    걸러진다.
+    """
+    record = _sysmon(
+        1,
+        Image=r"C:\Program Files\Microsoft\Edge\Application\130.0.1\identity_helper.exe",
+        ParentImage=r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    )
+
+    assert "unexpected_parent_process" not in flagging.apply(record)["flags"]
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        r"C:\Windows\System32\cmd.exe",
+        r"C:\Windows\System32\WindowsPowerShell1.0\powershell.exe",
+        r"C:\Windows\System32\mmc.exe",
+    ],
+)
+def test_a_shared_system_directory_is_not_a_parents_own_tree(image):
+    r"""**이 검사가 없으면 신호를 지운다.**
+
+    부모가 ``C:\Windows\explorer.exe`` 이면 ``System32`` 전체가 "부모
+    디렉터리 하위"라, explorer → cmd.exe 가 같은 프로그램으로 묶인다.
+    그것이 이 룰이 잡으라고 있는 바로 그것이다 — 실측에서 explorer → cmd
+    아홉 건, → powershell 다섯 건, → mmc 네 건이 걸려 있었다.
+    """
+    record = _sysmon(1, Image=image, ParentImage=r"C:\Windows\explorer.exe")
+
+    assert "unexpected_parent_process" in flagging.apply(record)["flags"]
+
+
+def test_a_missing_image_field_does_not_silence_the_signal():
+    """판단할 근거가 없을 때 신호를 지우면, 파서가 필드를 못 읽은 것이 곧
+    탐지 누락이 된다. 모르면 좁히지 않는다."""
+    record = _sysmon(1, ParentImage=r"C:\Windows\explorer.exe")
+
+    assert "unexpected_parent_process" in flagging.apply(record)["flags"]
 
 
 def test_the_three_sysmon_signals_do_not_collapse_into_one():

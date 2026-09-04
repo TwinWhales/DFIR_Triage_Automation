@@ -406,6 +406,35 @@ def test_the_budget_takes_the_output_seat_first():
     assert full - reserved == int(4096 * allocation.CHARS_PER_TOKEN)
 
 
+def test_the_token_budget_is_the_window_minus_the_output_seat():
+    # 질의를 쪼갤지 정하는 임계값이 이 함수여야 한다. 따로 적어 둔 수는
+    # 창이나 예약이 바뀔 때 옛날 값으로 남고, 그 어긋남은 조용하다.
+    assert allocation.prompt_token_budget(8192, reserve_output_tokens=1024) == 7168
+    assert allocation.prompt_token_budget(4096, reserve_output_tokens=4096) == 0
+    # 예약이 창보다 크면 음수가 아니라 0 이다 — 음수 예산은 아래 글자
+    # 환산에서 부호가 뒤집혀 "무제한"처럼 보인다.
+    assert allocation.prompt_token_budget(2048, reserve_output_tokens=4096) == 0
+
+
+def test_the_char_budget_agrees_with_the_token_budget():
+    # 둘이 갈라지면 분기는 들어간다고 보는데 실을 자리는 없는 상태가 된다.
+    tokens = allocation.prompt_token_budget(16384, reserve_output_tokens=2048)
+    chars = allocation.char_budget(16384, 0, reserve_output_tokens=2048)
+
+    assert chars == int(tokens * allocation.CHARS_PER_TOKEN)
+
+
+def test_the_estimate_does_not_claim_more_room_than_the_model_gives():
+    # 2026-09-03 실측(`qwen2.5:7b`, prompt_eval_count): 55건 62,713자가
+    # 29,910토큰이었다 — 2.10자/토큰. 상수가 이보다 크면 같은 글자를 더 적은
+    # 토큰으로 세어 예산이 헐거워지고, 프롬프트가 창을 넘는다. 넘은 것은
+    # 거부되지 않고 앞이 잘리므로 실행은 조용히 성공한다.
+    assert allocation.CHARS_PER_TOKEN <= 62_713 / 29_910
+
+    measured_chars, measured_tokens = 62_713, 29_910
+    assert measured_chars / allocation.CHARS_PER_TOKEN >= measured_tokens
+
+
 def test_a_long_system_prompt_shrinks_the_budget():
     assert allocation.char_budget(32768, 2000) == allocation.char_budget(32768, 0) - 2000
 
@@ -662,6 +691,65 @@ def test_the_shipped_vocabulary_is_actually_loaded():
     assert not keep.matches("C:\\Windows\\System32\\ntdll.dll")
 
 
+DROP = frozenset({"hashes", "processguid"})
+
+
+def test_dropped_fields_do_not_reach_the_prompt():
+    record = {
+        "ref": "SYSMON#1",
+        "artifact": "evtx:Sysmon",
+        "flags": ["suspicious_process"],
+        "fields": {"Image": r"C:\x.exe", "Hashes": "SHA256=ab", "ProcessGuid": "{1}"},
+    }
+
+    slim = allocation.for_prompt(record, allocation.MAX_LIST_ITEMS, drop=DROP)
+
+    assert slim["fields"] == {"Image": r"C:\x.exe"}
+    # 04_parsed/ 의 원본은 안 건드린다. 06단계 검증이 그 원본을 읽는다.
+    assert set(record["fields"]) == {"Image", "Hashes", "ProcessGuid"}
+
+
+def test_dropping_ignores_case():
+    record = {"ref": "SYSMON#1", "artifact": "evtx:Sysmon", "flags": [],
+              "fields": {"HASHES": "ab", "Image": "x"}}
+
+    assert allocation.for_prompt(record, None, drop=DROP)["fields"] == {"Image": "x"}
+
+
+def test_dropping_happens_before_the_lists_are_trimmed():
+    """뺄 필드의 목록을 자르느라 keep 어휘를 헛돌리지 않는다."""
+    record = {"ref": "SYSMON#1", "artifact": "evtx:Sysmon", "flags": [],
+              "fields": {"Hashes": list(range(100)), "keep": [1, 2, 3]}}
+
+    slim = allocation.for_prompt(record, 2, KEEP, drop=DROP)
+
+    assert "Hashes" not in slim["fields"]
+
+
+def test_the_budget_measures_what_the_prompt_will_actually_carry():
+    # 재는 쪽과 싣는 쪽이 갈라지면 예산이 맞아도 프롬프트가 넘친다.
+    record = {"ref": "SYSMON#1", "artifact": "evtx:Sysmon", "flags": [],
+              "fields": {"Image": r"C:\x.exe", "Hashes": "SHA256=" + "a" * 500}}
+
+    measured = allocation.record_chars(record, allocation.MAX_LIST_ITEMS, drop=DROP)
+    shipped = allocation.for_prompt(record, allocation.MAX_LIST_ITEMS, drop=DROP)
+
+    assert measured == len(json.dumps(shipped, ensure_ascii=False)) + 1
+    assert measured < 200
+
+
+def test_the_shipped_drop_vocabulary_is_actually_loaded():
+    """어휘가 조용히 비면 이 기능이 있으나 마나가 된다."""
+    drop = flagging.prompt_drop_fields()
+
+    assert "hashes" in drop
+    assert "processguid" in drop
+    # 판단에 쓰는 필드는 빠지지 않았는가. 이것이 빠지면 05가 볼 것을 잃는다.
+    assert "commandline" not in drop
+    assert "targetfilename" not in drop
+    assert "reason" not in drop
+
+
 def test_trimming_lets_more_records_through_the_same_budget():
     # 이 작업의 논지다. 한 아티팩트의 목록 때문에 다른 아티팩트가 자리를
     # 잃는 것은 증거의 폭으로 보아 손해다.
@@ -676,3 +764,78 @@ def test_trimming_lets_more_records_through_the_same_budget():
     )
 
     assert lean.effective_limit > fat.effective_limit
+
+
+# ==================================================================== 분할
+
+
+def _rec(ref, chars=100, artifact="evtx:Sysmon"):
+    return {"ref": ref, "artifact": artifact, "flags": [], "fields": {"v": "y" * chars}}
+
+
+def test_everything_that_fits_stays_one_chunk():
+    """조각 수만 보고 단일 질의인지 분할인지 가릴 수 있어야 한다."""
+    records = [_rec(f"SYSMON#{i}") for i in range(5)]
+
+    assert len(allocation.chunk_records(records, 10_000)) == 1
+
+
+def test_a_chunk_never_exceeds_the_budget():
+    records = [_rec(f"SYSMON#{i}") for i in range(10)]
+    one = allocation.record_chars(records[0])
+
+    chunks = allocation.chunk_records(records, one * 3)
+
+    for chunk in chunks:
+        assert sum(allocation.record_chars(r) for r in chunk) <= one * 3
+
+
+def test_chunking_keeps_the_incoming_order():
+    """``allocate_records`` 가 시간순으로 돌려주므로, 앞에서부터 담으면 한
+    조각이 **한 시간대의 여러 아티팩트**가 된다.
+
+    아티팩트로 묶으면 한 조각에 한 아티팩트만 남아 교차 상관을 처음부터
+    버린다 — Reduce 가 되찾아야 할 것을 미리 없애는 셈이다.
+    """
+    records = [
+        _rec("MFT#1", artifact="$MFT"),
+        _rec("SYSMON#1"),
+        _rec("EVTX-SEC#1", artifact="evtx:Security"),
+        _rec("MFT#2", artifact="$MFT"),
+    ]
+
+    flat = [r["ref"] for chunk in allocation.chunk_records(records, 10_000) for r in chunk]
+
+    assert flat == ["MFT#1", "SYSMON#1", "EVTX-SEC#1", "MFT#2"]
+
+
+def test_no_record_is_dropped_or_duplicated():
+    records = [_rec(f"SYSMON#{i}") for i in range(10)]
+    one = allocation.record_chars(records[0])
+
+    chunks = allocation.chunk_records(records, one * 2)
+
+    flat = [r["ref"] for chunk in chunks for r in chunk]
+    assert flat == [r["ref"] for r in records]
+
+
+def test_a_record_bigger_than_the_budget_gets_its_own_chunk():
+    """더 잘게 자를 수단이 없다 — 레코드를 쪼개면 그것은 그 레코드가 아니다."""
+    records = [_rec("SYSMON#1", chars=10), _rec("SYSMON#2", chars=5_000)]
+
+    chunks = allocation.chunk_records(records, 200)
+
+    assert [len(c) for c in chunks] == [1, 1]
+
+
+def test_an_unknown_budget_does_not_split():
+    """"한 건도 못 들어간다"는 판정은 allocate_records 가 이미 했다.
+    여기서 또 하면 사유가 둘이 된다."""
+    records = [_rec(f"SYSMON#{i}") for i in range(5)]
+
+    assert len(allocation.chunk_records(records, 0)) == 1
+
+
+def test_no_records_means_no_chunks():
+    assert allocation.chunk_records([], 1000) == []
+

@@ -27,6 +27,9 @@ class FakeBackend:
         #: 호출마다 받은 ``fmt`` (``test_normalize.py`` 와 같은 규약).
         self.formats: list["dict | None"] = []
         self.name = "fake"
+        #: 모델이 실제로 평가한 프롬프트 토큰 수. 테스트가 값을 꽂아
+        #: "추정 대 실측"을 재현한다(``Backend`` 프로토콜).
+        self.last_prompt_tokens: "int | None" = None
 
     def complete(self, system: str, user: str, *, fmt: "dict | None" = None) -> str:
         self.calls.append((system, user))
@@ -301,6 +304,7 @@ def test_cli_stub_run(tmp_path):
             "--out", str(out),
             "--llm", "stub",
             "--replay", str(FIXTURES / "05_findings.json"),
+            "--mode", "model",
         ]
     )
     assert code == 0
@@ -330,12 +334,77 @@ def test_cli_ties_the_output_cap_to_the_reserved_budget(monkeypatch, tmp_path, r
         "--scenario", str(FIXTURES / "02_scenario.json"),
         "--out", str(tmp_path / "05_findings.json"),
         "--llm", "ollama", "--model", "m",
+        # 이 백엔드가 돌려주는 것이 findings 문서라 예전 경로 시험이다.
+        "--mode", "model",
     ]
     if reserve is not None:
         argv += ["--reserve-output-tokens", str(reserve)]
 
     assert interpret_mod.main(argv) == 0
-    assert captured["num_predict"] == (reserve or allocation.RESERVE_OUTPUT_TOKENS)
+    assert captured["num_predict"] == (reserve or allocation.RESERVE_FINDINGS_TOKENS)
+
+
+def _run_with_tokens(monkeypatch, tmp_path, prompt_tokens):
+    """실측 토큰 수를 꽂은 백엔드로 05를 한 번 돌리고 출력을 돌려준다."""
+    backend = FakeBackend((FIXTURES / "05_findings.json").read_text(encoding="utf-8"))
+    backend.last_prompt_tokens = prompt_tokens
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", lambda kind, **kw: backend)
+    assert (
+        interpret_mod.main(
+            [
+                "--in", str(PARSED),
+                "--scenario", str(FIXTURES / "02_scenario.json"),
+                "--out", str(tmp_path / "05_findings.json"),
+                "--llm", "ollama", "--model", "m",
+                # 이 백엔드가 돌려주는 것이 findings 문서라 예전 경로 시험이다.
+                "--mode", "model",
+            ]
+        )
+        == 0
+    )
+
+
+def test_cli_puts_the_measured_token_count_next_to_the_estimate(
+    monkeypatch, tmp_path, capsys
+):
+    # 추정 옆에 실측이 없으면 상수가 어긋난 것이 실행 중에 보이지 않는다.
+    # 프롬프트가 창을 넘고 있다는 사실을 사람이 따로 재서야 찾아냈다.
+    _run_with_tokens(monkeypatch, tmp_path, 2000)
+
+    printed = capsys.readouterr()
+    assert "프롬프트 실측 최대 2,000토큰" in printed.out
+    assert "경고" not in printed.err
+
+
+def test_cli_warns_when_the_ratio_says_the_prompt_was_cut(monkeypatch, tmp_path, capsys):
+    """자·토큰 비가 예산의 가정보다 훨씬 크면 앞이 잘렸을 수 있다.
+
+    잘림은 이 수로 직접 볼 수 없다 — Ollama 가 자른 뒤의 수를 돌려주기
+    때문이다. 절반이 잘리면 비가 두 배가 되고, 그것이 유일한 단서다.
+    """
+    # 레코드 넷의 프롬프트를 터무니없이 적은 토큰으로 평가했다고 말한다.
+    _run_with_tokens(monkeypatch, tmp_path, 50)
+
+    printed = capsys.readouterr()
+    assert "경고" in printed.err
+    assert "잘렸을 수 있습니다" in printed.err
+    # 중단하지는 않는다 — 비율이 벗어나는 데는 잘림 말고 다른 이유도 있다.
+    assert (tmp_path / "05_findings.json").is_file()
+
+
+def test_the_stub_backend_measures_nothing(tmp_path, capsys):
+    # 0 이 아니라 None 이라야 "0토큰이었다"와 "재지 않았다"가 갈린다.
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "stub",
+            "--replay", str(FIXTURES / "05_findings.json"),
+            "--mode", "model",
+        ]
+    )
+    assert "프롬프트 실측" not in capsys.readouterr().out
 
 
 def test_cli_aborts_when_no_record_carries_a_signal(tmp_path):
@@ -351,6 +420,8 @@ def test_cli_aborts_when_no_record_carries_a_signal(tmp_path):
                 "--out", str(tmp_path / "05_findings.json"),
                 "--llm", "stub",
                 "--replay", str(FIXTURES / "05_findings.json"),
+                "--mode", "model",
+            "--mode", "model",
             ]
         )
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
@@ -371,6 +442,8 @@ def test_cli_aborts_when_the_budget_admits_nothing(tmp_path, capsys):
                 "--out", str(tmp_path / "05_findings.json"),
                 "--llm", "stub",
                 "--replay", str(FIXTURES / "05_findings.json"),
+                "--mode", "model",
+            "--mode", "model",
                 # 출력 자리로 창을 통째로 떼어 레코드에 남는 예산을 0으로.
                 "--num-ctx", "4096",
                 "--reserve-output-tokens", "4096",
@@ -424,8 +497,11 @@ def test_cli_says_so_when_the_budget_trims_seats(tmp_path, capsys):
             "--out", str(out),
             "--llm", "stub",
             "--replay", str(replay),
-            # 레코드 넷 중 둘만 들어갈 만큼만 연다.
-            "--num-ctx", "5300",
+            "--mode", "model",
+            # 레코드 넷 중 둘만 들어갈 만큼만 연다. 창에서 출력 예약을 빼고
+            # 남은 것이 1,056자다 — CHARS_PER_TOKEN 을 실측값으로 낮추면서
+            # 같은 예산이 나오도록 창을 함께 옮겼다(2026-09-03).
+            "--num-ctx", "5600",
             "--reserve-output-tokens", "4096",
         ]
     )
@@ -458,7 +534,14 @@ def test_replaying_a_reply_that_cites_a_trimmed_record_is_refused(tmp_path, caps
                 "--out", str(tmp_path / "05_findings.json"),
                 "--llm", "stub",
                 "--replay", str(FIXTURES / "05_findings.json"),
-                "--num-ctx", "5300",
+                "--mode", "model",
+            "--mode", "model",
+                # 위 테스트와 같은 창이어야 같은 자르기가 일어난다.
+                # CHARS_PER_TOKEN 을 실측값으로 낮추면서 5300 → 5600
+                # (2026-09-03). 예전 값으로 두면 예산이 한 건도 못 들여보내
+                # empty_result 로 죽고, 이 테스트가 보려던 claim_validation
+                # 관문에는 닿지도 못한다.
+                "--num-ctx", "5600",
                 "--reserve-output-tokens", "4096",
             ]
         )
@@ -480,6 +563,338 @@ def test_a_roomy_context_says_nothing_about_the_budget(tmp_path, capsys):
             "--out", str(tmp_path / "05_findings.json"),
             "--llm", "stub",
             "--replay", str(FIXTURES / "05_findings.json"),
+            "--mode", "model",
         ]
     )
     assert "토큰 예산" not in capsys.readouterr().out
+
+
+# ================================================ --mode assemble · 실패 처리
+
+
+def _selection(*items):
+    """선별 질의의 응답 원문."""
+    return json.dumps({"suspicious_records": list(items)}, ensure_ascii=False)
+
+
+def _pick(ref, **overrides):
+    base = {
+        "ref": ref,
+        "technique": None,
+        "reason": "의심 정황",
+        "severity": "medium",
+        "evidence_fields": ["path"],
+    }
+    base.update(overrides)
+    return base
+
+
+def _run_assembled(monkeypatch, tmp_path, backend, extra=()):
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", lambda kind, **kw: backend)
+    return interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "ollama", "--model", "m",
+            "--mode", "assemble",
+            *extra,
+        ]
+    )
+
+
+def _errors(tmp_path):
+    path = tmp_path / "errors.jsonl"
+    if not path.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_assemble_mode_builds_the_document_from_what_the_model_chose(
+    monkeypatch, tmp_path
+):
+    """모델은 고르고 파이썬이 옮긴다. 문장 하나만 모델의 것이다."""
+    backend = FakeBackend(_selection(_pick("MFT#12345")))
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    doc = io.read_json(tmp_path / "05_findings.json")
+    schema.validate(doc, "findings")
+    finding = doc["findings"][0]
+    assert finding["statement"] == "의심 정황"
+    assert [c["field"] for c in finding["claims"]] == ["path"]
+    # 값은 모델이 아니라 원본에서 왔다.
+    assert finding["claims"][0]["value"].endswith("shell.aspx")
+
+
+def test_a_field_the_record_lacks_is_retried_with_feedback(monkeypatch, tmp_path):
+    """**모델 잘못이라 다시 물어보면 고쳐질 수 있다.**
+
+    조립 경로에서 살아남은 유일한 모델 오류 채널이다.
+    """
+    backend = FakeBackend(
+        _selection(_pick("MFT#12345", evidence_fields=["fields.CommandLine"])),
+        _selection(_pick("MFT#12345")),
+    )
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    recorded = _errors(tmp_path)
+    assert [(e["type"], e["action"]) for e in recorded] == [("claim_validation", "retry")]
+    assert len(backend.calls) == 2  # 다시 물어봤고 두 번째가 통과했다
+    # 지적이 프롬프트에 실려 나갔는가. 안 실리면 재시도가 같은 답을 부른다.
+    assert "evidence_fields" in backend.calls[1][1]
+
+
+def test_our_own_bug_stops_at_once_instead_of_burning_three_calls(
+    monkeypatch, tmp_path
+):
+    """**조립기 오류는 재시도해도 같은 답이 나온다.**
+
+    같은 코드가 같은 입력으로 같은 답을 낸다. 재시도하면 모델을 세 번 더
+    부르고 똑같이 죽으며, 그 실패가 claim_validation 으로 쌓여 "모델이
+    틀렸다"와 "우리가 틀렸다"를 한 통계에 섞는다.
+    """
+    # 보내지 않은 ref 를 골랐다고 하면 조립기가 짝을 못 짓는다.
+    backend = FakeBackend(_selection(_pick("MFT#99999")))
+
+    with pytest.raises(SystemExit):
+        _run_assembled(monkeypatch, tmp_path, backend)
+
+    recorded = _errors(tmp_path)
+    assert [(e["type"], e["action"]) for e in recorded] == [("assembly_error", "abort")]
+    assert len(backend.calls) == 1  # 한 번만 부르고 멈췄다
+
+
+def test_the_two_failures_do_not_share_a_name(monkeypatch, tmp_path):
+    """한 이름으로 세면 어느 쪽이 몇 건이었는지 나중에 못 가른다."""
+    assert "assembly_error" in errlog.ERROR_TYPES
+    assert "claim_validation" in errlog.ERROR_TYPES
+
+
+@pytest.mark.parametrize(
+    "mode, expected",
+    [("model", allocation.RESERVE_FINDINGS_TOKENS), ("assemble", allocation.RESERVE_SELECTION_TOKENS)],
+)
+def test_the_output_reserve_follows_the_query_kind(monkeypatch, tmp_path, mode, expected):
+    """선별 질의는 답 쓸 자리가 소견 질의의 4분의 1이다.
+
+    큰 쪽에 맞춰 두면 작은 질의가 쓰지도 않을 자리를 창에서 떼어 간다.
+    """
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        body = (
+            _selection(_pick("MFT#12345"))
+            if mode == "assemble"
+            else (FIXTURES / "05_findings.json").read_text(encoding="utf-8")
+        )
+        return FakeBackend(body)
+
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", fake_build_backend)
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "ollama", "--model", "m",
+            "--mode", mode,
+        ]
+    )
+
+    assert captured["num_predict"] == expected
+
+
+def test_an_explicit_reserve_wins_over_the_mode_default(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        return FakeBackend(_selection(_pick("MFT#12345")))
+
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", fake_build_backend)
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "ollama", "--model", "m",
+            "--mode", "assemble",
+            "--reserve-output-tokens", "2048",
+        ]
+    )
+
+    assert captured["num_predict"] == 2048
+
+
+def test_a_chunk_failure_stops_instead_of_finishing_with_the_rest(monkeypatch, tmp_path):
+    """**남은 조각으로 완주하면 그것이 폴백이다.**
+
+    증거의 일부만 본 보고서가 전부를 본 것처럼 나가고, 그 사실은 산출물
+    어디에도 없다. 이 프로젝트에서 가장 나쁜 성질이다.
+    """
+    # 세 번 다 JSON 이 아니다 — 한 조각이 재시도를 다 쓴다.
+    backend = FakeBackend("설명만 하고 JSON 을 안 냈다", "또 안 냈다", "여전히 안 냈다")
+
+    with pytest.raises(SystemExit):
+        _run_assembled(monkeypatch, tmp_path, backend)
+
+    recorded = _errors(tmp_path)
+    assert [e["action"] for e in recorded] == ["retry", "retry", "retry", "abort"]
+    assert recorded[-1]["type"] == "malformed_output"
+    assert "일부만 본 보고서" in recorded[-1]["detail"]["message"]
+
+
+def test_each_chunk_is_asked_separately(monkeypatch, tmp_path):
+    """조각마다 자기 질의를 받아야, 어느 조각이 틀렸는지 그 자리에서 안다."""
+    backend = FakeBackend(
+        _selection(_pick("MFT#12345")),
+        _selection(_pick("MFT#12346")),
+        _selection(),
+        _selection(),
+        _selection(),
+    )
+
+    # 레코드 하나가 겨우 들어갈 만큼만 열어 조각을 강제한다. 배분 예산은
+    # --max-chunks 배라 레코드는 전부 골라지고, 질의만 나뉜다.
+    code = _run_assembled(
+        monkeypatch,
+        tmp_path,
+        backend,
+        extra=["--num-ctx", "5400", "--reserve-output-tokens", "4096"],
+    )
+
+    assert code == 0
+    assert len(backend.calls) > 1  # 한 번에 다 묻지 않았다
+    doc = io.read_json(tmp_path / "05_findings.json")
+    # 조각들에서 나온 선별이 하나의 문서로 합쳐진다.
+    assert {f["refs"][0] for f in doc["findings"]} == {"MFT#12345", "MFT#12346"}
+
+
+def test_the_reduce_query_ties_records_across_artifacts(monkeypatch, tmp_path):
+    """**이것이 Map-Reduce 의 Reduce 다.**
+
+    없으면 조각마다 따로 판정만 하고 파이썬이 append 할 뿐이라, 조각을 넘는
+    연결은 아무도 말한 적이 없다.
+    """
+    backend = FakeBackend(
+        _selection(_pick("MFT#12345"), _pick("EVTX-SEC#40912", evidence_fields=["event_id"])),
+        json.dumps(
+            {
+                "connections": [
+                    {
+                        "refs": ["MFT#12345", "EVTX-SEC#40912"],
+                        "technique": None,
+                        "reason": "파일이 떨어진 직후 계정이 생겼다",
+                        "severity": "high",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    doc = io.read_json(tmp_path / "05_findings.json")
+    schema.validate(doc, "findings")
+    assert len(doc["findings"]) == 1
+    assert doc["findings"][0]["refs"] == ["MFT#12345", "EVTX-SEC#40912"]
+    # 각 레코드의 근거는 Map 이 골라 둔 것이다.
+    assert {c["field"] for c in doc["findings"][0]["claims"]} == {"path", "event_id"}
+
+
+def test_a_failed_reduce_skips_instead_of_stopping(monkeypatch, tmp_path):
+    """**조각 실패와 다르다.** 여기서 잃는 것은 종합이지 증거가 아니다.
+
+    고른 항목은 전부 단독 소견으로 실리므로 산출물이 부분이 되지 않는다.
+    그래서 abort 가 아니라 skip 이다. 다만 조용히 넘어가지는 않는다.
+    """
+    backend = FakeBackend(
+        _selection(_pick("MFT#12345"), _pick("EVTX-SEC#40912", evidence_fields=["event_id"])),
+        "종합은 못 하겠고 설명만 하겠다",
+    )
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    recorded = _errors(tmp_path)
+    assert [(e["type"], e["action"]) for e in recorded] == [("malformed_output", "skip")]
+    doc = io.read_json(tmp_path / "05_findings.json")
+    # 증거는 다 실렸다 — 묶이지 않았을 뿐이다.
+    assert {f["refs"][0] for f in doc["findings"]} == {"MFT#12345", "EVTX-SEC#40912"}
+
+
+def test_one_pick_needs_no_reduce_query(monkeypatch, tmp_path):
+    """묶을 것이 둘 미만이면 물어볼 것이 없다."""
+    backend = FakeBackend(_selection(_pick("MFT#12345")))
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    assert len(backend.calls) == 1  # 종합 질의를 안 보냈다
+
+
+@pytest.mark.parametrize(
+    "mode, expected",
+    [
+        ("model", interpret_mod.DEFAULT_NUM_CTX),
+        ("assemble", interpret_mod.ASSEMBLE_NUM_CTX),
+    ],
+)
+def test_the_window_follows_the_query_kind(monkeypatch, tmp_path, mode, expected):
+    """단일 질의는 창이 곧 커버리지라 넓어야 하고, 분할 질의는 여러 번
+    보내므로 좁혀도 커버리지를 잃지 않는다.
+
+    한 값으로 두면 한쪽이 반드시 손해다 — 넓으면 GPU 에서 흘러넘치고,
+    좁으면 단일 질의가 54건에서 열 건 남짓이 된다.
+    """
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        body = (
+            _selection(_pick("MFT#12345"))
+            if mode == "assemble"
+            else (FIXTURES / "05_findings.json").read_text(encoding="utf-8")
+        )
+        return FakeBackend(body)
+
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", fake_build_backend)
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "ollama", "--model", "m",
+            "--mode", mode,
+        ]
+    )
+
+    assert captured["num_ctx"] == expected
+
+
+def test_an_explicit_window_wins_over_the_mode_default(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    def fake_build_backend(kind, **kwargs):
+        captured.update(kwargs)
+        return FakeBackend(_selection(_pick("MFT#12345")))
+
+    monkeypatch.setattr(interpret_mod.llm, "build_backend", fake_build_backend)
+    interpret_mod.main(
+        [
+            "--in", str(PARSED),
+            "--scenario", str(FIXTURES / "02_scenario.json"),
+            "--out", str(tmp_path / "05_findings.json"),
+            "--llm", "ollama", "--model", "m",
+            "--mode", "assemble",
+            "--num-ctx", "16384",
+        ]
+    )
+
+    assert captured["num_ctx"] == 16384
+

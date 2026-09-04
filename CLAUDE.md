@@ -21,16 +21,12 @@
 ## 자주 쓰는 명령
 
 ```bash
-# 테스트 — 전체 999개. skip 은 evidence/ 이미지와 실제 모델이 없어 빠지는
-#          것이라 기계마다 다르다 (이미지 둘 있는 기계에서 986 통과 + 13 skip)
+# 테스트 — skip 은 evidence/ 이미지와 실제 모델이 없어 빠지는 것이라
+#          기계마다 다르다 (2026-09-03: 1,252 통과 + 21 skip)
 .venv/Scripts/python.exe -m pytest -q
 
-# 실제 모델로 02·05 를 불러 본다. 이 변수가 없으면 위 실행에서 통째로 빠진다.
-# 스텁으로는 안 나오는 부류를 잡는다 — 프롬프트가 모델에게 말이 되는지,
-# 응답이 파서를 통과하는지, 지어낸 ref 를 우리가 거르는지.
-DFIR_LIVE_MODEL=qwen2.5:14b .venv/Scripts/python.exe -m pytest tests/test_llm_live.py -v
-
 # 관통 실행 (LLM 스텁, 세 번째 인자가 replay 디렉터리)
+# MODE=assemble 이면 05 가 조립 경로로 돈다 (재생 파일이 05_selection.json 이다)
 PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
   benchmark/fixtures/C-001-webshell
 
@@ -62,6 +58,23 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 # flags 어휘를 고쳤으면 스키마 enum을 맞춘다 (--check 는 확인만, 어긋나면 1)
 .venv/Scripts/python.exe tools/sync_flag_enum.py
 ```
+
+**실제 모델로 02·05 를 불러 보는 시험은 PowerShell 형식이다.** 이 셸은
+`VAR=값 명령` 을 안 받는다 — 그것을 명령 이름으로 읽고
+`CommandNotFoundException` 을 낸다. 위 코드펜스의 다른 줄들과 달리 이것은
+bash 로 옮겨 적으면 안 된다.
+
+```powershell
+$env:DFIR_LIVE_MODEL = "qwen2.5:7b"
+$env:DFIR_LIVE_TIMEOUT = "600"
+.venv/Scripts/python.exe -m pytest tests/test_llm_live.py -v
+Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
+```
+
+**끝나면 지운다.** 안 지우면 그 세션의 이후 `pytest` 가 전부 모델을 부르고,
+10초에 끝나던 스위트가 몇 분이 된다. 스텁으로는 안 나오는 부류를 잡는다 —
+프롬프트가 모델에게 말이 되는지, 응답이 파서를 통과하는지, 지어낸 `ref` 를
+우리가 거르는지, 그리고 조립 경로에서 claims 가 정말 원본의 복사인지.
 
 ## 무엇을 알고 싶으면 어디를 보나
 

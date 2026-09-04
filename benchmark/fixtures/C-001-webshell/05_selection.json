@@ -1,0 +1,45 @@
+{
+  "_note": [
+    "05단계 조립 경로(--mode assemble)의 스텁 응답. 사람이 작성한 고정 입력이다.",
+    "",
+    "한 파일에 키가 둘인 이유가 있다. StubBackend 는 호출마다 같은 파일을",
+    "돌려주는데 조립 경로는 질의를 두 종류 보낸다 — 선별(Map)이",
+    "suspicious_records 를, 종합(Reduce)이 connections 를 읽는다. 둘을 한",
+    "파일에 두면 같은 내용을 두 번 돌려줘도 각 질의가 자기 것만 가져간다.",
+    "",
+    "ref 와 evidence_fields 는 04_parsed/ 의 실제 레코드에 맞춰 적었다.",
+    "없는 필드를 적으면 조립이 SelectionError 로 재시도하고, 스텁은 같은",
+    "답을 반복하므로 세 번 만에 중단한다."
+  ],
+  "suspicious_records": [
+    {
+      "ref": "MFT#12345",
+      "technique": "T1505.003",
+      "reason": "웹루트의 shell.aspx 가 $SI 와 $FN 생성 시각이 어긋난다",
+      "severity": "high",
+      "evidence_fields": ["path", "si_ctime", "fn_ctime"]
+    },
+    {
+      "ref": "EVTX-SEC#40912",
+      "technique": "T1136.001",
+      "reason": "svc_backup 계정이 생성되었다",
+      "severity": "medium",
+      "evidence_fields": ["fields.TargetUserName", "event_id"]
+    },
+    {
+      "ref": "EVTX-SEC#40915",
+      "technique": null,
+      "reason": "생성된 계정이 특권 그룹에 추가되었다",
+      "severity": "high",
+      "evidence_fields": ["fields.TargetUserName", "timestamp"]
+    }
+  ],
+  "connections": [
+    {
+      "refs": ["EVTX-SEC#40912", "EVTX-SEC#40915"],
+      "technique": "T1136.001",
+      "reason": "생성된 계정이 곧바로 특권 그룹에 추가되었다",
+      "severity": "high"
+    }
+  ]
+}

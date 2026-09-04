@@ -553,3 +553,148 @@ def test_cli_output_is_lf_only(tmp_path):
     )
     assert b"\r\n" not in out.read_bytes()
     assert json.loads(out.read_text(encoding="utf-8"))["stage"] == "06_verify"
+
+
+# ==================================================== technique_supported
+
+
+SUPPORTED = {
+    "T1505.003": frozenset({"$MFT", "$UsnJrnl", "evtx:System"}),
+    "T1059.003": frozenset({"evtx:Sysmon", "prefetch"}),
+}
+
+
+def _tech_ctx(**overrides):
+    base = dict(records={}, input_refs=frozenset(), technique_artifacts=SUPPORTED)
+    base.update(overrides)
+    return checkers.CheckContext(**base)
+
+
+def _run_tech(finding, ctx=None):
+    return checkers.CHECKERS["technique_supported"](finding, ctx or _tech_ctx())
+
+
+def test_a_technique_backed_by_the_cited_artifact_passes():
+    result = _run_tech(_finding(technique="T1505.003", refs=["MFT#12345"]))
+
+    assert result.rejection is None
+
+
+def test_a_technique_the_evidence_cannot_support_is_rejected():
+    """**이것이 이 체커의 전부다.** 값이 아니라 함의를 본다.
+
+    claims 를 파이썬이 조립하면 value_match 는 항등식이 되고, ref 는 출력
+    문법이 이미 막는다. 모델에게 남은 자유도 중 결정론적으로 잴 수 있는
+    것이 이것 하나다.
+    """
+    finding = _finding(technique="T1505.003", refs=["SRUM-NET#12"], claims=[])
+
+    result = _run_tech(finding)
+
+    assert result.rejection is not None
+    assert result.rejection.reason == "technique_unsupported"
+    assert result.rejection.detail["cited_artifacts"] == ["srum:NetworkUsage"]
+
+
+def test_one_supporting_reference_is_enough():
+    """맥락으로 다른 아티팩트를 함께 인용하는 것은 정상이다.
+
+    전부가 근거여야 한다고 하면 과엄격 쪽으로 넘어가고, 환각률이 실제
+    환각이 아니라 문장의 풍부함을 벌하게 된다.
+    """
+    finding = _finding(technique="T1505.003", refs=["SRUM-NET#12", "MFT#12345"], claims=[])
+
+    assert _run_tech(finding).rejection is None
+
+
+def test_claims_only_citations_are_judged_too():
+    """``refs`` 에 없고 ``claims`` 에만 있는 ref 가 실제로 나온다."""
+    finding = _finding(
+        technique="T1505.003",
+        refs=[],
+        claims=[{"ref": "SRUM-NET#9", "field": "x", "value": "y"}],
+    )
+
+    assert _run_tech(finding).rejection is not None
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        # 종합 판단 문장. 동결 스키마가 null 을 허용한다.
+        _finding(technique=None, refs=["SRUM-NET#12"], claims=[]),
+        # 매핑이 없는 기법 — 03단계의 매핑 결손이지 05단계의 잘못이 아니다.
+        _finding(technique="T9999", refs=["SRUM-NET#12"], claims=[]),
+        # 인용한 것이 없으면 볼 것이 없다.
+        _finding(technique="T1505.003", refs=[], claims=[]),
+    ],
+)
+def test_what_cannot_be_judged_is_not_rejected(finding):
+    """판정할 수 없는 것을 기각하면 환각률이 우리 무지를 센다."""
+    assert _run_tech(finding).rejection is None
+
+
+def test_an_empty_mapping_table_rejects_nothing():
+    """매핑을 못 읽었는데 전부 기각하면 증거가 아니라 우리 설정을 재게 된다."""
+    finding = _finding(technique="T1505.003", refs=["SRUM-NET#12"], claims=[])
+
+    assert _run_tech(finding, _tech_ctx(technique_artifacts={})).rejection is None
+
+
+def test_a_malformed_ref_is_left_to_ref_exists():
+    """같은 잘못이 두 유형으로 집계되면 분포가 왜곡된다."""
+    finding = _finding(technique="T1505.003", refs=["NOT-A-REF"], claims=[])
+
+    assert _run_tech(finding).rejection is None
+
+
+def test_the_technique_check_does_not_count_as_a_claims_check():
+    """``checks`` 는 claims 대조 횟수여야 한다. 문장 단위 조건은 안 센다."""
+    result = _run_tech(_finding(technique="T1505.003", refs=["MFT#12345"]))
+
+    assert result.checks == 0
+    assert result.checks_passed == 0
+
+
+def test_the_shipped_mapping_table_is_actually_loaded():
+    """표가 조용히 비면 이 체커가 있으나 마나가 된다."""
+    table = verify_mod.technique_artifacts("mappings")
+
+    assert "T1505.003" in table
+    assert "$MFT" in table["T1505.003"]
+    assert "srum:NetworkUsage" not in table["T1505.003"]
+
+
+def test_a_followup_belongs_to_its_own_technique_not_the_file():
+    """``followups:`` 는 자기 ``technique`` 을 갖는다.
+
+    ``T1505.003.yaml`` 의 followup 은 T1543.003(서비스 지속성)의 것이다.
+    파일 키로 묶으면 웹셸이 `evtx:System` 을 자기 근거로 인정하게 되고,
+    그러면 기법을 잘못 붙인 소견이 통과한다.
+    """
+    table = verify_mod.technique_artifacts("mappings")
+
+    assert "evtx:System" not in table["T1505.003"]
+    assert "evtx:System" in table["T1543.003"]
+
+
+def test_a_rejection_says_which_other_techniques_the_evidence_supports():
+    """기각 하나가 "모델이 틀렸다"인지 "매핑이 비었다"인지 자동으로는
+    가릴 수 없다. 그래서 사람이 가를 재료를 함께 싣는다.
+
+    프리패치가 여러 기법의 근거로 등재돼 있는데 이 기법에만 없다면,
+    그것은 매핑을 넓힐 것인가라는 **판정 가능한 질문**이 된다.
+    """
+    ctx = _tech_ctx(technique_artifacts=verify_mod.technique_artifacts("mappings"))
+    finding = _finding(technique="T1505.003", refs=["PF#1"], claims=[])
+
+    detail = _run_tech(finding, ctx).rejection.detail
+
+    assert "T1543.003" in detail["also_supports"]
+    # 기각당한 기법 자신은 빠진다 — 그 목록은 "다른 어디서 근거가 되나"다.
+    assert "T1505.003" not in detail["also_supports"]
+
+
+def test_a_missing_mapping_directory_gives_an_empty_table():
+    """매핑이 없어도 06단계는 돌아야 한다 — 결정론적 구간이다."""
+    assert verify_mod.technique_artifacts("no/such/directory") == {}

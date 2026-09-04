@@ -243,3 +243,130 @@ def test_the_replay_backend_ignores_the_format(tmp_path):
     fixture.write_text('{"findings": []}', encoding="utf-8")
     backend = llm.StubBackend(fixture)
     assert backend.complete("s", "u", fmt={"type": "object"}) == '{"findings": []}'
+
+
+# ================================================= 선별 질의(Map) 출력 스키마
+
+
+def _records(n=2):
+    return [
+        {
+            "ref": f"SYSMON#{i}",
+            "artifact": "evtx:Sysmon",
+            "timestamp": "2026-08-26T00:33:07Z",
+            "fields": {"CommandLine": "cmd /c x", "Image": "a.exe"},
+        }
+        for i in range(1, n + 1)
+    ]
+
+
+def _selection(records=None, techniques=("T1059.003",), allowed=None):
+    from src.stage04_parse.flagging import claim_fields
+
+    scenario = {"techniques": [{"id": t} for t in techniques]}
+    return interpret_client.selection_schema(
+        scenario, records if records is not None else _records(), allowed or claim_fields().names
+    )
+
+
+def _branches(built=None):
+    item = (built or _selection())["properties"]["suspicious_records"]["items"]
+    return item["oneOf"] if "oneOf" in item else [item]
+
+
+def test_the_selection_schema_only_allows_refs_we_actually_sent():
+    """걸러 낼 것이 아니라 나오지 않게 한다 — constrained_schema 와 같은 규약."""
+    assert [b["properties"]["ref"]["const"] for b in _branches()] == [
+        "SYSMON#1",
+        "SYSMON#2",
+    ]
+
+
+def test_each_record_may_only_cite_its_own_fields():
+    """**합집합 enum 으로는 부족했다** (2026-09-03 실물).
+
+    배치 전체의 필드 이름을 하나의 enum 으로 주면, 파일 생성 이벤트에
+    프로세스 생성 이벤트의 `fields.CommandLine` 을 붙이는 것이 문법상
+    합법이다. 실제로 모델이 그렇게 했고 temperature 0 이라 재시도 세 번이
+    같은 답을 냈다. 걸러 내는 것으로는 안 되는 자리였다.
+    """
+    records = [
+        {"ref": "SYSMON#1", "fields": {"CommandLine": "cmd /c x"}},
+        {"ref": "SYSMON#2", "fields": {"TargetFilename": r"C:\x.dll"}},
+    ]
+    by_ref = {
+        b["properties"]["ref"]["const"]: b["properties"]["evidence_fields"]["items"]["enum"]
+        for b in _branches(_selection(records=records))
+    }
+
+    assert by_ref["SYSMON#1"] == ["fields.CommandLine"]
+    assert by_ref["SYSMON#2"] == ["fields.TargetFilename"]
+
+
+def test_a_record_with_no_citable_field_can_still_be_chosen():
+    """갈래에서 빼면 모델이 그 레코드를 아예 못 고른다 — 증거를 조용히 숨기는 쪽이다.
+
+    고를 수는 있되 claims 가 비어 06단계에서 unverifiable 이 된다.
+    """
+    branches = _branches(_selection(records=[{"ref": "SYSMON#1", "fields": {"Nope": 1}}]))
+
+    assert branches[0]["properties"]["evidence_fields"]["maxItems"] == 0
+
+
+def test_the_selection_schema_puts_the_ref_first():
+    """문법이 선언 순서대로 내보낸다.
+
+    ``ref`` 를 뒤에 두면 앞의 자유 필드에서 길을 잃었을 때 그 선택이 통째로
+    사라진다. 실측(2026-09-03)에서 ``evidence_fields`` 가 맴돌다 출력 상한에
+    잘렸고 ``ref`` 는 아예 나오지 못했다.
+    """
+    assert list(_branches()[0]["properties"])[0] == "ref"
+
+
+def test_every_array_in_the_selection_schema_has_an_upper_bound():
+    """**상한이 없으면 모델이 배열에서 맴돈다.** 실측으로 확인한 실패다.
+
+    ``pattern`` 과 달리 ``maxItems`` 는 Ollama 문법으로 내려간다
+    (2026-09-03 실측).
+    """
+    picks = _selection()["properties"]["suspicious_records"]
+
+    assert picks["maxItems"] == 2  # 보낸 레코드 수
+    assert all(b["properties"]["evidence_fields"]["maxItems"] >= 1 for b in _branches())
+
+
+def test_the_technique_enum_keeps_null_for_ungrounded_findings():
+    """기법 목록을 통과 조건으로 만들면 시나리오가 예측 못 한 것이
+    원리적으로 안 나온다. 동결 스키마도 null 을 허용한다."""
+    assert None in _branches()[0]["properties"]["technique"]["enum"]
+
+
+def test_evidence_fields_are_the_vocabulary_intersected_with_what_is_present():
+    """어휘로 묶는 것은 무엇을 검증 대상으로 삼을지가 우리 결정이기 때문이고,
+    실제 필드로 좁히는 것은 없는 이름을 못 내게 하기 위해서다."""
+    names = interpret_client.evidence_field_names(
+        _records(), ("fields.CommandLine", "path", "timestamp")
+    )
+
+    assert names == ["fields.CommandLine", "timestamp"]  # path 는 레코드에 없다
+
+
+def test_the_selection_schema_does_not_carry_a_regex():
+    """변환기가 정규식을 삼키지 못한다(``llm.output_schema`` 참조)."""
+    assert "pattern" not in json.dumps(_selection())
+
+
+def test_an_empty_record_list_does_not_produce_an_impossible_enum():
+    """빈 enum 은 아무 값도 만족시키지 못해, 앞 단계의 문제가 05단계 환각으로
+    둔갑한다."""
+    item = _selection(records=[])["properties"]["suspicious_records"]["items"]
+
+    assert item == {"type": "object"}
+
+
+def test_the_selection_severity_matches_the_frozen_vocabulary():
+    """조립이 그대로 동결 스키마를 통과해야 한다."""
+    frozen = schema.load_schema("findings")
+    allowed = frozen["properties"]["findings"]["items"]["properties"]["severity"]["enum"]
+    assert _branches()[0]["properties"]["severity"]["enum"] == allowed
+
