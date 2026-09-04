@@ -93,8 +93,10 @@ from pathlib import Path
 import pytest
 
 from src.common import io, llm, refs, schema
+from src.stage02_normalize import coverage
 from src.stage02_normalize import llm_client as normalize_client
 from src.stage02_normalize import normalize as normalize_mod
+from src.stage03_select import select as select_mod
 from src.stage05_interpret import interpret as interpret_mod
 from src.stage04_parse import flagging
 from src.stage05_interpret import assembly as assembly_mod
@@ -444,3 +446,84 @@ def test_a_missing_model_stops_the_stage_instead_of_writing_nothing_quietly(
         )
     assert not (case / "02_nope.json").exists(), "실패했는데 산출물이 남았다"
     assert (case / "errors.jsonl").is_file(), "실패가 errors.jsonl 에 남지 않았다"
+
+
+def test_an_account_clause_reaches_an_account_technique(tmp_path: Path) -> None:
+    """계정 축을 물으면 계정 기법이 나오는가 — **03단계까지 이어지는가.**
+
+    2026-09-04 `K-LIVE-0902-wide` 에서 입력이 "계정 관련 변경"을 물었는데
+    `T1136`·`T1098`·`T1078` 이 하나도 나오지 않았다. 02 의 기법 목록이
+    03 의 유일한 입력이라 `evtx:Security` 가 요청되지 않았고, 보고서는
+    그것을 "식별된 기법에 매핑된 아티팩트가 아님"으로 인쇄했다 — 그 파일은
+    같은 수집 안에 15.8MB 로 있었다.
+
+    프롬프트를 고쳐 8/8 로 나오게 됐다(고치기 전 0/8). **기법 ID 를 못박지
+    않는다** — 계정 축에 닿기만 하면 되고, 어느 하위 기법인지는 모델의
+    몫이다.
+    """
+    raw = (
+        "키오스크 단말에서 침해사고가 발생했습니다. "
+        "USB 저장장치가 연결된 뒤 그 안의 실행 파일이 실행됐고, "
+        "이후 명령 셸과 PowerShell이 사용된 정황이 있습니다. "
+        "재부팅 뒤에도 남는 자동 실행 등록과 계정 관련 변경이 "
+        "있었는지도 확인해야 합니다. 사고 발생일은 2026년 8월 31일입니다."
+    )
+    # 픽스처를 복사해 `raw` 만 바꾼다. 입력 스키마를 손으로 다시 쓰면
+    # 스키마가 늘어날 때 이 테스트만 조용히 낡는다.
+    case_dir = tmp_path / "ACCOUNT"
+    case_dir.mkdir()
+    document = io.read_json(FIXTURES / "01_input.json")
+    document["raw"] = raw
+    io.write_json(case_dir / "01_input.json", document)
+
+    assert (
+        normalize_mod.main(
+            ["--in", str(case_dir / "01_input.json"), "--out", str(case_dir / "02.json")]
+            + _live_args()
+        )
+        == 0
+    )
+    scenario = io.read_json(case_dir / "02.json")
+    families = {t["id"].split(".")[0] for t in scenario["techniques"]}
+    assert families & {"T1136", "T1098", "T1078"}, (
+        f"계정 축이 기법으로 옮겨지지 않았다: {[t['id'] for t in scenario['techniques']]}"
+    )
+
+    # 기법이 나온 것만으로는 부족하다. 03 이 실제로 그 아티팩트를 요청해야
+    # 조사 대상이 된다 — 여기가 이 축이 죽던 자리다.
+    assert (
+        select_mod.main(
+            [
+                "--in", str(case_dir / "02.json"),
+                "--out", str(case_dir / "03.json"),
+                "--mappings", str(MAPPINGS),
+            ]
+        )
+        == 0
+    )
+    selected = {entry["artifact"] for entry in io.read_json(case_dir / "03.json")["selected"]}
+    assert "evtx:Security" in selected, sorted(selected)
+
+
+def test_the_model_still_paraphrases_its_quotes(tmp_path: Path) -> None:
+    """`evidence_text` 가 원문 그대로인지 — **재는 것이지 판정이 아니다.**
+
+    실측에서 소형 모델은 인용을 완결된 문장으로 다듬는다(8/8). 그래서
+    02단계는 이것으로 재시도하지 않고 `nonverbatim_evidence` 로 기록만
+    한다(`src/stage02_normalize/coverage.py`). 여기서도 **세어서 남기기만**
+    한다 — 모델이 나아지면 이 테스트가 조용해지고, 그 사실 자체가 신호다.
+    """
+    case_dir = tmp_path / "QUOTE"
+    case_dir.mkdir()
+    shutil.copy(FIXTURES / "01_input.json", case_dir / "01_input.json")
+    assert (
+        normalize_mod.main(
+            ["--in", str(case_dir / "01_input.json"), "--out", str(case_dir / "02.json")]
+            + _live_args()
+        )
+        == 0
+    )
+    scenario = io.read_json(case_dir / "02.json")
+    raw = io.read_json(case_dir / "01_input.json")["raw"]
+    reported = coverage.nonverbatim_quotes(scenario, raw)
+    print(f"\n다듬어진 인용 {len(reported)}/{len(scenario['techniques'])}건: {reported}")

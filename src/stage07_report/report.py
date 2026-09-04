@@ -99,12 +99,16 @@ def build_context(
         "period_start": scope[0],
         "period_end": scope[1],
         "techniques": _techniques(selection, scenario),
+        "technique_evidence": _technique_evidence(scenario),
         "stats": verified.get("stats", {}),
         "passed": passed,
         "unverifiable": unverifiable,
         "timeline": timeline,
         "examined": _examined(manifest),
         "limits": _limits(selection, manifest),
+        # 02단계가 어느 서술도 기법으로 옮기지 못했다면 그 축은 조사에서
+        # 통째로 빠진다. 인쇄하지 않으면 "증거 없음"과 구별되지 않는다.
+        "unmapped_text": (scenario or {}).get("unmapped_text", []),
         "generated_at": io.utc_now(),
         "generator": io.make_generator("report.py"),
     }
@@ -145,6 +149,28 @@ def _period(selection: dict[str, Any], scenario: dict[str, Any] | None) -> tuple
     if scenario and scenario.get("time_range"):
         return scenario["time_range"]["start"][:10], scenario["time_range"]["end"][:10]
     return "미상", "미상"
+
+
+def _technique_evidence(scenario: dict[str, Any] | None) -> list[dict[str, str]]:
+    """기법마다 02단계가 입력의 어느 구간을 근거로 삼았는가.
+
+    **판정하지 않고 나란히 놓기만 한다.** 절을 엉뚱한 기법에 붙인 것은
+    기계가 못 가른다 — 가르려면 "이 절은 어느 기법이어야 하는가"를 알아야
+    하는데, 그것을 아는 표를 만드는 순간 02단계를 표로 대체한 것이 된다
+    (`work.md` 11번). 그래서 **사람이 한 줄 보고 알게** 만든다.
+
+    실측(`K-LIVE-0902-wide` 3차, 2026-09-04)에서 이렇게 나왔다 —
+    ``T1543.003 (Windows Service 생성) ← "계정 관련 변경이 있었는지도"``.
+    기법 ID 만 인쇄하던 때는 보고서 어디에도 드러나지 않았다.
+    """
+    return [
+        {
+            "id": technique["id"],
+            "name": attack.name_of(technique["id"]) or technique.get("name") or "이름 미상",
+            "evidence_text": technique.get("evidence_text", ""),
+        }
+        for technique in (scenario or {}).get("techniques", [])
+    ]
 
 
 def _techniques(selection: dict[str, Any], scenario: dict[str, Any] | None) -> list[str]:

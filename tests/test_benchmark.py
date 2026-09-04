@@ -436,3 +436,112 @@ def test_validator_cli_reports_success(capsys):
 def test_validator_cli_fails_when_the_verifier_is_too_strict(capsys):
     assert validator_check.main(["--tolerance-seconds", "0"]) == 1
     assert "과엄격" in capsys.readouterr().out
+
+
+# ================================================== 기각 대장 (work.md 10번)
+
+
+def _run_with_rejection(case_id, technique, artifacts, also=()):
+    return {
+        "case_id": case_id,
+        "started_at": "2026-09-04T00:00:00Z",
+        "steps": [
+            {
+                "key": "stage06",
+                "measures": {
+                    "rejections": [
+                        {
+                            "id": "F1",
+                            "reason": "technique_unsupported",
+                            "detail": {
+                                "technique": technique,
+                                "cited_artifacts": list(artifacts),
+                                "supported_artifacts": ["$MFT"],
+                                "also_supports": list(also),
+                            },
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+
+
+def test_the_same_combination_across_runs_is_counted_once_with_a_tally():
+    # 소견 단위로 세면 같은 원인이 실행마다 다른 항목으로 보인다. 매핑을
+    # 넓힐 때 적는 값이 (기법, 인용 아티팩트) 조합이므로 그 단위로 묶는다.
+    from benchmark import collect
+
+    runs = [
+        _run_with_rejection("A", "T1091", ["evtx:Sysmon"]),
+        _run_with_rejection("B", "T1091", ["evtx:Sysmon"]),
+        _run_with_rejection("B", "T1505.003", ["prefetch"]),
+    ]
+    rows = collect.rejections(runs)
+    by_technique = {row["technique"]: row for row in rows}
+    assert by_technique["T1091"]["count"] == 2
+    assert by_technique["T1091"]["cases"] == ["A", "B"]
+    assert by_technique["T1505.003"]["count"] == 1
+
+
+def test_other_rejection_reasons_are_not_counted():
+    # 이 표는 매핑을 넓힐 근거만 모은다. ref_in_input 같은 기각이 섞이면
+    # "매핑이 좁다"는 신호가 희석된다.
+    from benchmark import collect
+
+    run = _run_with_rejection("A", "T1091", ["evtx:Sysmon"])
+    run["steps"][0]["measures"]["rejections"][0]["reason"] = "value_mismatch"
+    assert collect.rejections([run]) == []
+
+
+def test_an_adjudicated_combination_is_marked_and_sinks(monkeypatch):
+    """가른 것은 아래로 내린다 — 표의 첫 줄이 곧 할 일이어야 한다."""
+    from benchmark import collect
+
+    monkeypatch.setattr(
+        collect,
+        "load_ledger",
+        lambda *a, **k: {("T1091", ("evtx:Sysmon",)): {"verdict": "model_wrong", "decided_on": "x"}},
+    )
+    rows = collect.rejections(
+        [
+            _run_with_rejection("A", "T1091", ["evtx:Sysmon"]),
+            _run_with_rejection("A", "T1091", ["evtx:Sysmon"]),
+            _run_with_rejection("A", "T1505.003", ["prefetch"]),
+        ]
+    )
+    # 안 가른 T1505.003 은 1회뿐인데도 2회짜리 T1091 보다 위다.
+    assert [row["technique"] for row in rows] == ["T1505.003", "T1091"]
+    assert rows[1]["verdict"] == "model_wrong"
+
+
+def test_the_shipped_ledger_is_readable_and_uses_known_verdicts():
+    # 이 파일은 손으로 쓴다. 오타가 조용히 흘러가면 이미 가른 기각이
+    # 표에 다시 올라오고, 같은 것을 두 번 판단하게 된다.
+    from benchmark import collect
+
+    ledger = collect.load_ledger()
+    assert ledger, "benchmark/rejections.yaml 을 읽지 못했다"
+    for (technique, artifacts), entry in ledger.items():
+        assert technique.startswith("T"), technique
+        assert artifacts, technique
+        assert entry["verdict"] in {"model_wrong", "mapping_narrow"}, entry
+        assert entry.get("note"), f"{technique}: 근거 없는 판단은 나중에 뒤집을 수 없다"
+
+
+def test_a_mapping_narrow_verdict_must_be_reflected_in_corroborates():
+    """`mapping_narrow` 라고 적었으면 그 매핑이 실제로 넓어져 있어야 한다.
+
+    적어 놓고 YAML 을 안 고치면 그 기각은 표에서 사라지는데 검사기는 여전히
+    기각한다 — **판단했다는 기록이 판단하지 않은 것을 덮는다.**
+    """
+    from benchmark import collect
+    from src.stage06_verify.verify import technique_artifacts
+
+    table = technique_artifacts(REPO_ROOT / "mappings")
+    for (technique, artifacts), entry in collect.load_ledger().items():
+        if entry["verdict"] != "mapping_narrow":
+            continue
+        supported = table.get(technique, frozenset())
+        missing = sorted(set(artifacts) - supported)
+        assert not missing, f"{technique} 의 corroborates 에 {missing} 가 없다"

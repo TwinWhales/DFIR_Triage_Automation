@@ -37,7 +37,7 @@ from ..common import attack
 from ..common import errors as errlog
 from ..common import io, llm, schema
 from ..common.llm import DEFAULT_NUM_CTX, DEFAULT_TIMEOUT
-from . import alert_adapter
+from . import alert_adapter, coverage
 from .llm_client import (
     DEFAULT_MODEL,
     DEFAULT_NUM_PREDICT,
@@ -45,7 +45,15 @@ from .llm_client import (
     NormalizeClient,
 )
 
-__all__ = ["STAGE", "build_scenario", "check_attack_ids", "dump_raw", "normalize", "main"]
+__all__ = [
+    "STAGE",
+    "build_scenario",
+    "check_attack_ids",
+    "dump_raw",
+    "normalize",
+    "record_coverage",
+    "main",
+]
 
 STAGE = "02_normalize"
 
@@ -98,6 +106,50 @@ def check_attack_ids(doc: dict[str, Any]) -> None:
             ) from None
 
 
+def record_coverage(
+    scenario: dict[str, Any], raw: str, log: errlog.ErrorLog
+) -> dict[str, Any]:
+    """입력에서 옮겨지지 않은 구간을 세어 기록하고 ``unmapped_text`` 를 채운다.
+
+    **재시도하지 않는다.** 이유는 `coverage` 모듈에 있다 — 실측에서 8/8이
+    걸렸고, 재시도를 붙이면 매 실행이 재시도 예산을 다 쓰고도 통과하지
+    못한다. 여기서 하는 일은 **놓친 것을 보이게 만드는 것**이지 없애는
+    것이 아니다.
+
+    ``unmapped_text`` 를 우리가 채우는 것이 모델의 답을 고치는 것처럼
+    보일 수 있으나 반대다. 그 필드의 정의가 "기법으로 매핑하지 못한
+    서술"이고, 모델은 매핑하지 못한 것이 있는데도 8/8 빈 배열을 냈다.
+    비워 두면 07단계가 **놓친 축과 증거가 없는 축을 같은 말로 인쇄한다.**
+    """
+    quotes = coverage.nonverbatim_quotes(scenario, raw)
+    if quotes:
+        # 프롬프트가 요구하는 불변식 위반이다. 다듬는 과정에서 절이 통째로
+        # 사라지는 것이 실제 실패 방식이라, 세어 두면 프롬프트를 고쳤을 때
+        # 나아졌는지 알 수 있다.
+        log.record(
+            STAGE,
+            "nonverbatim_evidence",
+            {"field": "techniques[].evidence_text", "quotes": quotes},
+            action="record",
+        )
+
+    spans = coverage.uncovered_spans(scenario, raw)
+    if not spans:
+        return scenario
+
+    known = list(scenario.get("unmapped_text") or [])
+    added = [s for s in spans if s not in known]
+    if added:
+        scenario["unmapped_text"] = known + added
+        log.record(
+            STAGE,
+            "uncovered_input",
+            {"field": "unmapped_text", "spans": added},
+            action="record",
+        )
+    return scenario
+
+
 def normalize(
     input_doc: dict[str, Any],
     client: NormalizeClient,
@@ -117,6 +169,12 @@ def normalize(
             scenario = build_scenario(body, case_id, generator)
             schema.validate(scenario, "scenario")
             check_attack_ids(scenario)
+            # **받아들이기로 한 응답에만** 센다. 검증 전에 부르면 재시도로
+            # 버려질 응답의 커버리지가 errors.jsonl 에 남아, 나중에 "얼마나
+            # 자주 놓치는가"를 셀 때 분모가 실행 수가 아니라 시도 수가 된다.
+            scenario = record_coverage(scenario, raw, log)
+            # 우리가 넣은 값도 같은 관문을 지난다.
+            schema.validate(scenario, "scenario")
             return scenario
 
         except llm.MalformedOutput as e:

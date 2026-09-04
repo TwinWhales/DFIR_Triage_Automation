@@ -103,10 +103,39 @@ Tier 2의 핵심은 "언제 보게 되는가"입니다. 조건 없는 유예는 
 
 | 자리 | 쓸 수 있는 키 |
 |---|---|
-| 최상위 | `technique` `name` `os` `artifacts` `defaults` `followups` |
+| 최상위 | `technique` `name` `os` `artifacts` `defaults` `followups` `corroborates` |
 | `artifacts[]` | `name` `tier` `priority` `rationale` `scope_template` `trigger` |
 | `followups[]` | 위 + `technique` `artifact` |
 | `scope_template` | `path_prefix` `extensions` `event_ids` |
+
+**`artifacts` 와 `corroborates` 는 축이 다릅니다.** 한 목록을 양쪽에 쓰면
+둘 중 하나가 집니다.
+
+| 키 | 읽는 단계 | 뜻 | 넓히면 |
+|---|---|---|---|
+| `artifacts` | 03 선별 | **어디를 수집할까** | 04 파싱 시간과 05 토큰 예산이 커진다 |
+| `corroborates` | 06 검증 | **이 증거로 그 기법을 말할 수 있나** | 판정이 느슨해진다 |
+
+`corroborates` 는 03단계가 **수집하지 않지만 근거로는 인정하는** 아티팩트를
+적습니다. 공격 행위에서 파생된 흔적이 여기 옵니다 — 웹셸을 경유해 실행된
+프로세스의 프리패치처럼, 직접 흔적이 지워졌어도 남는 것들입니다.
+
+```yaml
+artifacts:            # 03 이 읽는다. 좁고 날카롭게.
+  - name: $MFT
+    tier: 1
+    rationale: 웹셸 파일 생성 흔적
+
+corroborates:         # 06 만 읽는다. 이름만 적는다.
+  - prefetch          # 웹셸 경유 프로세스 실행
+```
+
+**비워 두는 것이 기본이고, 그것이 옳은 상태입니다.** 안 적으면 06 은
+`artifacts` 만 보므로 지금과 똑같이 동작합니다. 넓히는 것은 **기각 기록을
+보고** 하십시오 — `technique_unsupported` 기각 사유에 실리는
+`also_supports` 가 그 근거입니다. 실측 없이 채우면 06 에서 **유일하게 실제로
+판정하는 체커**를 가설로 무르게 만드는 것이 됩니다. 2026-09-04 기준으로
+아직 아무 매핑도 이 키를 쓰지 않습니다 — 관측된 오기각이 없기 때문입니다.
 
 **`scope_template` 에 `time_range` 를 적지 마세요.** 무시되는 것이 아니라
 `scope_resolver` 가 시나리오의 값으로 **항상 덮어씁니다** — 적으면 뜻이

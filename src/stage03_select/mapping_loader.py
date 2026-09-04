@@ -122,7 +122,9 @@ DEFAULT_PRIORITY = 2
 #:
 #: 매핑은 데이터라 오타가 조용히 흘러간다. 문법 오류가 아니라 **의미가
 #: 없는 키**이므로 YAML 파서도 스키마도 잡지 못한다. 여기서 잡는다.
-MAPPING_KEYS = frozenset({"technique", "name", "os", "artifacts", "defaults", "followups"})
+MAPPING_KEYS = frozenset(
+    {"technique", "name", "os", "artifacts", "defaults", "followups", "corroborates"}
+)
 
 #: ``artifacts[]`` 의 키. ``followups[]`` 는 여기에 ``technique``·``artifact``
 #: 를 더한다(그쪽은 어느 기법의 무엇인지를 직접 적는다).
@@ -214,6 +216,8 @@ class Mapping:
     os: str
     requests: tuple[ArtifactRequest, ...]
     defaults: dict[str, str] = field(default_factory=dict)
+    #: 06단계가 근거로 **추가로** 인정하는 아티팩트. 03단계는 보지 않는다.
+    corroborates: frozenset[str] = frozenset()
 
 
 def _require(data: dict[str, Any], key: str, where: str) -> Any:
@@ -259,6 +263,37 @@ def load_catalog(mappings_dir: str | Path) -> Catalog:
             signal_source=signal_source,
         )
     return Catalog(mapping_table_version=str(version), artifacts=artifacts)
+
+
+def _load_corroborates(data: dict[str, Any], catalog: Catalog, where: str) -> frozenset[str]:
+    """``corroborates:`` — **06단계만** 쓰는 목록.
+
+    `artifacts:` 와 축이 다르다. 저쪽은 03단계가 **"어디를 수집할까"** 로
+    읽고, 좁고 날카로워야 한다 — 다 담으면 04 파싱 시간과 05 토큰 예산이
+    터진다. 이쪽은 06단계가 **"이 증거로 이 기법을 말할 수 있나"** 로 읽고,
+    직접 흔적뿐 아니라 그 행위에서 파생된 것까지 넓게 인정해야 한다.
+
+    한 목록을 양쪽에 쓰면 둘 중 하나가 진다. 넓히면 03 이 다 읽어야 하고,
+    좁히면 06 이 정탐을 기각한다(`work.md` 10번).
+
+    **비워 두는 것이 기본이고, 그것이 옳은 상태다.** 06 은
+    ``artifacts:`` ∪ ``corroborates:`` 를 보므로 안 적으면 지금과 똑같이
+    동작한다. 넓히는 것은 **기각 기록을 보고** 하는 일이다 —
+    ``technique_unsupported`` 기각 사유에 실리는 ``also_supports`` 가 그
+    근거다. 실측 없이 채우면 06 에서 **유일하게 실제로 판정하는 체커**를
+    가설로 무르게 만드는 것이 된다(`technique_supported` 의 설명 참조).
+
+    2026-09-04 기준 실측: 지금까지 나온 소견의 (기법, 인용 아티팩트) 쌍
+    여섯 중 기각은 하나이고, 그 하나는 **정탐이었다** — `T1091`(USB) 이
+    Wazuh 에이전트 재시작 레코드를 인용했다. 그래서 아직 아무 매핑도 이
+    키를 쓰지 않는다.
+    """
+    names = data.get("corroborates") or []
+    if not isinstance(names, list):
+        raise MappingError(f"{where}: corroborates 는 아티팩트 이름의 목록이어야 함")
+    for name in names:
+        catalog[str(name)]  # 카탈로그에 없으면 여기서 MappingError
+    return frozenset(str(name) for name in names)
 
 
 def load_mapping(path: str | Path, catalog: Catalog) -> Mapping:
@@ -308,6 +343,7 @@ def load_mapping(path: str | Path, catalog: Catalog) -> Mapping:
         os=str(data.get("os", "windows")),
         requests=tuple(requests),
         defaults=defaults,
+        corroborates=_load_corroborates(data, catalog, where),
     )
 
 

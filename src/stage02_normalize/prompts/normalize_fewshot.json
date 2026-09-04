@@ -1,5 +1,5 @@
 {
-  "note": "정규화 단계 few-shot 예시. 프롬프트 실험 시 예시 수와 구성을 바꿔 가며 환각률 변화를 측정한다.",
+  "note": "정규화 단계 few-shot 예시. 프롬프트 실험 시 예시 수와 구성을 바꿔 가며 환각률 변화를 측정한다. 세 번째 예시는 unmapped_text 가 실제로 채워지는 것과 한 문장 안의 복합절을 각각 옮기는 것을 보여 준다 — 앞의 둘만 있을 때 모델이 'unmapped_text 는 늘 빈 배열'로 배웠다(2026-09-04 실측 8/8).",
   "examples": [
     {
       "input": "웹서버 WEB01에서 이상한 aspx 파일이 발견됐습니다. 비슷한 시기에 관리자 그룹에 모르는 계정이 추가된 것 같습니다. 7월 20일 전후로 보입니다.",
@@ -25,8 +25,12 @@
           "basis": "사용자가 7월 20일 전후로 언급, ±2일 확장"
         },
         "entities": {
-          "hosts": ["WEB01"],
-          "paths": ["C:\\inetpub\\wwwroot"],
+          "hosts": [
+            "WEB01"
+          ],
+          "paths": [
+            "C:\\inetpub\\wwwroot"
+          ],
           "processes": [],
           "accounts": [],
           "ips": []
@@ -61,6 +65,42 @@
         },
         "overall_confidence": 0.4,
         "unmapped_text": []
+      }
+    },
+    {
+      "input": "단말에서 USB를 꽂은 뒤 알 수 없는 프로그램이 실행됐고, 계정 관련 변경도 있었는지 확인이 필요합니다. 프린터가 계속 오작동한다는 얘기도 있었습니다.",
+      "output": {
+        "target_os": "windows",
+        "techniques": [
+          {
+            "id": "T1091",
+            "name": "Replication Through Removable Media",
+            "confidence": 0.7,
+            "evidence_text": "USB를 꽂은 뒤 알 수 없는 프로그램이 실행됐고"
+          },
+          {
+            "id": "T1098",
+            "name": "Account Manipulation",
+            "confidence": 0.5,
+            "evidence_text": "계정 관련 변경도 있었는지 확인이 필요합니다"
+          }
+        ],
+        "time_range": {
+          "start": "2026-06-01T00:00:00Z",
+          "end": "2026-08-06T23:59:59Z",
+          "basis": "시간 단서 없음, 최근 2개월로 넓게 설정"
+        },
+        "entities": {
+          "hosts": [],
+          "paths": [],
+          "processes": [],
+          "accounts": [],
+          "ips": []
+        },
+        "overall_confidence": 0.6,
+        "unmapped_text": [
+          "프린터가 계속 오작동한다는 얘기도 있었습니다"
+        ]
       }
     }
   ]

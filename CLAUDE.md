@@ -48,6 +48,10 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 # 그렇게 쌓인 실행 기록을 한 표로 (환각률·소요 시간)
 .venv/Scripts/python.exe benchmark/collect.py
 
+# 매핑을 넓힐 근거가 쌓였나 — technique_unsupported 기각을 조합별로 센다.
+# 안 가른 것이 맨 위에 온다. 가른 기록은 benchmark/rejections.yaml 이다.
+.venv/Scripts/python.exe benchmark/collect.py --rejections
+
 # 04 산출물 요약 — 매니페스트·ref 유일성까지 대조한다 (어긋나면 1)
 .venv/Scripts/python.exe tools/inspect_jsonl.py --parsed cases/<케이스>/04_parsed
 
@@ -90,6 +94,7 @@ Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
 | 온디스크 구조, 외부 도구 대조 기록 | `docs/artifact-notes.md` |
 | 매핑 YAML 작성 규칙, flags 어휘·룰 작성법 | `docs/mapping-guide.md` |
 | flags 어휘와 판정 룰 자체 | `mappings/_flags.yaml` |
+| **기각을 사람이 가른 기록** (매핑을 넓힐 근거) | `benchmark/rejections.yaml` |
 | 02·05 LLM 연결 | `docs/llm-handover.md` |
 | 디렉터리별 역할과 근거 | `docs/project-structure.md` |
 | 어디까지가 우리 코드인가 | `third_party/README.md` |
