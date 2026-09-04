@@ -30,6 +30,17 @@
         --evidence evidence/win10_sysmon_testimage.001 --volume 1 \\
         --model qwen2.5:latest --input samples/alert_01_input.json
 
+**05는 기본이 ``--mode assemble``이다.** 모델은 어느 레코드가 의심스러운지만
+고르고 문장·claims·타임라인은 파이썬이 원본에서 조립한다. 그 경로에서만
+성립해야 하는 것 셋을 05단계가 함께 판정한다 — claims 값이 원본과 글자
+그대로 같은가, 근거 필드가 그 레코드에 실재하는가, 조각을 나눠도
+``input_refs``가 겹치지 않는가. 셋 다 **모델이 무엇을 골랐든 성립해야 하는
+것**이라, 깨지면 모델 사정이 아니라 우리 회귀다.
+
+예전 경로(모델이 문장을 직접 쓴다)와 비교하려면 ``--mode model``로 한 번 더
+돌리고 ``cases/*/live_check.json``을 diff 한다. 그 파일에 ``mode``와
+``max_chunks``가 기록된다.
+
 종료 코드는 판정에 하나라도 실패하면 1이다. 측정치는 종료 코드를 바꾸지 않는다.
 """
 
@@ -53,8 +64,11 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.common import attack, io  # noqa: E402
 from src.common import errors as errlog  # noqa: E402
 from src.stage06_verify import verify as verify_mod  # noqa: E402
-from src.common.llm import DEFAULT_NUM_CTX  # noqa: E402
-from src.stage05_interpret import allocation, record_filter  # noqa: E402
+from src.stage05_interpret.llm_client import (  # noqa: E402
+    ASSEMBLE_NUM_CTX,
+    DEFAULT_NUM_CTX,
+)
+from src.stage05_interpret import allocation, assembly, record_filter  # noqa: E402
 from src.stage02_normalize.llm_client import DEFAULT_MODEL  # noqa: E402
 
 BAR = "─" * 74
@@ -86,7 +100,8 @@ PLAN: list[Plan] = [
         "이 파이썬이 프로젝트 venv인가, Ollama에 그 모델 태그가 실제로 있는가, "
         "증거 경로가 존재하는가",
         "Evtx·Registry·dissect·requests import 성공 / 모델 태그가 /api/tags 목록에 있음 / "
-        f"모델 context_length ≥ --num-ctx({DEFAULT_NUM_CTX})",
+        "모델 context_length ≥ --num-ctx (창은 --mode 가 정한다: "
+        f"model {DEFAULT_NUM_CTX}, assemble {ASSEMBLE_NUM_CTX})",
     ),
     Plan(
         "stage01",
@@ -131,9 +146,12 @@ PLAN: list[Plan] = [
     Plan(
         "stage05",
         "05 해석 — 근거가 달린 문장",
-        "전달받은 레코드만 근거로 문장을 만드는가",
+        "전달받은 레코드만 근거로 문장을 만드는가. "
+        "--mode assemble 이면 claims 가 정말 원본의 복사인가",
         "findings ≥ 1 / generator에 모델 태그. "
-        "input_refs 밖 참조는 여기서 실패시키지 않고 06이 잡는지 본다(측정)",
+        "input_refs 밖 참조는 여기서 실패시키지 않고 06이 잡는지 본다(측정). "
+        "assemble: claims 값이 원본과 글자 그대로 일치 / 근거 필드가 그 레코드에 실재 / "
+        "input_refs 에 중복 없음(조각을 나눠도 잃지 않는가)",
         llm=True,
     ),
     Plan(
@@ -236,6 +254,8 @@ class Runner:
         print(f"실물 관통 점검 — case {self.args.case_id}")
         print(f"  증거   {self.args.evidence}" + (f" (volume {self.args.volume})" if self.args.volume is not None else ""))
         print(f"  모델   02 {self.args.model} / 05 {self.model_interpret}")
+        chunks = f" / 조각 최대 {self.args.max_chunks}" if self.args.mode == "assemble" else ""
+        print(f"  05     mode={self.args.mode} / 창 {self.args.num_ctx:,}{chunks}")
         print(f"  시작   {io.utc_now()}")
         print("  목업   없음 (스텁·시드 인자가 이 도구에 존재하지 않음)")
         print()
@@ -520,6 +540,68 @@ class Runner:
         result.measures["sample_per_artifact"] = self.args.sample
         return f"아티팩트마다 {self.args.sample}건 표본 — 전부 원본과 일치"
 
+    def check_assembled(
+        self, findings: list, findings_doc: dict, result: Result
+    ) -> None:
+        """조립 경로가 약속한 것을 실제로 지켰는가. **어기면 실패시킨다.**
+
+        스텁이나 단위 테스트로는 여기까지 못 본다. 스텁은 우리가 적어 둔
+        응답을 그대로 돌려주므로 "모델이 무엇을 골랐든" 성립해야 할 성질이
+        실물에서 서는지 알 수 없다.
+
+        셋을 본다. 셋 다 **우리 코드가 틀렸을 때만** 깨진다 — 모델이 무엇을
+        골랐든 성립해야 하는 것들이라, 깨지면 모델 사정이 아니라 회귀다.
+
+        1. **claims 의 값이 원본과 글자 그대로 같은가.** 이 경로의 논지가
+           "모델은 이름만 고르고 값은 파이썬이 옮긴다" 이다. 다르면 조립기가
+           값을 손댄 것이고, 06단계의 통과가 의미를 잃는다.
+        2. **근거 필드가 그 레코드에 실재하는가.** 레코드마다 문법 갈래를
+           따로 두었으므로 없는 이름은 나올 수 없다. 나왔다면 문법이 안
+           걸린 것이다(2026-09-03 에 합집합 enum 으로 무너진 자리).
+        3. **``input_refs`` 에 중복이 없는가.** 조각을 나눠 물으면 합집합이
+           되는데, 겹치거나 빠지면 06단계의 ``ref_in_input`` 이 헐거워진다.
+        """
+        records = io.read_parsed_records(self.parsed_dir)
+
+        mismatched: list[str] = []
+        missing: list[str] = []
+        for finding in findings:
+            for claim in finding.get("claims", []):
+                record = records.get(claim["ref"])
+                if record is None:
+                    continue
+                found, actual = assembly.walk_field(record, claim["field"])
+                if not found:
+                    missing.append(f"{claim['ref']}.{claim['field']}")
+                elif claim["value"] != actual:
+                    mismatched.append(
+                        f"{claim['ref']}.{claim['field']} "
+                        f"({claim['value']!r} != {actual!r})"
+                    )
+
+        if mismatched:
+            raise StepFailed(
+                f"조립한 claim 이 원본과 다르다 {mismatched[:3]} — "
+                "파이썬이 값을 손댔다. 이 경로의 논지가 무너진 것이라 "
+                "06단계의 통과도 의미가 없다"
+            )
+        if missing:
+            raise StepFailed(
+                f"그 레코드에 없는 필드를 근거로 들었다 {missing[:3]} — "
+                "레코드별 문법 갈래가 안 걸렸다(selection_schema)"
+            )
+
+        input_refs = findings_doc["input_refs"]
+        if len(input_refs) != len(set(input_refs)):
+            raise StepFailed(
+                "input_refs 에 중복이 있다 — 조각을 합칠 때 겹쳤다. "
+                "06단계의 ref_in_input 이 헐거워진다"
+            )
+
+        result.measures["claims_verified_against_source"] = sum(
+            len(f.get("claims", [])) for f in findings
+        )
+
     def do_stage05(self, result: Result) -> str:
         cmd = self.py(
             "-m", "src.stage05_interpret.interpret",
@@ -534,7 +616,10 @@ class Runner:
             "--timeout", str(self.args.timeout),
             "--limit", str(self.args.limit),
             "--max-list-items", str(self.args.max_list_items),
+            "--mode", self.args.mode,
         )
+        if self.args.mode == "assemble":
+            cmd += ["--max-chunks", str(self.args.max_chunks)]
         code, _, _ = self.run_cmd(cmd)
         if code != 0:
             raise StepFailed(
@@ -564,6 +649,24 @@ class Runner:
             f"findings {len(findings)}건 / 전달 레코드 {len(allowed)}건 "
             f"(--limit {self.args.limit})"
         )
+
+        if self.args.mode == "assemble":
+            self.check_assembled(findings, findings_doc, result)
+
+            # 조립 경로에서만 보이는 것들이다. 묶음이 0이면 Reduce 가 아무것도
+            # 잇지 못했거나 건너뛴 것이고, 그 사실은 errors.jsonl 에 있다.
+            tied = [f for f in findings if len(f.get("refs", [])) > 1]
+            cited = {ref for f in findings for ref in f.get("refs", [])}
+            fields = sorted({c["field"] for f in findings for c in f.get("claims", [])})
+            result.measures["connected_findings"] = len(tied)
+            result.measures["cited_records"] = len(cited)
+            result.measures["claim_fields"] = fields
+            note += (
+                f" / 묶음 {len(tied)}건"
+                + (f" (최대 {max(len(f['refs']) for f in tied)}ref)" if tied else "")
+                + f" / 소견이 인용한 레코드 {len(cited)}건"
+                + f" / 근거 필드 {len(fields)}종 {fields[:4]}"
+            )
         if stray:
             note += f" / 측정: input_refs 밖 참조 {len(stray)}건 {stray[:3]} → 06이 잡아야 한다"
         if empty_claims:
@@ -597,11 +700,28 @@ class Runner:
 
         self.carry["passed"] = stats["passed"]
         result.measures.update(stats)
-        return (
+
+        # **환각률이 무엇을 재고 있는지 함께 말한다.** claims 를 파이썬이
+        # 조립하면 value_match 는 항등식이라 언제나 통과한다. 그때 실제로
+        # 판정하는 것은 technique_supported 뿐인데, 그 검사는 technique 이
+        # 붙은 소견만 본다 — null 인 소견은 지나간다. 분모를 안 적으면
+        # "환각률 0%" 를 성능으로 읽게 된다(docs/limitations.md 의 유형 표).
+        findings = io.read_json(self.case_dir / "05_findings.json")["findings"]
+        with_technique = [f for f in findings if f.get("technique")]
+        result.measures["findings_with_technique"] = len(with_technique)
+
+        note = (
             f"passed {stats['passed']} / rejected {stats['rejected']} "
             f"/ unverifiable {stats['unverifiable']} "
             f"({verify_mod.format_rate(stats)} — 측정치)"
         )
+        note += (
+            f" / technique 이 붙은 소견 {len(with_technique)}/{len(findings)}건"
+            " ← technique_supported 가 실제로 판정한 범위"
+        )
+        if self.args.mode == "assemble":
+            note += " / claims 는 파이썬이 조립했으므로 value_match 는 항등식이다"
+        return note
 
     def do_stage07(self, result: Result) -> str:
         code, out, _ = self.run_cmd(
@@ -700,6 +820,11 @@ class Runner:
             "model_normalize": self.args.model,
             "model_interpret": self.model_interpret,
             "num_ctx": self.args.num_ctx,
+            # 05가 어느 경로로 돌았는지. 창·질의 횟수·소견 수가 다 여기 달려
+            # 있어서, 안 남기면 실행끼리 비교할 때 무엇이 달라서 다른지
+            # 알 수 없다(benchmark/collect.py 가 이 파일을 읽는다).
+            "mode": self.args.mode,
+            "max_chunks": self.args.max_chunks if self.args.mode == "assemble" else None,
             "source_type": self.carry.get("source_type"),
             "steps": [
                 {
@@ -774,7 +899,38 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         help="05 해석 모델. 생략하면 --model 과 같다 (해석만 키우는 실험용)",
     )
     parser.add_argument("--host", default="http://localhost:11434")
-    parser.add_argument("--num-ctx", type=int, default=DEFAULT_NUM_CTX)
+    parser.add_argument(
+        "--mode",
+        choices=["assemble", "model"],
+        default="assemble",
+        help=(
+            "05가 findings 를 만드는 방식. 기본 %(default)s. "
+            "assemble 은 모델이 {ref, 기법, 사유, 근거 필드}만 고르고 파이썬이 "
+            "원본에서 조립한다 — 질의를 조각으로 나눠 보내므로 창 하나에 "
+            "들어가는 것보다 많이 본다. model 은 모델이 문장·claims·타임라인을 "
+            "전부 쓰는 예전 경로이고, 둘을 비교할 때 쓴다. "
+            "**이 도구의 기본이 assemble 인 것은 지금 파이프라인의 기본 경로가 "
+            "그쪽이기 때문이다** — 점검 도구가 안 쓰는 경로를 재면 의미가 없다"
+        ),
+    )
+    parser.add_argument(
+        "--max-chunks",
+        type=int,
+        default=8,
+        help=(
+            "--mode assemble 에서 질의를 몇 번까지 나눌 것인가. 기본 %(default)s. "
+            "**이 값이 커버리지의 상한이다** — --limit 과 함께 올려야 는다"
+        ),
+    )
+    parser.add_argument(
+        "--num-ctx",
+        type=int,
+        default=None,
+        help=(
+            "컨텍스트 창. 생략하면 --mode 가 정한다 "
+            f"(model {DEFAULT_NUM_CTX}, assemble {ASSEMBLE_NUM_CTX})"
+        ),
+    )
     parser.add_argument(
         "--timeout",
         type=float,
@@ -807,6 +963,12 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
 
     if bool(args.raw) == bool(args.input):
         parser.error("--raw(자연어) 또는 --input(알럿) 중 하나만 지정하십시오")
+
+    if args.num_ctx is None:
+        # 05단계와 같은 규칙이다. 단일 질의는 창이 곧 커버리지라 넓어야 하고,
+        # 분할 질의는 여러 번 보내므로 좁혀도 잃지 않는다. 여기서 정해 두는
+        # 것은 사전 점검이 "모델 context_length ≥ 창" 을 재기 때문이다.
+        args.num_ctx = ASSEMBLE_NUM_CTX if args.mode == "assemble" else DEFAULT_NUM_CTX
     return args
 
 
