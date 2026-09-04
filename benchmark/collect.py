@@ -13,6 +13,13 @@
     python benchmark/collect.py                 # 표
     python benchmark/collect.py --json          # 원본 그대로
     python benchmark/collect.py --case LC-      # 케이스 이름으로 거른다
+    python benchmark/collect.py --rejections    # 기각을 조합별로 센다
+
+``--rejections`` 는 다른 것을 본다. 위의 표가 "이번 실행이 어땠나"라면
+이쪽은 **"매핑을 넓힐 근거가 쌓였나"** 다. ``technique_unsupported`` 기각
+하나는 두 원인을 섞으므로(모델이 틀렸나, 매핑이 좁나) 사람이 갈라야 하고,
+가른 결과는 ``benchmark/rejections.yaml`` 에 남는다. 이 표는 **아직 안 가른
+것**을 위로 올린다 — 첫 줄이 곧 할 일이다(``work.md`` 10번).
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.common import io  # noqa: E402
 
-__all__ = ["collect", "summarize", "main"]
+__all__ = ["collect", "summarize", "rejections", "load_ledger", "main"]
 
 RESULTS_DIR = REPO_ROOT / "benchmark/results"
 
@@ -135,6 +142,122 @@ def render(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# ==================================================== 기각 대장
+
+LEDGER_PATH = REPO_ROOT / "benchmark/rejections.yaml"
+
+#: 기각을 묶는 열쇠. **기법과 인용 아티팩트 조합**이다.
+#:
+#: 소견 단위로 세면 같은 원인이 실행마다 다른 항목으로 보이고, 기법 단위로만
+#: 세면 "어느 아티팩트 때문에 걸렸나"가 사라진다. 매핑을 넓힐 때 적는 값이
+#: 정확히 이 조합이므로 이 단위로 묶는다.
+def _group_key(detail: dict[str, Any]) -> "tuple[str, tuple[str, ...]]":
+    return (
+        str(detail.get("technique", "?")),
+        tuple(sorted(str(a) for a in detail.get("cited_artifacts") or [])),
+    )
+
+
+def load_ledger(path: Path = LEDGER_PATH) -> dict:
+    """사람이 이미 가른 기각. 없으면 빈 표를 낸다."""
+    if not path.is_file():
+        return {}
+    import yaml
+
+    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    decided = {}
+    for entry in document.get("decided") or []:
+        key = (
+            str(entry.get("technique", "?")),
+            tuple(sorted(str(a) for a in entry.get("artifacts") or [])),
+        )
+        decided[key] = entry
+    return decided
+
+
+def rejections(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """실행 기록에 쌓인 ``technique_unsupported`` 기각을 조합별로 센다.
+
+    **덮이지 않는 자리만 읽는다.** ``cases/<id>/06_verified.json`` 에도 같은
+    내용이 있지만 그 파일은 같은 case-id 를 다시 돌리면 지워진다. 매핑을
+    넓힐 근거는 여러 실행에 걸쳐 쌓여야 하므로 실행마다 새로 쓰이는
+    ``benchmark/results/`` 를 읽는다.
+    """
+    groups: dict[tuple, dict[str, Any]] = {}
+    for run in runs:
+        for step in run.get("steps", []):
+            for item in (step.get("measures") or {}).get("rejections") or []:
+                if item.get("reason") != "technique_unsupported":
+                    continue
+                detail = item.get("detail") or {}
+                key = _group_key(detail)
+                group = groups.setdefault(
+                    key,
+                    {
+                        "technique": key[0],
+                        "cited_artifacts": list(key[1]),
+                        "count": 0,
+                        "cases": set(),
+                        "supported_artifacts": sorted(detail.get("supported_artifacts") or []),
+                        "also_supports": sorted(detail.get("also_supports") or []),
+                    },
+                )
+                group["count"] += 1
+                group["cases"].add(str(run.get("case_id", "?")))
+    ledger = load_ledger()
+    rows = []
+    for key, group in groups.items():
+        decided = ledger.get(key)
+        group["cases"] = sorted(group["cases"])
+        group["verdict"] = (decided or {}).get("verdict")
+        group["decided_on"] = (decided or {}).get("decided_on")
+        rows.append(group)
+    # 안 본 것을 위로, 그다음 잦은 것을 위로. 표의 첫 줄이 곧 할 일이다.
+    return sorted(rows, key=lambda r: (r["verdict"] is not None, -r["count"], r["technique"]))
+
+
+def render_rejections(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return (
+            "기각 기록이 없습니다.\n"
+            "  technique_unsupported 기각이 쌓여야 매핑을 넓힐 근거가 생깁니다"
+            " (work.md 10번).\n"
+            "  tools/live_check.py 를 돌리면 실행마다 여기에 쌓입니다."
+        )
+
+    lines = []
+    pending = [r for r in rows if not r["verdict"]]
+    lines.append(f"technique_unsupported 기각 {sum(r['count'] for r in rows)}건 / 조합 {len(rows)}개")
+    lines.append(f"  아직 안 가른 것 {len(pending)}개  ← 여기부터 본다")
+    lines.append("")
+    for row in rows:
+        mark = {
+            None: "판단 없음",
+            "model_wrong": "모델 오류 (매핑 그대로)",
+            "mapping_narrow": "매핑 미비 (corroborates 대상)",
+        }.get(row["verdict"], str(row["verdict"]))
+        lines.append(
+            f"  {row['technique']:<12} ← {', '.join(row['cited_artifacts']):<32} "
+            f"{row['count']:>3}회  [{mark}]"
+        )
+        lines.append(f"      등재된 근거   {', '.join(row['supported_artifacts']) or '(없음)'}")
+        lines.append(f"      케이스        {', '.join(row['cases'])}")
+        if row["also_supports"]:
+            shown = row["also_supports"][:8]
+            more = "" if len(row["also_supports"]) <= 8 else f" 외 {len(row['also_supports']) - 8}개"
+            lines.append(f"      이 증거를 인정하는 다른 기법  {', '.join(shown)}{more}")
+        lines.append("")
+
+    if pending:
+        lines.append("가르는 법 — 근거 레코드를 열어 보고 둘 중 하나를 정한다.")
+        lines.append("  모델이 기법을 잘못 붙였다  → benchmark/rejections.yaml 에")
+        lines.append("                              verdict: model_wrong 으로 적는다.")
+        lines.append("                              **매핑은 고치지 않는다.**")
+        lines.append("  증거는 맞는데 매핑이 좁다  → 그 기법 YAML 의 corroborates: 에 넣고,")
+        lines.append("                              verdict: mapping_narrow 로 적는다.")
+    return "\n".join(lines)
+
+
 def main(argv: "list[str] | None" = None) -> int:
     io.configure_console()
     parser = argparse.ArgumentParser(
@@ -144,9 +267,18 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--results", default=str(RESULTS_DIR), help="기본 %(default)s")
     parser.add_argument("--case", default=None, help="case_id 가 이 문자열로 시작하는 것만")
     parser.add_argument("--json", action="store_true", help="표 대신 원본 그대로")
+    parser.add_argument(
+        "--rejections",
+        action="store_true",
+        help="technique_unsupported 기각을 조합별로 센다 (매핑을 넓힐 근거)",
+    )
     args = parser.parse_args(argv)
 
     runs = collect(Path(args.results), args.case)
+    if args.rejections:
+        rows = rejections(runs)
+        print(json.dumps(rows, ensure_ascii=False, indent=2) if args.json else render_rejections(rows))
+        return 0
     if args.json:
         print(json.dumps(runs, ensure_ascii=False, indent=2))
         return 0

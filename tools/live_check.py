@@ -728,6 +728,15 @@ class Runner:
         with_technique = [f for f in findings if f.get("technique")]
         result.measures["findings_with_technique"] = len(with_technique)
 
+        # **기각 상세를 여기 싣는다.** `06_verified.json` 에도 있지만 그
+        # 파일은 같은 case-id 를 다시 돌리면 덮인다(`--force`). 매핑을 넓힐
+        # 근거는 **여러 실행에 걸쳐** 쌓여야 하는데, 덮이는 자리에 두면
+        # 세 번째 실행이 첫 번째의 기각을 지운다. 실행마다 새로 쓰이는
+        # 이 파일이 그 대장(臺帳)이다 — `benchmark/collect.py --rejections`
+        # 가 여기를 읽는다(`work.md` 10번).
+        verified = io.read_json(self.case_dir / "06_verified.json")
+        result.measures["rejections"] = verified.get("rejected", [])
+
         note = (
             f"passed {stats['passed']} / rejected {stats['rejected']} "
             f"/ unverifiable {stats['unverifiable']} "
