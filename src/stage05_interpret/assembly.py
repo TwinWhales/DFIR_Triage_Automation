@@ -39,7 +39,27 @@ from ..common.io import parse_timestamp
 from ..stage04_parse.flagging import ClaimFields, claim_fields
 from .record_filter import NO_TIME, activity_times
 
-__all__ = ["AssemblyError", "assemble_body", "claim_for", "walk_field"]
+__all__ = [
+    "AssemblyError",
+    "SelectionError",
+    "assemble_body",
+    "claim_for",
+    "walk_field",
+]
+
+
+class SelectionError(ValueError):
+    """모델이 고른 것이 레코드와 맞지 않는다. **모델 잘못이다.**
+
+    지금 하나뿐이다 — 그 레코드에 **없는 필드**를 근거로 지목한 경우.
+    문법이 막지 못하는 자리다. ``evidence_fields`` 의 enum 은 배치 전체가
+    가진 이름의 합집합이라, 옆 레코드의 필드 이름을 이 레코드에 붙이는 것은
+    문법상 합법이다.
+
+    **이것이 조립 경로에서 유일하게 살아남은 모델 오류 채널이다.** 값은
+    파이썬이 옮기므로 옮겨 적기 오류가 없고, ``ref``·기법은 enum 이 막는다.
+    남는 자유도 중 기계적으로 잡히는 것이 이 하나라, 재시도할 값이 있다.
+    """
 
 
 class AssemblyError(ValueError):
@@ -75,7 +95,9 @@ def walk_field(record: dict[str, Any], name: str) -> "tuple[bool, Any]":
 
 
 def claim_for(
-    record: dict[str, Any], fields: "ClaimFields | None" = None
+    record: dict[str, Any],
+    fields: "ClaimFields | None" = None,
+    chosen: "list[str] | None" = None,
 ) -> list[dict[str, Any]]:
     """레코드 하나에서 claims 를 뽑는다. **원본을 그대로 옮긴다.**
 
@@ -92,8 +114,20 @@ def claim_for(
     if fields.max_items <= 0:
         return []
 
+    # 모델이 근거 필드를 지목했으면 **그것을 쓴다.** 어휘 순서는 지목이
+    # 없을 때만 쓰인다. 이 갈림이 "껍데기 claims" 를 막는 자리다 — 어휘
+    # 순서로만 뽑으면 claims 가 문장이 기대는 필드가 아니라 그 아티팩트에
+    # 흔한 필드가 된다. 실측(2026-09-03)에서 프리패치 소견의 claims 가
+    # path·name·timestamp 였고, 그 아티팩트 판단의 핵심인 run_count·
+    # loaded_files 는 하나도 들어가지 않았다.
+    order = list(chosen) if chosen else list(fields.names)
+
     claims: list[dict[str, Any]] = []
-    for name in fields.names:
+    seen: set[str] = set()
+    for name in order:
+        if name in seen:
+            continue
+        seen.add(name)
         if len(claims) >= fields.max_items:
             break
         found, value = walk_field(record, name)
@@ -135,8 +169,14 @@ def assemble_body(
 ) -> dict[str, Any]:
     """모델이 고른 목록 → findings 본문(``findings`` + ``timeline``).
 
-    ``selections`` 는 모델이 낸 ``{ref, technique, reason, severity}`` 이고,
+    ``selections`` 는 모델이 낸
+    ``{ref, technique, reason, severity, evidence_fields}`` 이고,
     ``records`` 는 **이번에 실제로 전달한** 레코드의 ``ref`` → 레코드다.
+
+    **``evidence_fields`` 가 claims 를 정한다.** 모델이 "이 문장은 이 필드에
+    기댄다"고 지목한 것이고, 값은 파이썬이 원본에서 옮긴다. 지목이 없으면
+    어휘 순서로 떨어지지만, 그때 claims 는 문장이 기대는 필드가 아니라 그
+    아티팩트에 흔한 필드가 된다(``claim_for`` 참조).
 
     **같은 ref 가 두 번 오면 앞의 것만 쓴다.** 모델이 같은 레코드를 두 번
     고르는 일이 있고, 그대로 두면 소견과 타임라인이 중복된다. 뒤엣것을
@@ -169,8 +209,17 @@ def assemble_body(
 
         statement = str(selection.get("reason") or "").strip()
         if not statement:
-            raise AssemblyError(
-                f"{ref} 의 reason 이 비었다. 선별 스키마가 막았어야 하는 값이다."
+            raise SelectionError(f"{ref} 의 reason 이 비었다.")
+
+        # 모델이 지목한 근거 필드가 **그 레코드에** 있어야 한다. enum 은
+        # 배치 전체가 가진 이름의 합집합이라, 옆 레코드의 필드를 이 레코드에
+        # 붙이는 것은 문법상 합법이다. 조립 경로에서 살아남은 유일한 모델
+        # 오류 채널이라, 조용히 버리지 않고 다시 물어본다.
+        chosen = [name for name in (selection.get("evidence_fields") or []) if name]
+        missing = [name for name in chosen if not walk_field(record, name)[0]]
+        if missing:
+            raise SelectionError(
+                f"{ref} 에 없는 필드를 근거로 지목했다: {', '.join(missing)}"
             )
 
         findings.append(
@@ -178,7 +227,7 @@ def assemble_body(
                 "id": f"F{len(findings) + 1}",
                 "statement": statement,
                 "refs": [ref],
-                "claims": claim_for(record, fields),
+                "claims": claim_for(record, fields, chosen),
                 "technique": selection.get("technique") or None,
                 "severity": selection.get("severity") or "info",
             }

@@ -19,6 +19,7 @@ from src.common import io, schema
 from src.stage04_parse.flagging import ClaimFields, claim_fields
 from src.stage05_interpret.assembly import (
     AssemblyError,
+    SelectionError,
     assemble_body,
     claim_for,
     walk_field,
@@ -190,9 +191,70 @@ def test_a_ref_we_did_not_ship_is_our_bug_not_the_models():
         assemble_body([_pick("SYSMON#99")], {"SYSMON#1": _sysmon()}, FIELDS)
 
 
-def test_an_empty_reason_is_refused():
-    with pytest.raises(AssemblyError, match="reason"):
+def test_an_empty_reason_is_the_models_problem_not_ours():
+    """빈 사유는 다시 물어보면 고쳐질 수 있다. 재시도가 의미 있는 쪽이다."""
+    with pytest.raises(SelectionError, match="reason"):
         assemble_body([_pick("SYSMON#1", reason="   ")], {"SYSMON#1": _sysmon()}, FIELDS)
+
+
+# ========================================== evidence_fields — 껍데기 claims 방지
+
+
+def test_the_model_chosen_fields_become_the_claims():
+    """**이 갈림이 껍데기 claims 를 막는다.**
+
+    어휘 순서로만 뽑으면 claims 가 문장이 기대는 필드가 아니라 그 아티팩트에
+    흔한 필드가 된다. 실측(2026-09-03)에서 프리패치 소견의 claims 가
+    path·name·timestamp 였고, 그 아티팩트 판단의 핵심인 run_count·
+    loaded_files 는 하나도 들어가지 않았다.
+    """
+    record = _sysmon(CommandLine="cmd /c whoami")
+    record["path"] = r"C:\Windows\System32\cmd.exe"
+    record["name"] = "cmd.exe"
+
+    body = assemble_body(
+        [_pick("SYSMON#1", evidence_fields=["fields.CommandLine"])],
+        {"SYSMON#1": record},
+        FIELDS,
+    )
+
+    # 어휘 순서였다면 path·name 이 앞자리를 가져갔을 레코드다.
+    assert [c["field"] for c in body["findings"][0]["claims"]] == ["fields.CommandLine"]
+
+
+def test_the_value_still_comes_from_the_record_not_the_model():
+    """모델은 **이름만** 고른다. 값을 옮겨 적게 하면 그 자리가 환각의 입구다."""
+    record = _sysmon(CommandLine="cmd /c whoami")
+
+    body = assemble_body(
+        [_pick("SYSMON#1", evidence_fields=["fields.CommandLine"])],
+        {"SYSMON#1": record},
+        FIELDS,
+    )
+
+    assert body["findings"][0]["claims"][0]["value"] == "cmd /c whoami"
+
+
+def test_a_field_absent_from_this_record_is_a_model_error():
+    """조립 경로에서 살아남은 **유일한 모델 오류 채널**이다.
+
+    ``evidence_fields`` 의 enum 은 배치 전체가 가진 이름의 합집합이라, 옆
+    레코드의 필드를 이 레코드에 붙이는 것은 문법상 합법이다. 문법이 못
+    막으니 여기서 잡고, 모델 잘못이므로 다시 물어볼 값이 있다.
+    """
+    with pytest.raises(SelectionError, match="path"):
+        assemble_body(
+            [_pick("SYSMON#1", evidence_fields=["path"])],
+            {"SYSMON#1": _sysmon()},
+            FIELDS,
+        )
+
+
+def test_no_chosen_fields_falls_back_to_the_vocabulary_order():
+    """지목이 없으면 예전대로 어휘 순서다. 소견이 사라지지는 않는다."""
+    body = assemble_body([_pick("SYSMON#1")], {"SYSMON#1": _sysmon()}, FIELDS)
+
+    assert body["findings"][0]["claims"]
 
 
 def test_a_missing_technique_becomes_null_not_a_guess():
