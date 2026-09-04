@@ -527,3 +527,30 @@ def test_the_model_still_paraphrases_its_quotes(tmp_path: Path) -> None:
     raw = io.read_json(case_dir / "01_input.json")["raw"]
     reported = coverage.nonverbatim_quotes(scenario, raw)
     print(f"\n다듬어진 인용 {len(reported)}/{len(scenario['techniques'])}건: {reported}")
+
+
+def test_the_model_still_invents_paths_and_we_drop_them(tmp_path: Path) -> None:
+    """`entities.paths` 가 입력에서 오는가 — **재는 것이지 판정이 아니다.**
+
+    2026-09-05 실측에서 모델은 경로를 **16/16 전부** 지어냈다(두 입력 8회씩).
+    02단계가 그것을 떨구므로 산출물에는 남지 않는다. 여기서는 **떨어진 뒤에
+    남은 값이 전부 입력에서 온 것인지**만 본다 — 그것이 이 단계의 불변식이다.
+
+    지어낸 횟수 자체는 `errors.jsonl` 의 `ungrounded_entity` 가 센다. 모델이
+    나아지면 그 수가 줄고, 이 테스트는 그대로 조용하다.
+    """
+    case_dir = tmp_path / "ENTITY"
+    case_dir.mkdir()
+    shutil.copy(FIXTURES / "01_input.json", case_dir / "01_input.json")
+    assert (
+        normalize_mod.main(
+            ["--in", str(case_dir / "01_input.json"), "--out", str(case_dir / "02.json")]
+            + _live_args()
+        )
+        == 0
+    )
+    scenario = io.read_json(case_dir / "02.json")
+    raw = io.read_json(case_dir / "01_input.json")["raw"]
+    left = coverage.ungrounded_entities(scenario, raw)
+    assert left == {}, f"입력에 없는 값이 살아남았다: {left}"
+    print(f"\n남은 entities: {scenario['entities']}")

@@ -146,6 +146,10 @@ def render(rows: list[dict[str, Any]]) -> str:
 
 LEDGER_PATH = REPO_ROOT / "benchmark/rejections.yaml"
 
+#: 06단계가 실행마다 덧붙이는 기각 대장. 사람이 가른 기록
+#: (``LEDGER_PATH``)과 다르다 — 이쪽은 원자료다.
+LEDGER_JSONL = REPO_ROOT / "benchmark/results/rejections.jsonl"
+
 #: 기각을 묶는 열쇠. **기법과 인용 아티팩트 조합**이다.
 #:
 #: 소견 단위로 세면 같은 원인이 실행마다 다른 항목으로 보이고, 기법 단위로만
@@ -175,42 +179,80 @@ def load_ledger(path: Path = LEDGER_PATH) -> dict:
     return decided
 
 
-def rejections(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """실행 기록에 쌓인 ``technique_unsupported`` 기각을 조합별로 센다.
+def _rejection_rows(runs: list[dict[str, Any]], ledger: Path) -> list[dict[str, Any]]:
+    """대장과 (옛) 실행 기록에서 기각을 하나씩 모은다.
 
-    **덮이지 않는 자리만 읽는다.** ``cases/<id>/06_verified.json`` 에도 같은
-    내용이 있지만 그 파일은 같은 case-id 를 다시 돌리면 지워진다. 매핑을
-    넓힐 근거는 여러 실행에 걸쳐 쌓여야 하므로 실행마다 새로 쓰이는
-    ``benchmark/results/`` 를 읽는다.
+    **두 곳을 읽는 이유는 과도기다.** 2026-09-05 이전에는
+    ``tools/live_check.py`` 만 기각을 실행 기록의 ``measures`` 에 실었고,
+    그 뒤로는 06단계가 대장에 직접 덧붙인다(``stage06_verify.runlog``).
+    입구가 셋인데 하나만 기록하던 것을 고친 것이라, 그전 기록도 계속 보이게
+    둘 다 읽는다.
+
+    **겹치지 않는다.** 옛 실행에는 대장 줄이 없고, 새 실행에는 ``measures``
+    항목이 없다. 한 실행이 두 곳에 실리는 경우가 생기지 않는다.
+
+    같은 실행을 두 번 세지 않도록 ``(case_id, 시각, 소견 id)`` 로 거른다 —
+    대장은 append 만 하므로 같은 줄이 두 번 붙을 수 있다.
     """
-    groups: dict[tuple, dict[str, Any]] = {}
+    seen: set[tuple] = set()
+    rows: list[dict[str, Any]] = []
+
+    if ledger.is_file():
+        for entry in io.read_jsonl(ledger):
+            key = (entry.get("case_id"), entry.get("verified_at"), entry.get("id"))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(entry)
+
     for run in runs:
         for step in run.get("steps", []):
-            for item in (step.get("measures") or {}).get("rejections") or []:
-                if item.get("reason") != "technique_unsupported":
+            for entry in (step.get("measures") or {}).get("rejections") or []:
+                key = (run.get("case_id"), run.get("started_at"), entry.get("id"))
+                if key in seen:
                     continue
-                detail = item.get("detail") or {}
-                key = _group_key(detail)
-                group = groups.setdefault(
-                    key,
-                    {
-                        "technique": key[0],
-                        "cited_artifacts": list(key[1]),
-                        "count": 0,
-                        "cases": set(),
-                        "supported_artifacts": sorted(detail.get("supported_artifacts") or []),
-                        "also_supports": sorted(detail.get("also_supports") or []),
-                    },
-                )
-                group["count"] += 1
-                group["cases"].add(str(run.get("case_id", "?")))
-    ledger = load_ledger()
+                seen.add(key)
+                rows.append({**entry, "case_id": run.get("case_id")})
+
+    return rows
+
+
+def rejections(
+    runs: list[dict[str, Any]], ledger: "Path | None" = None
+) -> list[dict[str, Any]]:
+    """``technique_unsupported`` 기각을 조합별로 센다.
+
+    **묶는 단위는 (기법, 인용 아티팩트)다.** 소견 단위로 세면 같은 원인이
+    실행마다 다른 항목으로 보이고, 기법 단위로만 세면 "어느 아티팩트 때문에
+    걸렸나"가 사라진다. 매핑을 넓힐 때 적는 값이 정확히 이 조합이다.
+    """
+    groups: dict[tuple, dict[str, Any]] = {}
+    for item in _rejection_rows(runs, ledger or LEDGER_JSONL):
+        if item.get("reason") != "technique_unsupported":
+            continue
+        detail = item.get("detail") or {}
+        key = _group_key(detail)
+        group = groups.setdefault(
+            key,
+            {
+                "technique": key[0],
+                "cited_artifacts": list(key[1]),
+                "count": 0,
+                "cases": set(),
+                "supported_artifacts": sorted(detail.get("supported_artifacts") or []),
+                "also_supports": sorted(detail.get("also_supports") or []),
+            },
+        )
+        group["count"] += 1
+        group["cases"].add(str(item.get("case_id", "?")))
+
+    decided = load_ledger()
     rows = []
     for key, group in groups.items():
-        decided = ledger.get(key)
+        entry = decided.get(key)
         group["cases"] = sorted(group["cases"])
-        group["verdict"] = (decided or {}).get("verdict")
-        group["decided_on"] = (decided or {}).get("decided_on")
+        group["verdict"] = (entry or {}).get("verdict")
+        group["decided_on"] = (entry or {}).get("decided_on")
         rows.append(group)
     # 안 본 것을 위로, 그다음 잦은 것을 위로. 표의 첫 줄이 곧 할 일이다.
     return sorted(rows, key=lambda r: (r["verdict"] is not None, -r["count"], r["technique"]))

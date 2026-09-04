@@ -441,17 +441,19 @@ def test_validator_cli_fails_when_the_verifier_is_too_strict(capsys):
 # ================================================== 기각 대장 (work.md 10번)
 
 
-def _run_with_rejection(case_id, technique, artifacts, also=()):
+def _run_with_rejection(case_id, technique, artifacts, also=(), started_at=None, fid="F1"):
+    # `started_at` 과 소견 id 는 실행을 가르는 열쇠의 일부다. 같은 케이스에
+    # 같은 시각·같은 id 면 **같은 실행**이므로 한 번만 세는 것이 맞다.
     return {
         "case_id": case_id,
-        "started_at": "2026-09-04T00:00:00Z",
+        "started_at": started_at or "2026-09-04T00:00:00Z",
         "steps": [
             {
                 "key": "stage06",
                 "measures": {
                     "rejections": [
                         {
-                            "id": "F1",
+                            "id": fid,
                             "reason": "technique_unsupported",
                             "detail": {
                                 "technique": technique,
@@ -475,9 +477,9 @@ def test_the_same_combination_across_runs_is_counted_once_with_a_tally():
     runs = [
         _run_with_rejection("A", "T1091", ["evtx:Sysmon"]),
         _run_with_rejection("B", "T1091", ["evtx:Sysmon"]),
-        _run_with_rejection("B", "T1505.003", ["prefetch"]),
+        _run_with_rejection("B", "T1505.003", ["prefetch"], fid="F2"),
     ]
-    rows = collect.rejections(runs)
+    rows = collect.rejections(runs, ledger=Path("없는-대장.jsonl"))
     by_technique = {row["technique"]: row for row in rows}
     assert by_technique["T1091"]["count"] == 2
     assert by_technique["T1091"]["cases"] == ["A", "B"]
@@ -491,7 +493,7 @@ def test_other_rejection_reasons_are_not_counted():
 
     run = _run_with_rejection("A", "T1091", ["evtx:Sysmon"])
     run["steps"][0]["measures"]["rejections"][0]["reason"] = "value_mismatch"
-    assert collect.rejections([run]) == []
+    assert collect.rejections([run], ledger=Path("없는-대장.jsonl")) == []
 
 
 def test_an_adjudicated_combination_is_marked_and_sinks(monkeypatch):
@@ -506,9 +508,10 @@ def test_an_adjudicated_combination_is_marked_and_sinks(monkeypatch):
     rows = collect.rejections(
         [
             _run_with_rejection("A", "T1091", ["evtx:Sysmon"]),
-            _run_with_rejection("A", "T1091", ["evtx:Sysmon"]),
-            _run_with_rejection("A", "T1505.003", ["prefetch"]),
-        ]
+            _run_with_rejection("A", "T1091", ["evtx:Sysmon"], started_at="2026-09-04T01:00:00Z"),
+            _run_with_rejection("A", "T1505.003", ["prefetch"], fid="F2"),
+        ],
+        ledger=Path("없는-대장.jsonl"),
     )
     # 안 가른 T1505.003 은 1회뿐인데도 2회짜리 T1091 보다 위다.
     assert [row["technique"] for row in rows] == ["T1505.003", "T1091"]
@@ -545,3 +548,64 @@ def test_a_mapping_narrow_verdict_must_be_reflected_in_corroborates():
         supported = table.get(technique, frozenset())
         missing = sorted(set(artifacts) - supported)
         assert not missing, f"{technique} 의 corroborates 에 {missing} 가 없다"
+
+
+def test_the_ledger_is_written_regardless_of_the_entry_point(tmp_path):
+    """06단계가 직접 쓴다 — 입구가 셋이어도 한 군데서 남는다.
+
+    2026-09-05 이전에는 `tools/live_check.py` 만 기록해서,
+    `run_pipeline.sh` 나 웹 UI 로 돌린 실행의 기각은 어디에도 누적되지
+    않았다. 정작 사람이 자주 쓰는 두 경로에서 근거가 새고 있었다.
+    """
+    from src.stage06_verify import runlog
+
+    verified = {
+        "case_id": "C-TEST",
+        "generated_at": "2026-09-05T00:00:00Z",
+        "generator": "verify.py",
+        "rejected": [
+            {"id": "F1", "reason": "technique_unsupported",
+             "detail": {"technique": "T1091", "cited_artifacts": ["evtx:Sysmon"]}}
+        ],
+    }
+    ledger = tmp_path / "rejections.jsonl"
+    assert runlog.append_rejections(verified, ledger) == 1
+
+    from benchmark import collect
+
+    rows = collect.rejections([], ledger=ledger)
+    assert [r["technique"] for r in rows] == ["T1091"]
+    assert rows[0]["cases"] == ["C-TEST"]
+
+
+def test_appending_the_same_run_twice_is_counted_once(tmp_path):
+    # 대장은 append 만 한다. 같은 실행이 두 번 붙어도 (case_id, 시각, 소견 id)
+    # 로 걸러야 한다 — 안 그러면 재실행이 빈도를 부풀린다.
+    from src.stage06_verify import runlog
+    from benchmark import collect
+
+    verified = {
+        "case_id": "C-TEST",
+        "generated_at": "2026-09-05T00:00:00Z",
+        "rejected": [
+            {"id": "F1", "reason": "technique_unsupported",
+             "detail": {"technique": "T1091", "cited_artifacts": ["evtx:Sysmon"]}}
+        ],
+    }
+    ledger = tmp_path / "rejections.jsonl"
+    runlog.append_rejections(verified, ledger)
+    runlog.append_rejections(verified, ledger)
+    assert len(ledger.read_text(encoding="utf-8").strip().split("\n")) == 2
+
+    rows = collect.rejections([], ledger=ledger)
+    assert rows[0]["count"] == 1, "같은 실행을 두 번 셌다"
+
+
+def test_a_run_with_no_rejection_writes_nothing(tmp_path):
+    # 빈 줄이 쌓이면 "기각이 없었다"와 "이 실행이 기록되지 않았다"가
+    # 구별되지 않는다.
+    from src.stage06_verify import runlog
+
+    ledger = tmp_path / "rejections.jsonl"
+    assert runlog.append_rejections({"case_id": "C", "rejected": []}, ledger) == 0
+    assert not ledger.exists()

@@ -26,7 +26,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-__all__ = ["nonverbatim_quotes", "uncovered_spans", "MIN_RUN_WORDS"]
+__all__ = [
+    "nonverbatim_quotes",
+    "uncovered_spans",
+    "ungrounded_entities",
+    "MIN_RUN_WORDS",
+]
 
 #: 몇 낱말이 잇따라 덮이지 않아야 보고할 것인가.
 #:
@@ -119,3 +124,40 @@ def uncovered_spans(
     if len(run) >= min_run_words:
         spans.append(" ".join(run))
     return spans
+
+def ungrounded_entities(scenario: dict[str, Any], raw: str) -> dict[str, list[str]]:
+    r"""``entities`` 중 입력 원문에 없는 값. 축별로 모아서 낸다.
+
+    프롬프트는 ``entities`` 를 "입력에 명시된 것만" 이라고 못박아 두었는데,
+    실측에서 ``paths`` 는 **16/16 전부 지어냈다**(2026-09-05, `qwen2.5:latest`,
+    키오스크·웹셸 두 입력 8회씩). 모델이 입력에서 경로를 뽑아낸 적이 한 번도
+    없다.
+
+    **왜 지우는가 — 도메인 추론은 이미 매핑에 있다.** 지어낸 값이 그냥
+    남는 것이 아니라 **사람이 기법별로 써 둔 기본값을 덮는다.**
+    ``scope_resolver.build_context`` 가 ``dict(defaults)`` 로 시작해 entity
+    값이 있으면 덮기 때문이다.
+
+    실제로 겹쳐 보면 이렇다. 웹셸 픽스처가 낸 ``C:\inetpub\wwwroot`` 는
+    ``T1505.003.yaml`` 의 ``defaults.web_root`` 와 **글자 그대로 같다** —
+    지워도 같은 값이 나온다. 키오스크가 낸
+    ``C:\Users\Public\Documents`` 는 그 실행에 ``{web_root}`` 를 쓰는
+    기법이 없어 피해가 없었을 뿐, 웹셸 기법이 함께 걸렸다면 **엉뚱한 폴더를
+    훑었을 것이다.**
+
+    그래서 "입력에 없으면 버린다"가 도메인 추론을 잃지 않는다. 추론은
+    매핑이 기법별로 갖고 있고, 그쪽이 사람이 쓴 것이라 더 낫다.
+
+    **부분문자열로 본다.** 입력 ``웹서버 WEB01에서`` 에 대해 ``WEB01`` 은
+    입력에서 온 것이다. 조사·수식어를 떼고 이름만 남기는 것은 정규화이지
+    창작이 아니다.
+    """
+    raw_lower = raw.lower()
+    found: dict[str, list[str]] = {}
+    for axis, values in (scenario.get("entities") or {}).items():
+        if not isinstance(values, list):
+            continue
+        bad = [str(v) for v in values if str(v) and str(v).lower() not in raw_lower]
+        if bad:
+            found[axis] = bad
+    return found

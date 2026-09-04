@@ -53,6 +53,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,7 +83,9 @@ MAX_ECHO_LINES = 40
 
 #: 실패가 아니라 **측정**인 오류 유형. "재시도·실패" 수에서 뺀다 —
 #: 02단계가 입력을 얼마나 옮겼는지를 세는 것이라 조치가 ``record`` 다.
-MEASUREMENT_TYPES = frozenset({"uncovered_input", "nonverbatim_evidence"})
+MEASUREMENT_TYPES = frozenset(
+    {"uncovered_input", "nonverbatim_evidence", "ungrounded_entity"}
+)
 
 
 @dataclass
@@ -728,14 +731,11 @@ class Runner:
         with_technique = [f for f in findings if f.get("technique")]
         result.measures["findings_with_technique"] = len(with_technique)
 
-        # **기각 상세를 여기 싣는다.** `06_verified.json` 에도 있지만 그
-        # 파일은 같은 case-id 를 다시 돌리면 덮인다(`--force`). 매핑을 넓힐
-        # 근거는 **여러 실행에 걸쳐** 쌓여야 하는데, 덮이는 자리에 두면
-        # 세 번째 실행이 첫 번째의 기각을 지운다. 실행마다 새로 쓰이는
-        # 이 파일이 그 대장(臺帳)이다 — `benchmark/collect.py --rejections`
-        # 가 여기를 읽는다(`work.md` 10번).
-        verified = io.read_json(self.case_dir / "06_verified.json")
-        result.measures["rejections"] = verified.get("rejected", [])
+        # 기각 상세는 여기 싣지 않는다. 06단계가 실행마다
+        # `benchmark/results/rejections.jsonl` 에 직접 덧붙이므로
+        # (`stage06_verify.runlog`), 여기 또 실으면 한 실행이 두 곳에 잡혀
+        # `collect.py --rejections` 가 두 번 센다. 이 도구만 기록하던 때에는
+        # `run_pipeline.sh` 나 웹 UI 로 돌린 실행이 통째로 새고 있었다.
 
         note = (
             f"passed {stats['passed']} / rejected {stats['rejected']} "
@@ -833,18 +833,28 @@ class Runner:
             # 같이 세면 "재시도·실패"가 부풀어, 프롬프트를 고쳐 나아졌는지
             # 볼 자리가 오히려 흐려진다.
             measured = counted["by_action"].get("record", 0)
+            # ``by_field`` 는 tally 가 둘을 섞어 낸다. 실패 아래에 측정에서
+            # 온 필드가 찍히면 "무엇이 실패했나"를 잘못 읽게 되므로 직접 센다.
+            fields: dict[str, Counter] = {"fail": Counter(), "record": Counter()}
+            for entry in io.read_jsonl(self.errors_path):
+                field = (entry.get("detail") or {}).get("field")
+                if field:
+                    fields["record" if entry.get("action") == "record" else "fail"][str(field)] += 1
+
             print(f"  재시도·실패  {counted['total'] - measured}건 — {self.errors_path}")
             for etype, count in sorted(counted["by_type"].items()):
                 if etype in MEASUREMENT_TYPES:
                     continue
                 print(f"      type {etype}: {count}")
-            for field_name, count in sorted(counted["by_field"].items(), key=lambda kv: -kv[1])[:5]:
-                print(f"      field {field_name}: {count}   ← 프롬프트 개선의 근거")
+            for name, count in sorted(fields["fail"].items(), key=lambda kv: -kv[1])[:5]:
+                print(f"      field {name}: {count}   ← 프롬프트 개선의 근거")
             if measured:
-                print(f"  02 커버리지  {measured}건 (측정 — 실행을 실패시키지 않는다)")
+                print(f"  02 측정치    {measured}건 (실행을 실패시키지 않는다)")
                 for etype in sorted(MEASUREMENT_TYPES):
                     if counted["by_type"].get(etype):
                         print(f"      type {etype}: {counted['by_type'][etype]}")
+                for name, count in sorted(fields["record"].items(), key=lambda kv: -kv[1])[:5]:
+                    print(f"      field {name}: {count}   ← 프롬프트 개선의 근거")
         else:
             print("  재시도·실패  0건 (errors.jsonl 없음 — 모든 단계가 첫 시도에 통과)")
 

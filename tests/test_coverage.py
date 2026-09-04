@@ -115,3 +115,46 @@ def test_the_error_types_are_registered():
 
     assert {"uncovered_input", "nonverbatim_evidence"} <= errlog.ERROR_TYPES
     assert "record" in errlog.ACTIONS
+
+
+# =========================================== entities — 입력에서 온 값인가
+
+
+def test_a_value_lifted_from_the_input_is_kept():
+    # 입력 `웹서버 WEB01에서` 에 대해 `WEB01` 은 입력에서 온 것이다.
+    # 조사·수식어를 떼고 이름만 남기는 것은 정규화이지 창작이 아니다.
+    raw = "웹서버 WEB01에서 이상한 파일이 발견됐습니다"
+    scenario = {"entities": {"hosts": ["WEB01"], "paths": [], "accounts": []}}
+    assert coverage.ungrounded_entities(scenario, raw) == {}
+
+
+def test_a_value_that_is_not_in_the_input_is_reported():
+    # 2026-09-05 실측: paths 는 16/16 전부 이 경우였다.
+    raw = "키오스크 단말에서 침해사고가 발생했습니다"
+    scenario = {"entities": {"hosts": ["키오스크 단말"], "paths": [r"C:\Users\Public\Documents"]}}
+    assert coverage.ungrounded_entities(scenario, raw) == {
+        "paths": [r"C:\Users\Public\Documents"]
+    }
+
+
+def test_case_does_not_matter():
+    raw = "웹서버 web01 에서"
+    scenario = {"entities": {"hosts": ["WEB01"]}}
+    assert coverage.ungrounded_entities(scenario, raw) == {}
+
+
+def test_the_hand_written_fixture_still_carries_one():
+    r"""골든 픽스처의 `paths` 는 입력에 없다 — **그리고 그것이 정상이다.**
+
+    사람이 쓴 것인데도 걸린다. `C:\inetpub\wwwroot` 는 IIS 기본 웹루트라는
+    도메인 추론이고, 입력 서술에는 그 경로가 없다. 이 검사가 그것을 잡는
+    것이 맞다 — **그 추론은 `T1505.003.yaml` 의 `defaults.web_root` 가 이미
+    갖고 있기 때문이다.** 떨궈도 03단계 산출물이 바뀌지 않는다.
+
+    이 테스트가 깨졌다면 픽스처를 고친 것이다. 그때는 e2e 가 더 이상 떨구는
+    경로를 밟지 않으므로, 그 자리를 다른 테스트로 덮었는지 확인한다.
+    """
+    scenario = io.read_json(FIXTURES / "02_scenario.json")
+    assert coverage.ungrounded_entities(scenario, _fixture_raw()) == {
+        "paths": [r"C:\inetpub\wwwroot"]
+    }

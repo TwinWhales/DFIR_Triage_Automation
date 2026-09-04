@@ -503,9 +503,25 @@ def test_the_whole_pipeline_runs_and_every_stage_validates(case):
     assert (case / "07_report.md").is_file()
 
 
-def test_a_clean_run_leaves_no_errors_behind(case):
+def test_a_clean_run_leaves_no_failures_behind(case):
+    """깨끗한 실행에 **실패**가 없어야 한다. 측정은 실패가 아니다.
+
+    `action="record"` 는 흐름을 바꾸지 않았다는 뜻이다(`src/common/errors.py`
+    의 어휘 주석). 이 픽스처의 `entities.paths` 는 입력 원문에 없는 값이라
+    02단계가 떨구고 `ungrounded_entity` 로 적는데, 그것까지 실패로 세면
+    "재시도·실패 0건"이 무엇을 뜻하는지가 흐려진다.
+
+    **떨어져 나간 것이 있어도 03단계 산출물은 그대로다** — 매핑의
+    `defaults.web_root` 가 같은 값을 낸다. 그 대조는
+    `test_mapping_loader.py::test_reproduces_the_selection_fixture_exactly`
+    가 본다.
+    """
     run_pipeline(case)
-    assert not (case / "errors.jsonl").exists()
+    path = case / "errors.jsonl"
+    if not path.exists():
+        return
+    failures = [e for e in io.read_jsonl(path) if e["action"] != "record"]
+    assert failures == [], failures
 
 
 def test_case_id_is_carried_through_every_stage(case):
