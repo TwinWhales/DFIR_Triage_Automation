@@ -143,8 +143,14 @@ class FileInfoLayout:
 
 #: (버전, 파일 정보 블록 크기) → 자리.
 #:
-#: 버전 23만 실측입니다(``evidence/[root]`` 73건). 나머지는 [LIBSCCA] 를
-#: 옮긴 것이고 ``plausible_*`` 검사가 뒤를 받칩니다.
+#: 여덟 줄 중 **실측은 셋**입니다 — ``(23, 156)``·``(30, 220)``·``(30, 212)``.
+#: 나머지 다섯은 [LIBSCCA] 를 옮긴 것이고 ``plausible_*`` 검사가 뒤를 받칩니다.
+#:
+#: **명세 줄은 "안 틀린 것"이 아니라 "확인 안 한 것"입니다.** ``(30, 216)``
+#: 이 특히 그렇습니다 — [LIBSCCA] 는 "1903 이상 = 216" 이라 말하는데 19045
+#: 가 212 였으므로 그 줄은 이미 한 번 반증된 자리입니다. 각 줄을 무엇으로
+#: 확인했는지는 ``source`` 가 들고 있고, 남은 다섯을 어떻게 채우는지는
+#: ``docs/proposals/windows-version-axis.md`` 입니다.
 FILE_INFORMATION: dict[tuple[int, int], FileInfoLayout] = {
     (17, 68): FileInfoLayout(
         size=68,
@@ -207,7 +213,10 @@ FILE_INFORMATION: dict[tuple[int, int], FileInfoLayout] = {
         run_count_offset=0x74,
         metrics_entry_size=32,
         volume_entry_size=96,
-        source="실측 evidence/KAPE_Results/KIOSK_snapshotA 192건 (Windows 10 19045.6466)",
+        source=(
+            "실측 evidence/KAPE_Results/KIOSK_snapshotA 192건"
+            " (Windows 10 19045.6466) · PECmd 192건 전건 일치 (2026-09-05)"
+        ),
     ),
     (31, 224): FileInfoLayout(
         size=224,

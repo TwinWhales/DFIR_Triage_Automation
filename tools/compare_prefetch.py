@@ -75,6 +75,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -307,19 +308,47 @@ def load_pecmd(path: "str | Path") -> "tuple[dict[str, Record], tuple[str, ...]]
     return records, absent
 
 
+#: 항목이 새로 시작하는 자리. ``\VOLUME{...}`` 이나 ``C:\`` 로 시작한다.
+#:
+#: 이어 붙인 문자열을 구분자로만 쪼개면 안 되는 이유가 ``_loaded_count`` 에 있다.
+ENTRY_START = re.compile(r"^(?:\\|[A-Za-z]:)")
+
+
 def _loaded_count(value: Any) -> "int | None":
-    """``FilesLoaded`` 열에서 항목 수를. 비어 있으면 ``None``.
+    r"""``FilesLoaded`` 열에서 항목 수를. 비어 있으면 ``None``.
 
     PECmd 는 이 열을 도구 버전에 따라 개수(정수)로도, 경로를 이어 붙인
     문자열로도 냅니다. 둘 다 받되 **개수만** 씁니다 — 경로 내용은 변환
     규칙이 서로 달라 여기서 채점할 수 없습니다(모듈 docstring 참조).
+
+    **구분자로 쪼개기만 하면 틀립니다.** .NET 어셈블리 경로는 이름 안에
+    쉼표를 품습니다::
+
+        \VOLUME{...}\WINDOWS\ASSEMBLY\...\GIT-CREDENTIAL-MANAGER,
+        VERSION=2.9.0.0, CULTURE=NEUTRAL, PUBLICKEYTOKEN=NULL\...
+
+    한 항목이 넷으로 세어집니다. 2026-09-05 의 첫 실물 대조에서 192건 중
+    유일한 "불일치"가 이것이었고(우리 198 / 저쪽 201), **파서는 옳았고 이
+    함수가 틀렸습니다.** 도구 차이를 파서의 오류로 세지 않는다는 이 모듈의
+    규칙이 정확히 여기서 깨졌던 것이라, 경로처럼 시작하지 않는 조각은 앞
+    항목의 이어짐으로 봅니다.
     """
     text = str(value or "").strip()
     if not text:
         return None
     if text.isdigit():
         return int(text)
-    return len([part for part in text.replace("|", ",").split(",") if part.strip()])
+    separator = "|" if "|" in text else ","
+    count = 0
+    for part in text.split(separator):
+        stripped = part.strip()
+        if not stripped:
+            continue
+        # 첫 조각은 무조건 항목이다 — 경로가 아닌 표기로 낸 판이라도
+        # 0 을 내지 않는다. 0 은 "적재 파일이 없다"라는 다른 뜻이다.
+        if count == 0 or ENTRY_START.match(stripped):
+            count += 1
+    return count
 
 
 def _require_columns(columns: list[str], source: Path) -> None:
