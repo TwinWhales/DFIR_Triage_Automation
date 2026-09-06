@@ -80,6 +80,7 @@ python-registry도 값에 시각을 물으면 거부합니다::
 from __future__ import annotations
 
 import logging
+import re
 import struct
 from typing import Any, BinaryIO, Iterator
 
@@ -106,6 +107,8 @@ __all__ = [
     "NK_TIMESTAMP_OFFSET",
     "hive_designator",
     "value_to_field",
+    "devprop_to_field",
+    "is_device_property_key",
 ]
 
 _log = logging.getLogger(__name__)
@@ -379,6 +382,126 @@ def hive_designator(artifact: str) -> str:
         ) from None
 
 
+#: 장치 속성 저장소의 값이 사는 자리 — ``…\Properties\{GUID}\NNNN``.
+#:
+#: **번호가 아니라 경로로 켭니다.** 두 타입 체계가 같은 번호 공간을 다른
+#: 뜻으로 쓰므로, 번호만 보고 DEVPROP 표를 적용하면 `Properties` 밖의 멀쩡한
+#: 값을 깨뜨립니다(실측 SYSTEM 기준 `RegMultiSZ` 2,370건). `comparators` 의
+#: `PATH_FIELDS`·`DATE_FIELDS` 가 이름으로 켜지는 것과 같은 규약입니다.
+#:
+#: **`Properties` 아래라고 다 이 형식은 아닙니다.** 같은 하이브에
+#: ``Control\Class\{GUID}\Properties\Security`` 처럼 **이름 있는 표준 값**이
+#: 71건 있고 그것들은 지금 옳게 읽힙니다. 그래서 `{GUID}\NNNN` 까지 맞아야
+#: 켭니다(2026-09-06 실측으로 가른 경계).
+_DEVICE_PROPERTY_KEY = re.compile(
+    r"\\Properties\\\{[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\}"
+    r"\\[0-9A-Fa-f]{4}$"
+)
+
+#: DEVPROP 타입 중 **이미지 안에서 뜻을 확인한 것**. 나머지는 16진으로 냅니다.
+#:
+#: 명세를 옮겨 적지 않습니다 — 근거는 `docs/artifact-notes.md` 2026-09-03 절과
+#: 2026-09-06 재측정입니다. 근거 표기는 Amcache 값 이름과 같은 어휘입니다.
+#:
+#: ===== ========================= ========= ==========================
+#: 번호   뜻                        근거      확인한 것
+#: ===== ========================= ========= ==========================
+#: 0x08  INT64                     shape     길이가 전부 8바이트 (4건)
+#: 0x09  UINT64                    shape     길이가 전부 8바이트 (17건)
+#: 0x0D  GUID                      shape     길이가 전부 16바이트 (50건)
+#: 0x10  FILETIME                  image     표준 번호와 우연히 같아 전부터 읽혔다 (780건)
+#: 0x12  STRING                    image     UTF-16LE 로 전부 읽힌다 (2,691건)
+#: 0x19  STRING_INDIRECT           image     ``@c_sensor.inf,%GyrometerDesc%;…`` (158건)
+#: ===== ========================= ========= ==========================
+#:
+#: **일부러 뺀 것 둘.** ``0x11`` 919건은 전부 4바이트 ``ff000000`` 인데
+#: 명세의 `DEVPROP_TYPE_BOOLEAN` 은 1바이트라 폭이 다릅니다 — 참으로 읽는
+#: 것은 추측입니다. ``0x82`` 4건은 구조를 모릅니다. 둘 다 16진으로 남깁니다.
+DEVPROP_INT64 = 0x08
+DEVPROP_UINT64 = 0x09
+DEVPROP_GUID = 0x0D
+DEVPROP_FILETIME = 0x10
+DEVPROP_STRING = 0x12
+DEVPROP_STRING_INDIRECT = 0x19
+
+#: 위 표가 뜻을 아는 번호. 나머지는 16진으로 내고 **번호별로 셉니다.**
+_DEVPROP_HANDLED = frozenset(
+    {
+        DEVPROP_INT64,
+        DEVPROP_UINT64,
+        DEVPROP_GUID,
+        DEVPROP_FILETIME,
+        DEVPROP_STRING,
+        DEVPROP_STRING_INDIRECT,
+    }
+)
+
+
+def is_device_property_key(path: str) -> bool:
+    """이 키의 값이 DEVPROP 타입 체계를 쓰는가."""
+    return _DEVICE_PROPERTY_KEY.search(path) is not None
+
+
+def _format_guid(raw: bytes) -> str:
+    """16바이트 GUID 를 표준 표기로. 앞 셋은 리틀엔디언이다."""
+    first, second, third = struct.unpack_from("<IHH", raw, 0)
+    return (
+        f"{{{first:08x}-{second:04x}-{third:04x}-"
+        f"{raw[8:10].hex()}-{raw[10:16].hex()}}}"
+    )
+
+
+def devprop_to_field(value: Any) -> Any:
+    """장치 속성 값 하나를 ``fields`` 에 넣을 형태로.
+
+    ``value_type_str()`` 을 부르지 않습니다 — 표준 타입에 없는 번호에서
+    예외를 던지고, 그것이 지금 값을 통째로 잃는 원인입니다. 원시 번호를
+    주는 ``value_type()`` 을 쓰고 우리 표로 해석합니다.
+
+    **표에 없는 번호는 16진으로 냅니다.** 표준 타입으로 읽어 그럴듯한 값을
+    만들어 내는 것보다 낫습니다 — 실측에서 ``0x05`` 20건이 `RegBigEndian`
+    으로 읽혀 하이브 어디에도 없는 ``83951615`` 로 나가고 있었습니다.
+    """
+    kind = value.value_type()
+    raw = value.raw_data()
+
+    if kind in (DEVPROP_STRING, DEVPROP_STRING_INDIRECT):
+        # 첫 널 문자까지가 값이다. 표준 문자열과 같은 규약.
+        return _decode_utf16le(raw).split("\x00", 1)[0]
+
+    if kind == DEVPROP_FILETIME and len(raw) == 8:
+        moment = filetime_to_datetime(struct.unpack("<Q", raw)[0])
+        if moment is not None:
+            return moment.strftime("%Y-%m-%dT%H:%M:%S.%f0Z")
+        return raw.hex()
+
+    if kind == DEVPROP_GUID and len(raw) == 16:
+        return _format_guid(raw)
+
+    if kind in (DEVPROP_INT64, DEVPROP_UINT64) and len(raw) == 8:
+        return struct.unpack("<q" if kind == DEVPROP_INT64 else "<Q", raw)[0]
+
+    return raw.hex()
+
+
+#: 예외 문자열에서 **주소를 지우는** 자리. 사유를 묶는 키에 쓴다.
+#:
+#: python-registry 는 `Unknown VK Record type 0x12 at 0xc6785c` 처럼 셀
+#: 오프셋을 메시지에 넣습니다. 그것을 그대로 키로 쓰면 건마다 새 사유가
+#: 되어 **묶음이 한 번도 걸리지 않습니다** — 2026-09-06 실측에서 같은 사유
+#: 109건이 109줄로 찍혀 04 출력을 덮었습니다(`work.md` 13번).
+#:
+#: 타입 번호(`0x12`)는 남기고 주소(`at 0x...`)만 지웁니다. 번호까지 지우면
+#: 서로 다른 미지원 타입이 한 줄로 뭉쳐 "무엇이 몇 건인지" 를 잃습니다 —
+#: 사유별로 나눈 애초의 이유가 그것입니다.
+_ADDRESS_IN_MESSAGE = re.compile(r"\s+at\s+0x[0-9a-fA-F]+")
+
+
+def _reason_key(error: Exception) -> str:
+    """같은 사유를 한 줄로 묶기 위한 키."""
+    return type(error).__name__ + ": " + _ADDRESS_IN_MESSAGE.sub("", str(error))
+
+
 def value_to_field(value: Any) -> Any:
     """``RegistryValue`` 하나를 ``fields``에 넣을 형태로.
 
@@ -552,6 +675,9 @@ class RegistryParser:
         #: 씁니다. 집계는 ``stats["value_errors"]`` 가 들고, 이쪽은 파일마다
         #: 초기화되므로 산출물에 실리지 않습니다.
         self._value_error_reasons: dict[str, int] = {}
+        #: 표에 없는 DEVPROP 타입 번호 → 건수. 로그를 번호당 한 줄로 묶는
+        #: 데만 씁니다. 집계는 ``stats["devprop_unhandled"]`` 가 듭니다.
+        self._devprop_unhandled_types: dict[int, int] = {}
 
     @staticmethod
     def _new_stats() -> dict[str, int]:
@@ -565,6 +691,11 @@ class RegistryParser:
             # 그 서브트리를 한 건도 안 만났다는 뜻이라, 매핑이 안 걸린
             # 것인지 하이브에 없는 것인지 가르는 자리가 된다.
             "amcache_values_renamed": 0,
+            # 장치 속성 저장소(DEVPROP)를 지난 값의 수와, 그중 표에 없어
+            # 16진으로 낸 수. 0 이면 그 서브트리를 한 건도 안 만났다는
+            # 뜻이라 "없었다"와 "안 읽었다"가 갈린다.
+            "devprop_values": 0,
+            "devprop_unhandled": 0,
         }
 
     # ------------------------------------------------------------ 진입점
@@ -572,6 +703,7 @@ class RegistryParser:
     def parse(self, stream: BinaryIO, scope: Scope) -> Iterator[dict[str, Any]]:
         self.stats = self._new_stats()
         self._value_error_reasons = {}
+        self._devprop_unhandled_types = {}
 
         buf = stream.read()
         if not buf:
@@ -794,6 +926,30 @@ class RegistryParser:
             record["timestamp"] = timestamp
         return record
 
+    def _count_unhandled_devprop(self, value: Any) -> None:
+        """표에 없어 16진으로 낸 DEVPROP 타입을 **번호별로** 센다.
+
+        총계 하나로 묶지 않는 것은 어느 번호가 몇 건인지가 다음 작업의
+        입력이기 때문입니다 — 미지원 구간을 버전별로 나눈 것과 같은 근거.
+        사유당 한 줄만 찍습니다(`_reason_key` 와 같은 규약).
+        """
+        try:
+            kind = value.value_type()
+        except Exception:  # noqa: BLE001 - 여기서 실패하면 셀 것도 없다
+            return
+        if kind in _DEVPROP_HANDLED:
+            return
+        self.stats["devprop_unhandled"] += 1
+        seen = self._devprop_unhandled_types.get(kind, 0)
+        self._devprop_unhandled_types[kind] = seen + 1
+        if seen == 0:
+            _log.warning(
+                "%s: 장치 속성 타입 0x%02X 는 표에 없어 16진으로 냅니다 "
+                "(이후 같은 번호는 수만 셉니다)",
+                self.artifact,
+                kind,
+            )
+
     def _fields(self, key: Any, path: str) -> dict[str, Any]:
         """키의 값들을 ``fields``로.
 
@@ -808,10 +964,18 @@ class RegistryParser:
             _log.warning("%s: %s 의 값 목록을 읽지 못했습니다 — %s", self.artifact, path, e)
             return out
 
+        # 키 하나에 한 번만 판정한다. 값마다 정규식을 돌릴 이유가 없다.
+        device_property = is_device_property_key(path)
+
         for value in values:
             try:
                 name = value.name() or DEFAULT_VALUE_NAME
-                out[name] = value_to_field(value)
+                if device_property:
+                    out[name] = devprop_to_field(value)
+                    self.stats["devprop_values"] += 1
+                    self._count_unhandled_devprop(value)
+                else:
+                    out[name] = value_to_field(value)
             except Exception as e:  # noqa: BLE001 - 손상 셀에서 무엇이 나올지 모른다
                 self.stats["value_errors"] += 1
                 self.stats["parse_errors"] += 1
@@ -825,7 +989,7 @@ class RegistryParser:
                 # 사유별로 나누는 이유는 **묶으면 어느 쪽이 몇 건인지 말할
                 # 수 없기 때문**입니다(미지원 구간을 버전별로 나눈 것과 같은
                 # 근거). 총계는 `stats["value_errors"]` 가 듭니다.
-                reason = type(e).__name__ + ": " + str(e)
+                reason = _reason_key(e)
                 seen = self._value_error_reasons.get(reason, 0)
                 self._value_error_reasons[reason] = seen + 1
                 if seen == 0:

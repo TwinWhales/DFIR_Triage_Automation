@@ -86,12 +86,17 @@ class FakeValue:
         raises: Exception | None = None,
         value_type: str | None = None,
         raw: bytes | None = None,
+        value_type_num: int | None = None,
     ) -> None:
         self._name = name
         self._value = value
         self._raises = raises
         self._type = value_type or self._guess_type(value)
         self._raw = raw
+        #: **원시 타입 번호.** 장치 속성(DEVPROP)은 표준 타입에 없는 번호를
+        #: 쓰므로 `value_type_str()` 이 예외를 던진다. 그 경로를 흉내 내려면
+        #: 번호를 따로 받아야 한다.
+        self._type_num = value_type_num
 
     @staticmethod
     def _guess_type(value) -> str:
@@ -107,7 +112,16 @@ class FakeValue:
         return self._name
 
     def value_type_str(self) -> str:
+        if self._type_num is not None:
+            raise Exception(
+                f"Unknown VK Record type 0x{self._type_num:x} at 0x1234"
+            )
         return self._type
+
+    def value_type(self) -> int:
+        if self._type_num is not None:
+            return self._type_num
+        return {"RegSZ": 1, "RegBin": 3, "RegDWord": 4, "RegMultiSZ": 7}.get(self._type, 0)
 
     def raw_data(self) -> bytes:
         if self._raises is not None:
@@ -466,6 +480,60 @@ def test_the_same_failure_is_logged_once_and_counted(caplog):
     assert parser.stats["value_errors"] == 90, "집계는 레코드 단위 그대로다"
     assert len(caplog.records) == 1, "90줄이 다른 경고를 덮었다"
     assert "수만 셉니다" in caplog.records[0].getMessage()
+
+
+def test_the_cell_address_in_the_message_does_not_split_the_reason(caplog):
+    """**실물 메시지에는 셀 주소가 붙는다** — 위 시험이 통과하는데도 실물은
+    안 묶이고 있었다.
+
+    python-registry 는 `Unknown VK Record type 0x12 at 0xc6785c` 를 낸다.
+    주소가 건마다 다르므로 사유 키가 매번 새것이 되고, 묶음이 한 번도
+    걸리지 않는다. `K-GROUNDED-0906` 에서 109건이 109줄로 찍혀 04 출력을
+    덮었다(2026-09-06).
+
+    위 시험이 이것을 못 잡은 것은 목업 예외에 주소가 없었기 때문이다.
+    """
+    import logging
+
+    parser = _parser()
+    key = FakeKey(
+        "k",
+        0x1000,
+        values=[
+            FakeValue(
+                f"v{i}",
+                raises=Exception(f"Unknown VK Record type 0x12 at 0x{0xC6785C + i * 8:x}"),
+            )
+            for i in range(109)
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING, logger=registry._log.name):
+        parser._build(key, "SYSTEM\\k", 0x1000)
+
+    assert parser.stats["value_errors"] == 109, "집계는 줄이지 않는다"
+    assert len(caplog.records) == 1, "주소가 달라도 같은 사유다"
+
+
+def test_the_type_number_still_splits_the_reason(caplog):
+    """주소만 지운다. 타입 번호까지 지우면 서로 다른 미지원 타입이 한 줄로
+    뭉쳐 '무엇이 몇 건인지' 를 잃는다."""
+    import logging
+
+    parser = _parser()
+    key = FakeKey(
+        "k",
+        0x1000,
+        values=[
+            FakeValue("a", raises=Exception("Unknown VK Record type 0x12 at 0x1000")),
+            FakeValue("b", raises=Exception("Unknown VK Record type 0x19 at 0x2000")),
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING, logger=registry._log.name):
+        parser._build(key, "SYSTEM\\k", 0x1000)
+
+    assert len(caplog.records) == 2
 
 
 def test_a_different_failure_still_gets_its_own_line(caplog):
@@ -1004,3 +1072,143 @@ def test_the_container_key_itself_is_not_an_entry():
     assert not is_leaf(container)
     assert is_leaf(entry)
     assert subkey_of(entry) == "InventoryApplicationFile"
+
+
+# ==================================================== 장치 속성 (DEVPROP)
+
+
+DEVPROP_PATH = (
+    "SYSTEM\\ControlSet001\\Enum\\USB\\VID_0E0F&PID_0007\\7&92e97d2&0&1"
+    "\\Properties\\{a8b865dd-2e3d-4094-ad97-e593a70c75d6}\\0004"
+)
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        (DEVPROP_PATH, True),
+        # 같은 하이브에 있는 **이름 있는 표준 값**. 실측 71건이고 지금 옳게
+        # 읽힌다 — 여기까지 켜면 그것들을 깨뜨린다.
+        ("SYSTEM\\ControlSet001\\Control\\Class\\{4d36e965-e325-11ce-bfc1-08002be10318}\\Properties", False),
+        ("SYSTEM\\ControlSet001\\Enum\\USB\\VID_0E0F&PID_0007", False),
+        # GUID 자리까지만 있고 인덱스가 없다.
+        ("SYSTEM\\ControlSet001\\Enum\\USB\\x\\Properties\\{a8b865dd-2e3d-4094-ad97-e593a70c75d6}", False),
+    ],
+)
+def test_the_device_property_gate_is_the_path_not_the_number(path, expected):
+    """**번호가 아니라 경로로 켠다.** 두 타입 체계가 같은 번호 공간을 다른
+    뜻으로 쓰므로, 번호만 보고 적용하면 `Properties` 밖의 멀쩡한 값을
+    깨뜨린다(실측 SYSTEM 의 `RegMultiSZ` 2,370건).
+    """
+    assert registry.is_device_property_key(path) is expected
+
+
+def test_a_devprop_string_is_read_instead_of_raising():
+    """`0x12` STRING 2,691건 — 가장 큰 덩어리다. 이것이 이 작업의 전부다."""
+    value = FakeValue("(default)", raw="USB Input Device\x00".encode("utf-16-le"), value_type_num=0x12)
+
+    assert registry.devprop_to_field(value) == "USB Input Device"
+
+
+def test_a_devprop_indirect_string_keeps_its_form():
+    """`0x19` STRING_INDIRECT — `@c_sensor.inf,%GyrometerDesc%;Gyro` 그대로."""
+    text = "@input.inf,%hid.devicedesc%;USB Input Device"
+    value = FakeValue("(default)", raw=(text + "\x00").encode("utf-16-le"), value_type_num=0x19)
+
+    assert registry.devprop_to_field(value) == text
+
+
+def test_a_devprop_guid_is_formatted_little_endian():
+    """앞 셋이 리틀엔디언이다. 실물 표본으로 확인한 값을 못 박는다 —
+    `{e3c9e316-0b5c-4db8-817d-f92df00215ae}` 는 실재하는 장치 GUID 다."""
+    raw = bytes.fromhex("16e3c9e35c0bb84d817df92df00215ae")
+    value = FakeValue("(default)", raw=raw, value_type_num=0x0D)
+
+    assert registry.devprop_to_field(value) == "{e3c9e316-0b5c-4db8-817d-f92df00215ae}"
+
+
+def test_a_devprop_filetime_stays_iso():
+    """`0x10` 은 표준 번호와 우연히 같아 전부터 읽혔다. **바뀌면 안 된다** —
+    USB 의 연결·제거 시각이 이 타입이다."""
+    raw = bytes.fromhex("e0a41e6a8934dd01")
+    value = FakeValue("(default)", raw=raw, value_type_num=0x10)
+
+    out = registry.devprop_to_field(value)
+
+    assert isinstance(out, str) and out.startswith("20") and out.endswith("Z")
+
+
+def test_a_devprop_int64_becomes_a_number():
+    """길이가 전부 8바이트라는 근거로만 정수로 읽는다(`shape`)."""
+    value = FakeValue("(default)", raw=bytes.fromhex("77a5000000000000"), value_type_num=0x09)
+
+    assert registry.devprop_to_field(value) == 0xA577
+
+
+def test_an_unknown_devprop_type_is_left_as_hex():
+    """**표준 타입으로 읽어 그럴듯한 값을 만들지 않는다.** 실측에서 `0x05`
+    20건이 RegBigEndian 으로 읽혀 하이브 어디에도 없는 83951615 로 나갔다.
+    """
+    value = FakeValue("(default)", raw=bytes.fromhex("0500ffff"), value_type_num=0x05)
+
+    assert registry.devprop_to_field(value) == "0500ffff"
+
+
+def test_a_wrong_length_falls_back_to_hex():
+    """길이가 근거인 타입은 길이가 어긋나면 해석하지 않는다."""
+    value = FakeValue("(default)", raw=b"\x01\x02", value_type_num=0x0D)
+
+    assert registry.devprop_to_field(value) == "0102"
+
+
+def test_the_device_property_path_does_not_lose_the_value(caplog):
+    """경로가 맞으면 예외 없이 값이 실린다 — 실측 109건이 `fields: {}` 였다."""
+    import logging
+
+    parser = _parser()
+    key = FakeKey(
+        "0004",
+        0x1000,
+        values=[FakeValue("(default)", raw="USB Input Device\x00".encode("utf-16-le"), value_type_num=0x12)],
+    )
+
+    with caplog.at_level(logging.WARNING, logger=registry._log.name):
+        record = parser._build(key, DEVPROP_PATH, 0x1000)
+
+    assert record["fields"] == {"(default)": "USB Input Device"}
+    assert parser.stats["value_errors"] == 0
+    assert parser.stats["devprop_values"] == 1
+    assert parser.stats["devprop_unhandled"] == 0
+
+
+def test_an_unhandled_devprop_type_is_counted_once_per_number(caplog):
+    """번호별로 센다. 총계 하나로 묶으면 다음 작업의 입력이 사라진다."""
+    import logging
+
+    parser = _parser()
+    key = FakeKey(
+        "0004",
+        0x1000,
+        values=[
+            FakeValue("a", raw=b"\x01", value_type_num=0x11),
+            FakeValue("b", raw=b"\x02", value_type_num=0x11),
+            FakeValue("c", raw=b"\x03", value_type_num=0x82),
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING, logger=registry._log.name):
+        parser._build(key, DEVPROP_PATH, 0x1000)
+
+    assert parser.stats["devprop_unhandled"] == 3
+    assert len(caplog.records) == 2, "번호가 둘이므로 두 줄"
+
+
+def test_a_standard_value_outside_properties_is_untouched():
+    """**회귀 자리다.** `Properties` 밖 값은 예전 경로로 가야 한다."""
+    parser = _parser()
+    key = FakeKey("Dnscache", 0x1000, values=[FakeValue("ImagePath", "C:\\Windows\\svchost.exe")])
+
+    record = parser._build(key, "SYSTEM\\ControlSet001\\services\\Dnscache", 0x1000)
+
+    assert record["fields"] == {"ImagePath": "C:\\Windows\\svchost.exe"}
+    assert parser.stats["devprop_values"] == 0
