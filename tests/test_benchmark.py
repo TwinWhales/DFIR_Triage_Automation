@@ -408,12 +408,27 @@ def test_validator_cases_build_a_schema_valid_document():
     schema.validate(document, "findings")
 
 
-def test_summary_statements_are_expected_to_be_unverifiable():
+def test_both_routes_into_unverifiable_have_a_case():
+    """검증불가로 가는 길은 둘이고, 사례가 둘 다 있어야 한다.
+
+    ``claims`` 가 빈 종합 판단 문장이 하나, 문장이 증거 밖 표현을 쓴 것이
+    하나다(``checkers/statement_grounded.py``). 한쪽만 있으면 다른 쪽 경로가
+    시험되지 않는다.
+    """
+    from src.stage06_verify.checkers import statement_grounded
+
     cases = io.read_json(validator_check.DEFAULT_CASES)["cases"]
     unverifiable = [c for c in cases if c.get("expect") == "unverifiable"]
-    assert unverifiable, "종합 판단 사례가 없으면 그 경로를 시험하지 못한다"
-    for case in unverifiable:
-        assert case["claims"] == []
+    records = validator_check.read_records(validator_check.DEFAULT_PARSED)
+
+    empty = [c for c in unverifiable if c["claims"] == []]
+    assert empty, "종합 판단 사례가 없으면 그 경로를 시험하지 못한다"
+
+    beyond = [c for c in unverifiable if c["claims"]]
+    assert beyond, "증거 밖 표현 사례가 없으면 그 경로를 시험하지 못한다"
+    for case in beyond:
+        # 강등이 우연이 아니라 **그 사유로** 일어나는지 못 박는다.
+        assert statement_grounded.ungrounded(case, records), case["id"]
 
 
 def test_every_case_documents_the_risk_it_covers():

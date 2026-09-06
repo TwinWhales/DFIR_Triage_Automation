@@ -1,6 +1,6 @@
 {
   "note": "사람이 '이건 맞는 문장'이라고 판단한 사례. 06단계 검증기가 이걸 기각하면 검증기가 과엄격한 것이다. C-001 목업 파싱 결과(benchmark/datasets/C-001-webshell/mock/04_parsed)를 대상으로 한다.",
-  "policy": "여기 있는 문장은 전부 통과하거나(claims 있음) 검증불가로 분류되어야(claims 없음) 한다. 기대와 다르면 검증기 결함이다. 새 비교 규칙을 넣을 때마다 여기에 사례를 추가한다. expect 가 rejected 인 사례는 **아직 못 고친 것**이고 gap 에 사유와 고칠 자리를 적는다 — 고쳐지면 expect 를 passed 로 되돌린다. 이 목록이 낡지 않게 tests/test_benchmark.py 가 함께 검사한다.",
+  "policy": "여기 있는 문장은 통과하거나(claims 가 문장을 설명한다) 검증불가로 분류되어야(claims 가 비었거나, 문장이 증거 밖 표현을 쓴다) 한다. 기대와 다르면 검증기 결함이다. 새 비교 규칙을 넣을 때마다 여기에 사례를 추가한다. expect 가 rejected 인 사례는 **아직 못 고친 것**이고 gap 에 사유와 고칠 자리를 적는다 — 고쳐지면 expect 를 passed 로 되돌린다. 이 목록이 낡지 않게 tests/test_benchmark.py 가 함께 검사한다.",
   "input_refs": [
     "AMCACHE#15044",
     "AMCACHE#20117",
@@ -703,6 +703,72 @@
           "ref": "AMCACHE#20117",
           "field": "fields.InstallDate",
           "value": "2017-03-20T03:53:52Z"
+        }
+      ]
+    },
+    {
+      "id": "V42",
+      "risk": "증거에 없는 파일명을 문장이 부른다 (한글 음차)",
+      "why": "2026-09-04 실물 실행에서 그대로 통과한 문장이다. CompatTelRunner.exe 를 음차한 이름은 어느 레코드에도 없는데, claims 가 타임스탬프뿐이라 이름은 대조 대상이 아니었다. 그대로 두면 존재하지 않는 파일명이 보고서에 실린다. 기각이 아니라 강등인 것은 '인용한 값이 원본과 다르다'와 다른 사실이기 때문이다.",
+      "statement": "컴파티텔런너.exe 가 여러 번 실행되었습니다.",
+      "refs": [
+        "PF#689046"
+      ],
+      "claims": [
+        {
+          "ref": "PF#689046",
+          "field": "timestamp",
+          "value": "2026-08-26T12:30:08.1290260Z"
+        }
+      ],
+      "expect": "unverifiable"
+    },
+    {
+      "id": "V43",
+      "risk": "인용한 레코드에 없는 경로를 문장이 덧붙인다",
+      "why": "레코드는 \\WINDOWS\\SYSTEM32 를 말하는데 문장이 다른 폴더를 지목한다. claims 는 경로 하나뿐이라 값 대조는 통과하고, 문장이 덧붙인 자리는 아무도 보지 않았다.",
+      "statement": "SVCHOST.EXE 가 C:\\Users\\Public\\Downloads 에서 실행됐습니다.",
+      "refs": [
+        "PF#689046"
+      ],
+      "claims": [
+        {
+          "ref": "PF#689046",
+          "field": "path",
+          "value": "C:\\WINDOWS\\SYSTEM32\\SVCHOST.EXE"
+        }
+      ],
+      "expect": "unverifiable"
+    },
+    {
+      "id": "V44",
+      "risk": "기법 번호·빌드 번호를 파일명으로 오인한다",
+      "why": "T1059.003 은 확장자 자리가 숫자뿐이라 파일명이 아니다. 파일명 규칙이 이것을 잡으면 기법을 언급한 정상 문장이 전부 미검증으로 내려간다. 19045.6466 같은 빌드 번호도 같은 자리다.",
+      "statement": "이 실행 흔적은 T1059.003 으로 분류되며 빌드 19045.6466 에서 수집됐습니다.",
+      "refs": [
+        "PF#689046"
+      ],
+      "claims": [
+        {
+          "ref": "PF#689046",
+          "field": "name",
+          "value": "SVCHOST.EXE"
+        }
+      ]
+    },
+    {
+      "id": "V45",
+      "risk": "점 없는 기법 번호가 4자리 수로 잡힌다",
+      "why": "T1505.003 은 파일명 규칙이 걸러 내지만 T1059 는 그냥 4자리 수다. 2026-09-06 에 손에 있는 실물 케이스 **넷 전부**가 이 문장으로 강등됐다 — '…이는 T1059 기법에 해당한다'. 기법 번호는 문장이 인용한 값이 아니라 분류 이름이고, 그것이 맞는지는 technique_supported 가 본다.",
+      "statement": "cmd.exe 가 실행된 것으로 보이며 이는 T1059 기법에 해당합니다.",
+      "refs": [
+        "SYSMON#77"
+      ],
+      "claims": [
+        {
+          "ref": "SYSMON#77",
+          "field": "Image",
+          "value": "c:\\windows\\system32\\cmd.exe"
         }
       ]
     }

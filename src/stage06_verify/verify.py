@@ -12,9 +12,14 @@ LLM은 여기에 관여하지 않는다. 판정 주체가 또 LLM이면 순환 �
 ``claims`` 중 하나라도 불일치 또는 참조 없음       ``rejected``
 ``claims``가 빈 배열                              ``unverifiable``
 ``refs``가 ``input_refs`` 밖 레코드를 포함         ``rejected``
+문장이 인용한 증거에 없는 것을 말함                ``unverifiable``
 ===============================================  ================
 
 부분 통과를 두지 않는 이유는 하나라도 틀린 문장은 신뢰할 수 없기 때문이다.
+
+마지막 줄이 **강등**이다(``checkers/statement_grounded.py``). 기각으로 세지
+않는 것은 그것이 모델의 잘못이 아니라 **우리가 대조하지 않았다는 사실**이기
+때문이다. 기각과 함께 걸리면 기각이 이긴다 — 지어낸 값이 더 강한 판정이다.
 
 ``claims``가 비었으면서 동시에 없는 레코드를 참조하는 문장은 **기각이
 우선한다.** 종합 판단이라도 지어낸 근거를 달았다면 그것은 환각이다.
@@ -152,12 +157,17 @@ def verify(
 
     for finding in findings_doc.get("findings", []):
         rejection = None
+        downgrade = None
         checks = checks_passed = 0
 
         for _name, run in active:
             result = run(finding, ctx)
             checks += result.checks
             checks_passed += result.checks_passed
+            if result.downgrade is not None and downgrade is None:
+                # 강등은 루프를 끊지 않는다. 뒤에 기각이 나오면 그쪽이
+                # 이겨야 하고, 그러려면 남은 체커를 마저 돌려야 한다.
+                downgrade = result.downgrade
             if result.rejection is not None:
                 rejection = result.rejection
                 break  # 부분 통과가 없으므로 더 볼 이유가 없다
@@ -168,6 +178,8 @@ def verify(
             )
         elif not finding.get("claims"):
             unverifiable.append({"id": finding["id"], "reason": UNVERIFIABLE_REASON})
+        elif downgrade is not None:
+            unverifiable.append({"id": finding["id"], "reason": downgrade.reason})
         else:
             passed.append(
                 {"id": finding["id"], "checks": checks, "checks_passed": checks_passed}

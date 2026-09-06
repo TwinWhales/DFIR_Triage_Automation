@@ -65,6 +65,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.common import attack, io  # noqa: E402
 from src.common import errors as errlog  # noqa: E402
 from src.stage06_verify import verify as verify_mod  # noqa: E402
+from src.stage06_verify.checkers import statement_grounded  # noqa: E402
 from src.stage05_interpret.llm_client import (  # noqa: E402
     ASSEMBLE_NUM_CTX,
     DEFAULT_NUM_CTX,
@@ -691,7 +692,10 @@ class Runner:
         if stray:
             note += f" / 측정: input_refs 밖 참조 {len(stray)}건 {stray[:3]} → 06이 잡아야 한다"
         if empty_claims:
-            note += f" / 측정: claims 빈 문장 {len(empty_claims)}건 → unverifiable 로 갈 것"
+            # **하한이다.** 06 은 증거 밖 표현을 쓴 문장도 강등하므로
+            # (`checkers/statement_grounded.py`) unverifiable 은 이보다 클 수
+            # 있다. "같아야 한다"로 읽으면 정상 동작을 어긋남으로 본다.
+            note += f" / 측정: claims 빈 문장 {len(empty_claims)}건 → unverifiable 하한"
         return note
 
     def do_stage06(self, result: Result) -> str:
@@ -706,7 +710,8 @@ class Runner:
         if code != 0:
             raise StepFailed(f"06 실패 (코드 {code})")
 
-        stats = io.read_json(self.case_dir / "06_verified.json")["stats"]
+        verified_doc = io.read_json(self.case_dir / "06_verified.json")
+        stats = verified_doc["stats"]
         total = stats["passed"] + stats["rejected"] + stats["unverifiable"]
         if total != self.carry["findings_count"]:
             raise StepFailed(
@@ -723,13 +728,23 @@ class Runner:
         result.measures.update(stats)
 
         # **환각률이 무엇을 재고 있는지 함께 말한다.** claims 를 파이썬이
-        # 조립하면 value_match 는 항등식이라 언제나 통과한다. 그때 실제로
-        # 판정하는 것은 technique_supported 뿐인데, 그 검사는 technique 이
+        # 조립하면 value_match 는 항등식이라 언제나 통과한다. 그때 기각을
+        # 만드는 것은 technique_supported 뿐인데, 그 검사는 technique 이
         # 붙은 소견만 본다 — null 인 소견은 지나간다. 분모를 안 적으면
         # "환각률 0%" 를 성능으로 읽게 된다(docs/limitations.md 의 유형 표).
         findings = io.read_json(self.case_dir / "05_findings.json")["findings"]
         with_technique = [f for f in findings if f.get("technique")]
         result.measures["findings_with_technique"] = len(with_technique)
+
+        # 강등은 기각이 아니라 분모에서 빠지는 쪽이다. 세어 두지 않으면
+        # unverifiable 이 늘어난 것이 "종합 판단 문장이 많았다"인지
+        # "증거 밖 표현을 썼다"인지 뒤에서 가릴 수 없다.
+        ungrounded = [
+            entry
+            for entry in verified_doc["unverifiable"]
+            if entry["reason"].startswith(statement_grounded.REASON)
+        ]
+        result.measures["statement_ungrounded"] = len(ungrounded)
 
         # 기각 상세는 여기 싣지 않는다. 06단계가 실행마다
         # `benchmark/results/rejections.jsonl` 에 직접 덧붙이므로
@@ -746,6 +761,9 @@ class Runner:
             f" / technique 이 붙은 소견 {len(with_technique)}/{len(findings)}건"
             " ← technique_supported 가 실제로 판정한 범위"
         )
+        if ungrounded:
+            names = ", ".join(entry["id"] for entry in ungrounded)
+            note += f" / 증거 밖 표현으로 강등 {len(ungrounded)}건 ({names})"
         if self.args.mode == "assemble":
             note += " / claims 는 파이썬이 조립했으므로 value_match 는 항등식이다"
         return note
@@ -826,7 +844,7 @@ class Runner:
             print(f"  환각률       {stats['hallucination_rate']:.1%}  (rejected {stats['rejected']} / 판정대상 {judged})")
             if stats["total_findings"]:
                 rate = stats["unverifiable"] / stats["total_findings"]
-                print(f"  검증 불가율  {rate:.1%}  (claims 가 빈 문장)")
+                print(f"  검증 불가율  {rate:.1%}  (claims 가 비었거나 증거 밖 표현)")
         if self.errors_path.is_file():
             counted = errlog.tally(self.errors_path)
             # ``record`` 는 실패가 아니라 측정이다(``errors.py`` 어휘 주석).
