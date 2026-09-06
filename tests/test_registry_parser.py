@@ -468,6 +468,60 @@ def test_the_same_failure_is_logged_once_and_counted(caplog):
     assert "수만 셉니다" in caplog.records[0].getMessage()
 
 
+def test_the_cell_address_in_the_message_does_not_split_the_reason(caplog):
+    """**실물 메시지에는 셀 주소가 붙는다** — 위 시험이 통과하는데도 실물은
+    안 묶이고 있었다.
+
+    python-registry 는 `Unknown VK Record type 0x12 at 0xc6785c` 를 낸다.
+    주소가 건마다 다르므로 사유 키가 매번 새것이 되고, 묶음이 한 번도
+    걸리지 않는다. `K-GROUNDED-0906` 에서 109건이 109줄로 찍혀 04 출력을
+    덮었다(2026-09-06).
+
+    위 시험이 이것을 못 잡은 것은 목업 예외에 주소가 없었기 때문이다.
+    """
+    import logging
+
+    parser = _parser()
+    key = FakeKey(
+        "k",
+        0x1000,
+        values=[
+            FakeValue(
+                f"v{i}",
+                raises=Exception(f"Unknown VK Record type 0x12 at 0x{0xC6785C + i * 8:x}"),
+            )
+            for i in range(109)
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING, logger=registry._log.name):
+        parser._build(key, "SYSTEM\\k", 0x1000)
+
+    assert parser.stats["value_errors"] == 109, "집계는 줄이지 않는다"
+    assert len(caplog.records) == 1, "주소가 달라도 같은 사유다"
+
+
+def test_the_type_number_still_splits_the_reason(caplog):
+    """주소만 지운다. 타입 번호까지 지우면 서로 다른 미지원 타입이 한 줄로
+    뭉쳐 '무엇이 몇 건인지' 를 잃는다."""
+    import logging
+
+    parser = _parser()
+    key = FakeKey(
+        "k",
+        0x1000,
+        values=[
+            FakeValue("a", raises=Exception("Unknown VK Record type 0x12 at 0x1000")),
+            FakeValue("b", raises=Exception("Unknown VK Record type 0x19 at 0x2000")),
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING, logger=registry._log.name):
+        parser._build(key, "SYSTEM\\k", 0x1000)
+
+    assert len(caplog.records) == 2
+
+
 def test_a_different_failure_still_gets_its_own_line(caplog):
     """묶으면 어느 사유가 몇 건인지 말할 수 없다. 미지원 구간을 버전별로
     나눈 것과 같은 근거다."""

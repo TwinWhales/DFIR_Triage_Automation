@@ -80,6 +80,7 @@ python-registry도 값에 시각을 물으면 거부합니다::
 from __future__ import annotations
 
 import logging
+import re
 import struct
 from typing import Any, BinaryIO, Iterator
 
@@ -377,6 +378,24 @@ def hive_designator(artifact: str) -> str:
         raise ValueError(
             f"알 수 없는 레지스트리 아티팩트: {artifact!r} (등록된 값: {known})"
         ) from None
+
+
+#: 예외 문자열에서 **주소를 지우는** 자리. 사유를 묶는 키에 쓴다.
+#:
+#: python-registry 는 `Unknown VK Record type 0x12 at 0xc6785c` 처럼 셀
+#: 오프셋을 메시지에 넣습니다. 그것을 그대로 키로 쓰면 건마다 새 사유가
+#: 되어 **묶음이 한 번도 걸리지 않습니다** — 2026-09-06 실측에서 같은 사유
+#: 109건이 109줄로 찍혀 04 출력을 덮었습니다(`work.md` 13번).
+#:
+#: 타입 번호(`0x12`)는 남기고 주소(`at 0x...`)만 지웁니다. 번호까지 지우면
+#: 서로 다른 미지원 타입이 한 줄로 뭉쳐 "무엇이 몇 건인지" 를 잃습니다 —
+#: 사유별로 나눈 애초의 이유가 그것입니다.
+_ADDRESS_IN_MESSAGE = re.compile(r"\s+at\s+0x[0-9a-fA-F]+")
+
+
+def _reason_key(error: Exception) -> str:
+    """같은 사유를 한 줄로 묶기 위한 키."""
+    return type(error).__name__ + ": " + _ADDRESS_IN_MESSAGE.sub("", str(error))
 
 
 def value_to_field(value: Any) -> Any:
@@ -825,7 +844,7 @@ class RegistryParser:
                 # 사유별로 나누는 이유는 **묶으면 어느 쪽이 몇 건인지 말할
                 # 수 없기 때문**입니다(미지원 구간을 버전별로 나눈 것과 같은
                 # 근거). 총계는 `stats["value_errors"]` 가 듭니다.
-                reason = type(e).__name__ + ": " + str(e)
+                reason = _reason_key(e)
                 seen = self._value_error_reasons.get(reason, 0)
                 self._value_error_reasons[reason] = seen + 1
                 if seen == 0:
