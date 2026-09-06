@@ -5,7 +5,7 @@
 조합으로 통과율 변화를 측정한다.
 
 **실행 순서는 고정이다.** ``ref_exists`` → ``ref_in_input`` → ``value_match``
-→ ``technique_supported``.
+→ ``technique_supported`` → ``statement_grounded``.
 
 파싱 결과에도 ``input_refs``에도 없는 레코드는 두 체커 모두에 걸리는데,
 스펙은 이것을 ``ref_not_found``로 판정한다. 순서가 반대면 같은 상황이
@@ -15,9 +15,14 @@
 ``ref_exists``를 끄면 존재하지 않는 레코드가 ``ref_not_in_input``으로
 잡히므로, 조합별 실험 결과를 읽을 때 감안해야 한다.
 
-``technique_supported``가 **맨 뒤**인 것은 값이 어긋난 문장이 더 기본적인
-잘못이기 때문이다. 값도 틀리고 기법도 안 맞는 문장은 ``value_mismatch``로
-집계된다. 다른 셋이 값과 존재를 본다면 이것만 **함의**를 본다.
+``technique_supported``가 기각하는 넷 중 **맨 뒤**인 것은 값이 어긋난
+문장이 더 기본적인 잘못이기 때문이다. 값도 틀리고 기법도 안 맞는 문장은
+``value_mismatch``로 집계된다. 다른 셋이 값과 존재를 본다면 이것만 **함의**를
+본다.
+
+``statement_grounded``는 **기각하지 않고 강등한다** — ``unverifiable``로
+내린다. 그래서 전체의 맨 뒤다. 기각은 "모델이 지어냈다"이고 강등은 "우리가
+확인하지 않았다"라, 둘이 함께 걸리면 기각이 더 강한 판정이다.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from typing import Any, Callable
 
 __all__ = [
     "Rejection",
+    "Downgrade",
     "CheckContext",
     "CheckResult",
     "CHECKERS",
@@ -62,6 +68,22 @@ class Rejection:
 
 
 @dataclass(frozen=True)
+class Downgrade:
+    """검증 대상에서 내리는 사유. ``06_verified.json``의 ``unverifiable``로 간다.
+
+    기각과 나눠 둔 것은 **두 사실이 다르기 때문**이다. 기각은 "인용한 값이
+    원본과 다르다"이고 강등은 "우리가 대조하지 않은 것을 문장이 말한다"이다.
+    섞으면 환각률이 모델의 잘못이 아니라 검증 범위의 좁음을 세게 된다.
+
+    ``detail``이 없는 것은 동결 스키마 때문이다 — ``unverifiable`` 항목은
+    ``id``와 ``reason`` 둘만 받는다(``schemas/verified.schema.json``).
+    그래서 사유 한 줄에 무엇이 걸렸는지까지 적는다.
+    """
+
+    reason: str
+
+
+@dataclass(frozen=True)
 class CheckContext:
     """체커가 판정에 쓰는 모든 것."""
 
@@ -84,6 +106,11 @@ class CheckResult:
     """체커 하나의 실행 결과."""
 
     rejection: Rejection | None = None
+    #: 기각까지는 아니지만 검증 대상에서 내릴 사유.
+    #:
+    #: ``rejection``과 함께 나오는 일은 없다 — 체커 하나는 둘 중 하나만
+    #: 낸다. 둘이 다른 체커에서 나오면 **기각이 이긴다**(``verify.py``).
+    downgrade: "Downgrade | None" = None
     #: 수행한 **claims 대조** 횟수. ref 검사는 세지 않는다.
     #:
     #: ``06_verified.json``의 ``checks``가 claims 개수와 같아야 하기
@@ -105,6 +132,7 @@ DEFAULT_ORDER: tuple[str, ...] = (
     "ref_in_input",
     "value_match",
     "technique_supported",
+    "statement_grounded",
 )
 
 
@@ -131,6 +159,7 @@ def resolve(names: "list[str] | tuple[str, ...] | None") -> list[tuple[str, Chec
 # 각 체커 모듈이 CheckContext 등을 가져갈 수 있다.
 from .ref_exists import check as _ref_exists  # noqa: E402
 from .ref_in_input import check as _ref_in_input  # noqa: E402
+from .statement_grounded import check as _statement_grounded  # noqa: E402
 from .technique_supported import check as _technique_supported  # noqa: E402
 from .value_match import check as _value_match  # noqa: E402
 
@@ -140,4 +169,5 @@ CHECKERS: dict[str, Checker] = {
     "ref_in_input": _ref_in_input,
     "value_match": _value_match,
     "technique_supported": _technique_supported,
+    "statement_grounded": _statement_grounded,
 }

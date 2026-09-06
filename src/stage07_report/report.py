@@ -77,8 +77,16 @@ def build_context(
             }
         )
 
+    # **사유를 함께 싣는다.** 검증불가로 오는 길이 둘이라 그렇다 — claims 가
+    # 빈 종합 판단 문장과, 문장이 증거 밖 표현을 써서 강등된 것
+    # (`stage06_verify/checkers/statement_grounded.py`). 앞은 "근거를 달지
+    # 않았다"이고 뒤는 "증거에 없는 것을 말했다"라, 읽는 사람이 할 일이
+    # 다르다. 한 덩어리로 실으면 그 구별이 보고서에서 사라진다.
+    reasons = {entry["id"]: entry.get("reason", "") for entry in verified.get("unverifiable", [])}
     unverifiable = [
-        {"statement": by_id[fid]["statement"]} for fid in unverifiable_ids if fid in by_id
+        {"statement": by_id[fid]["statement"], "reason": reasons.get(fid, "")}
+        for fid in unverifiable_ids
+        if fid in by_id
     ]
 
     # 통과한 문장이 근거로 삼은 사건만 타임라인에 남긴다. 기각된 문장이

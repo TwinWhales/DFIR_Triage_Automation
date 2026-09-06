@@ -46,9 +46,10 @@
 ## 미검증 항목
 {% if unverifiable %}
 
-다음 서술은 특정 증거로 뒷받침되지 않는 종합 판단이며 분석가 검토가 필요합니다.
+다음 서술은 증거 대조를 지나지 않았으며 분석가 검토가 필요합니다.
 {% for finding in unverifiable %}
-- {{ finding.statement }}
+- {{ finding.statement }}{% if finding.reason %} — *{{ finding.reason }}*{% endif %}
+
 {% endfor %}
 {% else %}
 

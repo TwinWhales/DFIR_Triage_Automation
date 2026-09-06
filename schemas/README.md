@@ -71,7 +71,7 @@ except schema.SchemaViolation as v:
 스키마로 강제하지 않은 이유는 기존 목업을 깨지 않기 위해서고, 실제 통일은
 헬퍼 함수 하나만 쓰면 되기 때문입니다.
 
-### 3. 검증기 실행 순서: `ref_exists` → `ref_in_input` → `value_match` → `technique_supported`
+### 3. 검증기 실행 순서: `ref_exists` → `ref_in_input` → `value_match` → `technique_supported` → `statement_grounded`
 
 스펙의 기각 예시에서 `MFT#99999`는 파싱 결과에도 `input_refs`에도 없는데
 `ref_not_found`로 판정됩니다. 즉 **`ref_exists`가 먼저 돌아야** 합니다.
@@ -116,6 +116,21 @@ except schema.SchemaViolation as v:
 **기각이 우선합니다.** 종합 판단 문장이라도 지어낸 근거를 달았다면 그것은
 환각입니다. 구현상 ref 체커가 먼저 돌고, 통과한 뒤에야 빈 `claims`를 보고
 `unverifiable`로 분류합니다.
+
+### 4-3. `statement_grounded`는 기각 어휘를 늘리지 않습니다 (2026-09-06)
+
+문장이 인용한 증거에 없는 파일명·경로·수를 말하면 그 소견은
+`unverifiable`로 **강등**됩니다. `rejected`의 `reason` enum은 그대로입니다.
+
+**일부러 그렇게 했습니다.** 기각 사유의 분포가 발표 수치이고, 그것이 세는
+것은 "모델이 지어냈다"입니다. 강등이 말하는 것은 "우리가 대조하지 않았다"
+라 다른 사실입니다. 한 어휘에 섞으면 환각률이 모델의 잘못과 검증 범위의
+좁음을 함께 세게 됩니다. 동결 스키마를 건드리지 않아도 되는 것은 부수적인
+이득입니다.
+
+`unverifiable[].reason`이 자유 문자열이라 사유를 한 줄에 적습니다 —
+그 항목은 `detail`을 받지 않습니다. 두 갈래는 머리말로 갈립니다:
+`claims 없음 (종합 판단 문장)` / `증거에 없는 표현: …`.
 
 ### 5. `case_id`는 경로 안전 문자만 허용
 

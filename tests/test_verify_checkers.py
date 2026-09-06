@@ -735,3 +735,179 @@ def test_corroborates_widens_only_the_verification_side(tmp_path):
     assert _run_tech(finding, _tech_ctx(technique_artifacts=technique_artifacts(mappings))).rejection is None
     before = technique_artifacts(REPO_ROOT / "mappings")
     assert _run_tech(finding, _tech_ctx(technique_artifacts=before)).rejection is not None
+
+
+# ==================================================== statement_grounded
+
+
+GROUNDED_RECORDS = {
+    "MFT#12345": {
+        "ref": "MFT#12345",
+        "artifact": "$MFT",
+        "record_num": 12345,
+        "path": "C:\\inetpub\\wwwroot\\upload\\shell.aspx",
+        "size": 4821,
+        "si_btime": "2026-07-20T03:14:22Z",
+    },
+    "PF#689046": {
+        "ref": "PF#689046",
+        "artifact": "prefetch",
+        "record_num": 689046,
+        "name": "SVCHOST.EXE",
+        "path": "C:\\WINDOWS\\SYSTEM32\\SVCHOST.EXE",
+        "fields": {"run_count": 12, "loaded_files": ["C:\\WINDOWS\\SYSTEM32\\ntdll.dll"]},
+    },
+}
+
+
+def _run_grounded(finding, records=None):
+    ctx = checkers.CheckContext(
+        records=GROUNDED_RECORDS if records is None else records,
+        input_refs=frozenset(GROUNDED_RECORDS),
+    )
+    return checkers.CHECKERS["statement_grounded"](finding, ctx)
+
+
+def _grounded_finding(statement, **overrides):
+    base = {
+        "id": "F1",
+        "statement": statement,
+        "refs": ["MFT#12345"],
+        "claims": [{"ref": "MFT#12345", "field": "si_btime", "value": "2026-07-20T03:14:22Z"}],
+        "technique": None,
+        "severity": "info",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_a_filename_that_is_nowhere_in_the_evidence_is_downgraded():
+    """**이것이 이 체커의 전부다.** 2026-09-04 실물에서 통과한 문장이다.
+
+    ``CompatTelRunner.exe`` 를 한글로 음차한 이름은 어느 레코드에도 없는데,
+    claims 가 타임스탬프뿐이라 이름은 대조 대상이 아니었다.
+    """
+    result = _run_grounded(_grounded_finding("컴파티텔런너.exe 가 여러 번 실행되었습니다."))
+
+    assert result.rejection is None, "기각이 아니라 강등이다"
+    assert result.downgrade is not None
+    assert "컴파티텔런너.exe" in result.downgrade.reason
+
+
+def test_a_path_the_cited_record_does_not_have_is_downgraded():
+    finding = _grounded_finding(
+        "shell.aspx 가 C:\\Users\\Public\\Downloads 에 있습니다.",
+        claims=[{"ref": "MFT#12345", "field": "size", "value": 4821}],
+    )
+
+    result = _run_grounded(finding)
+
+    assert result.downgrade is not None
+    assert "C:\\Users\\Public\\Downloads" in result.downgrade.reason
+
+
+def test_the_subject_of_the_sentence_is_not_a_hallucination():
+    """레코드 자신의 이름을 부르는 것은 강등이 아니다.
+
+    claims 만 대조 상대로 두면 손으로 옳다고 판단해 둔 41건 중 8건이
+    여기서 걸렸다 — 전부 문장의 **주어**였다. 대조 상대에 인용한 레코드를
+    넣은 이유가 이것이다(모듈 docstring 의 실측).
+    """
+    finding = _grounded_finding("shell.aspx 의 크기는 4821바이트입니다.")
+
+    assert _run_grounded(finding).downgrade is None
+
+
+def test_a_value_deep_inside_the_record_still_grounds_the_sentence():
+    """중첩 필드와 배열 안까지 본다. 프리패치의 적재 목록이 그 자리다."""
+    finding = _grounded_finding(
+        "SVCHOST.EXE 가 ntdll.dll 을 적재했습니다.",
+        refs=["PF#689046"],
+        claims=[{"ref": "PF#689046", "field": "name", "value": "SVCHOST.EXE"}],
+    )
+
+    assert _run_grounded(finding).downgrade is None
+
+
+def test_a_derived_number_is_not_counted():
+    """파생 수치는 안 센다 — "4초 후" 를 식별자와 가를 방법이 없다."""
+    finding = _grounded_finding("계정 생성 4초 후에 그룹에 추가되었습니다.")
+
+    assert _run_grounded(finding).downgrade is None
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "이 흔적은 T1505.003 이며 빌드 19045.6466 에서 수집됐습니다.",
+        # 점이 없으면 그냥 4자리 수다. 실물 케이스 넷 전부가 여기서
+        # 강등됐다(2026-09-06).
+        "이 항목들은 shell.aspx 실행으로 보이며 이는 T1059 기법에 해당합니다.",
+    ],
+)
+def test_a_technique_id_is_not_a_cited_value(statement):
+    """기법 번호는 분류 이름이다. 맞는지는 ``technique_supported`` 가 본다."""
+    assert _run_grounded(_grounded_finding(statement)).downgrade is None
+
+
+def test_a_korean_particle_stuck_to_the_token_is_stripped():
+    """한국어 문장은 경로와 파일명에 조사가 그대로 붙는다."""
+    finding = _grounded_finding("shell.aspx가 C:\\inetpub\\wwwroot에 있습니다.")
+
+    assert _run_grounded(finding).downgrade is None
+
+
+def test_a_finding_without_claims_is_left_to_the_existing_reason():
+    """종합 판단 문장은 이미 unverifiable 이다. 사유를 덮어쓰지 않는다."""
+    finding = _grounded_finding("전반적으로 컴파티텔런너.exe 가 관여한 흐름입니다.", claims=[])
+
+    assert _run_grounded(finding).downgrade is None
+
+
+def test_the_downgrade_does_not_count_as_a_claims_check():
+    """``checks`` 는 claims 대조 횟수다. 문장 단위 판정은 세지 않는다."""
+    result = _run_grounded(_grounded_finding("없는파일.exe 가 실행됐습니다."))
+
+    assert (result.checks, result.checks_passed) == (0, 0)
+
+
+def test_only_the_first_five_names_are_listed():
+    """``unverifiable`` 은 ``detail`` 을 실을 자리가 없어 사유 한 줄이 전부다."""
+    statement = " ".join(f"a{i}.exe" for i in range(8)) + " 가 실행됐습니다."
+
+    reason = _run_grounded(_grounded_finding(statement)).downgrade.reason
+
+    assert "외 3건" in reason
+
+
+def test_a_rejection_beats_a_downgrade(records):
+    """둘이 함께 걸리면 기각이다 — 지어낸 값이 더 강한 판정이다."""
+    finding = _finding(
+        statement="없는파일.exe 가 실행됐습니다.",
+        claims=[{"ref": "MFT#12345", "field": "size", "value": 999999}],
+    )
+
+    result = verify(_doc(finding), records)
+
+    assert [entry["reason"] for entry in result["rejected"]] == ["value_mismatch"]
+    assert result["unverifiable"] == []
+
+
+def test_the_downgrade_leaves_the_hallucination_rate_alone(records):
+    """강등은 분모에서 빠진다. 환각률이 "우리가 안 본 것" 을 세면 안 된다."""
+    finding = _finding(statement="없는파일.exe 가 실행됐습니다.")
+
+    result = verify(_doc(finding), records)
+
+    assert result["stats"]["rejected"] == 0
+    assert result["stats"]["unverifiable"] == 1
+    assert verify_mod.judged_rate(result["stats"]) is None
+
+
+def test_turning_the_checker_off_restores_the_old_verdict(records):
+    """검증 강도별 실험에서 이 체커만 뺄 수 있어야 한다."""
+    finding = _finding(statement="없는파일.exe 가 실행됐습니다.")
+
+    without = verify(_doc(finding), records, checker_names=["ref_exists", "value_match"])
+
+    assert [entry["id"] for entry in without["passed"]] == ["F1"]
