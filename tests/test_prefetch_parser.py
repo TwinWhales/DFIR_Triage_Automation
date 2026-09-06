@@ -1009,3 +1009,103 @@ def test_the_timeline_csv_is_not_picked_up(tmp_path):
     wanted = tmp_path / "20260902_PECmd_Output.csv"
     wanted.write_text("x\n", encoding="utf-8")
     assert compare_prefetch.find_csv(tmp_path) == wanted
+
+
+# ------------------------------------------------ 2026-09-05 실물 대조에서 나온 것
+#
+# 첫 실물 대조(192건)의 유일한 "불일치"가 파서가 아니라 이 도구였다.
+# 그 부류를 여기서 고정한다.
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # 터진 자리. .NET 어셈블리 경로는 이름 안에 쉼표를 품는다 —
+        # 항목은 둘인데 쉼표가 넷이다.
+        (
+            r"\VOLUME{a}\NTDLL.DLL, \VOLUME{a}\ASM\GCM,"
+            r" VERSION=2.9.0.0, CULTURE=NEUTRAL, PUBLICKEYTOKEN=NULL\X.DLL",
+            2,
+        ),
+        (r"\VOLUME{a}\A.DLL, \VOLUME{a}\B.DLL", 2),
+        (r"C:\A.DLL, C:\B.DLL", 2),
+        (r"\VOLUME{a}\A.DLL|\VOLUME{a}\B.DLL|\VOLUME{a}\C.DLL", 3),
+        # 개수(정수)로 내는 판.
+        ("42", 42),
+        # 경로처럼 안 생긴 표기 하나. 0 으로 뭉개지 않는다 —
+        # 0 은 "적재 파일이 없다"라는 다른 뜻이다.
+        ("SOMETHING", 1),
+    ],
+)
+def test_a_comma_inside_a_loaded_path_is_not_a_separator(text, expected):
+    from tools.compare_prefetch import _loaded_count
+
+    assert _loaded_count(text) == expected
+
+
+def test_an_empty_files_loaded_column_is_not_zero():
+    """빈 칸은 "저쪽이 안 냈다"이다. 0 으로 뭉개면 채점돼 버린다."""
+    from tools.compare_prefetch import _loaded_count
+
+    assert _loaded_count("") is None
+    assert _loaded_count(None) is None
+
+
+def test_an_assembly_path_does_not_become_a_mismatch(tmp_path):
+    """실물 재현. 이 경로 하나가 192건 대조의 유일한 오탐이었다."""
+    record = our_record(
+        fields={
+            "loaded_file_count": 2,
+            "loaded_files": [
+                r"C:\WINDOWS\SYSTEM32\NTDLL.DLL",
+                r"C:\WINDOWS\ASSEMBLY\GCM,"
+                r" VERSION=2.9.0.0, CULTURE=NEUTRAL, PUBLICKEYTOKEN=NULL\GCM.DLL",
+            ],
+        }
+    )
+
+    report = grade(tmp_path, [record], full=True)
+    assert report.passed(), report.summary()
+    # 채점을 건너뛰어서 통과한 것이 아님을 못박는다.
+    assert report.ungraded == ()
+
+
+def test_a_wrong_loaded_file_count_is_caught(tmp_path):
+    """위 테스트가 공허하지 않다는 증거. 이 자리는 실제로 채점된다."""
+    record = our_record()
+    rows = [pecmd_row(record)]
+    record["fields"]["loaded_file_count"] = 5
+
+    report = grade(tmp_path, [record], rows=rows)
+    assert [m.field for m in report.mismatches] == ["loaded_count"]
+
+
+def test_a_wrong_path_hash_is_caught(tmp_path):
+    """``ref`` 의 근거다. 여기가 틀리면 원본 대조가 통째로 무너진다."""
+    record = our_record()
+    rows = [pecmd_row(record)]
+    record["fields"]["path_hash"] = "DEADBEEF"
+
+    report = grade(tmp_path, [record], rows=rows)
+    assert [m.field for m in report.mismatches] == ["path_hash"]
+
+
+@pytest.mark.parametrize(
+    "mangle, 왜",
+    [
+        (lambda times: list(reversed(times)), "순서가 뒤집혔다"),
+        (lambda times: ["2001-01-01T00:00:00.0000000Z", *times[1:]], "값 하나가 틀렸다"),
+    ],
+)
+def test_run_times_are_graded_by_order_and_value_too(tmp_path, mangle, 왜):
+    """개수만 보면 자리를 반쯤 잘못 잡은 것을 놓친다.
+
+    실물에서 이 셋을 따로 겨눠야 했다 — 처음 시도한 "개수 줄이기" 는
+    시각이 1개뿐인 레코드에 걸려 아무 일도 하지 않았다.
+    """
+    record = our_record()
+    rows = [pecmd_row(record)]
+    record["fields"]["run_times"] = mangle(record["fields"]["run_times"])
+
+    report = grade(tmp_path, [record], rows=rows)
+    assert [m.field for m in report.mismatches] == ["run_times"], 왜
