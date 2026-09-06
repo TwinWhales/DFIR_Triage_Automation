@@ -2458,7 +2458,8 @@ PUBLICKEYTOKEN=NULL\...
 스스로 적어 둔 규칙이 정확히 여기서 깨져 있었습니다. 이런 오탐은 조용히
 틀리는 것보다 나쁩니다 — **멀쩡한 파서를 고치러 가게 만듭니다.**
 
-회귀는 `tests/test_compare_prefetch.py` 가 잡습니다.
+회귀는 `tests/test_prefetch_parser.py` 의 "PECmd 대조" 절이 잡습니다 —
+채점 규칙을 고정하던 자리가 이미 거기라 같은 절에 붙였습니다.
 
 ### 되돌려 확인했다
 
