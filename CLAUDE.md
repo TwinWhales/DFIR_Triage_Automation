@@ -177,8 +177,11 @@ Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
   변경"을 물었는데 계정 기법이 하나도 안 나와 `evtx:Security` 15.8MB 가
   선별조차 되지 않았다 — 2026-09-04 에 닫혔다). 02 의 기법 목록이 03 의 유일한
   입력이라 **놓친 축은 뒤에서 되살릴 자리가 없다.**
-- **문장이 claims 를 뒷받침하는지 아무도 보지 않는다.** `--mode assemble`
-  에서 claims 는 파이썬이 원본에서 조립하므로 `value_match`는 항등식이다.
+- **문장이 claims 를 뒷받침하는지는 절반만 본다.** 증거 어디에도 없는
+  파일명·경로·수를 말하면 06 이 `unverifiable` 로 강등한다(2026-09-06에
+  닫혔다). 하지만 **레코드에는 있는데 claims 에는 없는** 것을 말한 문장은
+  그대로 통과하고, `--mode assemble` 에서 claims 는 파이썬이 원본에서
+  조립하므로 `value_match`는 여전히 항등식이다.
   **환각률 0%를 품질로 인용하지 않는다** (`work.md` 12번).
 - **사람이 만든 정답 데이터가 없어 수치가 자기채점**이다 (`work.md` 8번).
 - **키오스크 축이 아직 미검증이다.** `AssignedAccess` 3종·`DriverFrameworks`·

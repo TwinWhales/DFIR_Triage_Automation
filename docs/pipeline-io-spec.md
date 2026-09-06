@@ -474,6 +474,12 @@ sLLM 해석 결과. 모든 문장에 `refs` 필수입니다.
 | `claims` 중 하나라도 불일치 또는 참조 없음 | `rejected` (부분 통과 없음) |
 | `claims`가 빈 배열 | `unverifiable` |
 | `refs`가 `input_refs`에 없는 레코드를 포함 | `rejected` |
+| 문장이 인용한 증거에 없는 파일명·경로·수를 말함 | `unverifiable` (강등) |
+
+마지막 줄은 **기각이 아니라 강등**입니다. "인용한 값이 원본과 다르다"와
+"문장이 증거 밖의 것을 말한다"는 다른 사실이라 한 수치에 섞지 않습니다.
+강등된 항목의 `reason`은 `증거에 없는 표현: …` 으로 시작합니다
+(`src/stage06_verify/checkers/statement_grounded.py`).
 
 `ref_not_in_input` 검사는 LLM이 입력받지 않은 레코드를 지어낸 경우를 잡습니다. 실무에서 가장 흔한 환각 유형입니다.
 
