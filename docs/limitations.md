@@ -507,6 +507,24 @@ Properties\{83da6326-97a6-4088-9453-a1923f573b29}\0064  InstallDate       2022-1
 아닙니다. 건수는 `stats["value_errors"]` 와 `parse_errors` 에 그대로
 남습니다.
 
+###### 그 묶음이 실제로는 걸리지 않습니다 (2026-09-06 실측)
+
+`K-GROUNDED-0906` 에서 `registry:SYSTEM` 의 경고가 **109줄 그대로**
+찍혔습니다. 전부 같은 사유(`Unknown VK Record type 0x12`)인데도 그렇습니다.
+
+묶는 키가 `type(e).__name__ + ": " + str(e)` 인데 python-registry 의 예외
+문자열이 **셀 오프셋을 품습니다** — `Unknown VK Record type 0x12 at 0xc6785c`.
+건마다 오프셋이 다르므로 매번 새 사유가 되고, `seen == 0` 이 언제나 참이라
+억제가 한 번도 걸리지 않습니다.
+
+덮는 것이 04 출력만이 아닙니다. `tools/live_check.py` 는 스트림당
+`MAX_ECHO_LINES = 40` 줄만 찍는데, 이 109줄이 그 예산을 태워 실행 화면에는
+`! … (135줄 생략)` 만 남았습니다. **화면에서 사유가 사라지고 "파싱 실패
+109건" 이라는 수만 보입니다** — 묶음이 막으려던 바로 그 상황입니다.
+
+고칠 자리는 `src/stage04_parse/parsers/registry.py` 의 `reason` 조립입니다
+(`work.md` 13번).
+
 ##### 90건은 이 이미지의 수다 — USB 가 꽂힌 기계에서는 3,873건 (2026-09-03)
 
 키오스크 스냅샷 A 의 SYSTEM 을 재면 `Properties` 하위 6,226건 중 **3,873건이
