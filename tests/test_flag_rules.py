@@ -187,6 +187,58 @@ def test_the_vocabulary_comes_from_the_yaml_not_the_module():
     assert flagging.FLAGS == tuple(declared)
 
 
+# ==================================================== log_cleared (T1070.001)
+
+
+def _evtx(artifact, event_id):
+    return {
+        "artifact": artifact,
+        "ref": "EVTX-SEC#1",
+        "record_num": 1,
+        "offset": "0x0",
+        "event_id": event_id,
+        "timestamp": "2026-08-26T06:59:10.5481530Z",
+        "channel": "Security",
+        "computer": "HOST",
+        "fields": {},
+    }
+
+
+@pytest.mark.parametrize(
+    "artifact,event_id,expected",
+    [
+        ("evtx:Security", 1102, True),
+        ("evtx:System", 104, True),
+        # **채널을 넘지 않는다.** EventID 는 제공자 안에서만 유일하다 —
+        # System 의 1102 는 다른 것이고, Security 의 104 도 다른 것이다.
+        ("evtx:System", 1102, False),
+        ("evtx:Security", 104, False),
+        # 이웃한 ID 를 쓸어 담지 않는다.
+        ("evtx:Security", 1100, False),
+        ("evtx:Security", 1104, False),
+    ],
+)
+def test_log_cleared_fires_only_on_its_own_channel_and_id(artifact, event_id, expected):
+    """**"붙는가"와 "거르는가"는 다르다.** 둘을 같은 비중으로 본다.
+
+    로그 삭제는 인멸 중에서도 성질이 다르다 — 지웠다는 사실 자체가 유일하게
+    남는 흔적이라, 놓치면 그 구간을 말할 방법이 없다. 반대로 넓게 걸면
+    1100(로깅 종료) 같은 정상 종료 이벤트가 전부 딸려 온다.
+    """
+    flagged = next(flagging.apply_all(iter([_evtx(artifact, event_id)])))
+    assert ("log_cleared" in flagged["flags"]) is expected
+
+
+def test_log_cleared_is_window_independent():
+    """로그를 **언제** 지울지는 공격자가 고른다.
+
+    사고 시간창 안에서 일어났으리라 가정할 근거가 없으므로 창 밖이어도
+    1순위를 유지한다. 실물이 정확히 그랬다 — `snapshotA` 의 1102 한 건은
+    `08-26 06:59:10` 으로, 사고 시간창(`08-30~08-31`) 밖이다.
+    """
+    assert "log_cleared" in flagging.window_independent_flags()
+
+
 # ============================================================ 선언형 매처
 
 

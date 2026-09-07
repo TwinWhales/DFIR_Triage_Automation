@@ -1,0 +1,43 @@
+technique: T1070.001
+name: "Indicator Removal: Clear Windows Event Logs"
+os: windows
+
+# **이 기법은 다른 인멸과 성질이 다르다.** 파일 삭제(T1070.004)나 타임스탬프
+# 조작(T1070.006)은 지운 자리가 남지만, 로그를 지우면 **지웠다는 사실 자체가
+# 유일하게 남는 흔적**이다. 그 한 건을 놓치면 그 구간에 무슨 일이 있었는지
+# 말할 방법이 없다.
+#
+# 그래서 경로도 시간도 좁히지 않는다. 좁힐 축이 event_id 뿐이다.
+
+artifacts:
+  # Security 1102 — 보안 감사 로그를 지웠다. 이 이벤트는 로그를 지워도
+  # 새 로그의 첫 줄로 남는다. **실물로 확인했다** (snapshotA 의
+  # Security.evtx 16,647건 중 1건, 2026-09-07).
+  - name: evtx:Security
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1102]
+    rationale: 보안 감사 로그 삭제 기록
+
+  # System 104 — 임의의 채널을 지웠다. 어느 채널인지는 이벤트 안에 있다.
+  # **실물로 확인하지 못했다** — 같은 수집의 System.evtx 1,683건에 0건이라
+  # event_id 는 공개 자료를 옮긴 값이다(docs/limitations.md).
+  - name: evtx:System
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [104]
+    rationale: 이벤트 로그 삭제 기록
+
+  # 로그를 지운 것이 무엇이었는지는 이 채널에만 남는다 — wevtutil·PowerShell
+  # Clear-EventLog·Clear-WinEvent 는 전부 프로세스 생성으로 보인다. 지운
+  # 사실(위 둘)과 지운 수단(이것)이 짝이다.
+  #
+  # **Tier 2 인 이유.** Sysmon EID 1 은 프로세스 생성 전량이라 채널을 그냥
+  # 열면 05단계 쿼터를 혼자 태운다. 위 둘이 실제로 걸렸을 때만 연다.
+  - name: evtx:Sysmon
+    tier: 2
+    priority: 2
+    trigger: Tier1 에서 log_cleared 플래그 발견 시
+    rationale: 로그를 지운 명령의 실행 흔적
