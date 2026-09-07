@@ -808,11 +808,18 @@ def test_each_chunk_is_asked_separately(monkeypatch, tmp_path):
 
     # 레코드 하나가 겨우 들어갈 만큼만 열어 조각을 강제한다. 배분 예산은
     # --max-chunks 배라 레코드는 전부 골라지고, 질의만 나뉜다.
+    #
+    # **이 숫자는 프롬프트 고정분을 따라간다.** 창에서 출력 예약과 고정분을
+    # 뺀 나머지가 예산이므로, select_system.txt 가 길어지면 같은 창에서
+    # 예산이 0 이 되고 이 시험은 "조각이 나뉘는가"가 아니라 "예산이 남는가"
+    # 를 재게 된다. 2026-09-07 에 flags 지침을 넣으며 고정분이 2,194 →
+    # 2,633자가 되어 5400 → 5620 으로 옮겼다(예산 414 → 415자로 같다).
+    # 프롬프트를 또 고치면 여기도 같이 본다.
     code = _run_assembled(
         monkeypatch,
         tmp_path,
         backend,
-        extra=["--num-ctx", "5400", "--reserve-output-tokens", "4096"],
+        extra=["--num-ctx", "5620", "--reserve-output-tokens", "4096"],
     )
 
     assert code == 0

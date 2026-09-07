@@ -1251,6 +1251,10 @@ def main(
         parsed.values(),
         priorities=priorities,
         signal_sources=signal_sources,
+        # 02단계가 입력에서 건져 낸 이름. 그 이름을 가진 레코드는 아티팩트
+        # 안에서 맨 앞으로 간다 — 사람이 조사하겠다고 말한 것이 자리를 못
+        # 받는 일이 실제로 있었다(allocation._rank 참조).
+        entities=scenario.get("entities"),
         limit=args.limit,
         window_seconds=args.window_seconds,
         char_budget=alloc_budget,

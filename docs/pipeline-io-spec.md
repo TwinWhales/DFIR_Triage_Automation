@@ -242,6 +242,25 @@ sLLM이 채우는 유일한 구조체입니다. 여기서부터 이후 단계는
 
 `excluded`는 최종 보고서까지 그대로 전달됩니다. "보지 않기로 한 것과 그 이유"를 남기는 것이 이 설계의 핵심이므로 생략하지 않습니다.
 
+### 강제 선별 — 기법 매핑을 사람이 이길 수 있습니다 (2026-09-07)
+
+`--force-artifacts` 로 넘긴 아티팩트는 **기법 매핑과 무관하게 Tier 1** 로 들어갑니다. 이미 Tier 1 이면 손대지 않고, `deferred` 였으면 매핑의 `scope_template` 을 그대로 써서 승격하며, 아무도 요청하지 않았으면 시간 범위만 걸어 추가합니다. `evtx` 처럼 접두어를 주면 `evtx:*` 전부로 펴집니다. 카탈로그에 없는 이름은 조용히 버리지 않고 멈춥니다.
+
+강제로 올라온 항목은 `reason.rationale` 이 `사용자 지정 필수 수집 대상(--force-artifacts)` 으로 시작합니다. `reason.technique` 은 스키마가 요구해서 있는 값이라 이번 시나리오에서 확신이 가장 높은 기법을 답니다 — 그 기법이 고른 것이 아니라는 사실은 `rationale` 이 말합니다.
+
+```json
+{
+  "artifact": "prefetch",
+  "tier": 1,
+  "priority": 1,
+  "scope": { "time_range": { "start": "2026-09-07T00:00:00Z", "end": "2026-09-07T14:00:00Z" } },
+  "reason": {
+    "technique": "T1204.002",
+    "rationale": "사용자 지정 필수 수집 대상(--force-artifacts) — Tier 2 승격: 셸·시스템 유틸리티의 실행 횟수와 최근 실행 시각"
+  }
+}
+```
+
 ### 매핑 테이블 (참고: `mappings/T1505.003.yaml`)
 
 ```yaml
@@ -571,10 +590,12 @@ $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황�
 
 `type`과 `action`은 고정 어휘로 관리합니다. 발표 자료의 통계가 여기서 직접 산출되기 때문입니다.
 
-- `type`: `schema_violation` / `parse_error` / `malformed_output` / `empty_result` / `timeout` / `llm_error`
+- `type`: `schema_violation` / `parse_error` / `malformed_output` / `empty_result` / `timeout` / `llm_error` / `claim_validation` / `assembly_error` / `uncovered_input` / `nonverbatim_evidence` / `ungrounded_entity` / `ungrounded_technique` / `timezone_adjusted`
 
 `llm_error`는 모델 호출이 **타임아웃이 아닌 이유로** 실패한 것입니다 — 모델명 오타, 서버 미기동, 잘못된 호스트. `timeout`과 합치지 않는 이유는 조치가 다르기 때문입니다(기다릴 것인가, 설정을 고칠 것인가). **재시도하지 않고 즉시 중단합니다** — 세 번 불러도 같은 답이라 시간만 씁니다. 어휘는 `src/common/errors.py`의 `ERROR_TYPES`가 코드로 강제합니다.
-- `action`: `retry` / `skip` / `abort`
+- `action`: `retry` / `skip` / `abort` / `record`
+
+뒤의 다섯(`uncovered_input`·`nonverbatim_evidence`·`ungrounded_entity`·`ungrounded_technique`·`timezone_adjusted`)은 **실패가 아니라 측정**이라 조치가 `record`입니다 — 파이프라인의 흐름을 바꾸지 않고 세기만 합니다. 실패율 통계를 낼 때 분모에 넣으면 "모델이 얼마나 자주 실패하는가"가 오염됩니다.
 
 예를 들어 `stage=02_normalize`이면서 `type=schema_violation`인 항목을 케이스 수로 나누면 정규화 단계 실패율이 나오고, `detail.field` 분포를 보면 어떤 필드에서 sLLM이 자주 틀리는지 드러납니다. 이것이 이후 폴백 설계의 근거 데이터가 됩니다.
 
@@ -589,7 +610,8 @@ $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황�
     --in cases/C-001/01_input.json --out cases/C-001/02_scenario.json
 .venv/Scripts/python.exe -m src.stage03_select.select \
     --in cases/C-001/02_scenario.json --out cases/C-001/03_selection.json \
-    --mappings mappings/
+    --mappings mappings/ \
+    --force-artifacts '$MFT' prefetch      # 선택 — 기법 매핑과 무관하게 Tier 1
 .venv/Scripts/python.exe -m src.stage04_parse.parse \
     --in cases/C-001/03_selection.json --out cases/C-001/04_parsed/ \
     --evidence /mnt/evidence/WEB01

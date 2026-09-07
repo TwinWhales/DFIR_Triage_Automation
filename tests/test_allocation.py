@@ -276,6 +276,129 @@ def test_the_band_orders_within_an_artifact_not_across_them():
     assert {r["ref"] for r in chosen} == {"USN#1", "EVTX-SEC#2"}
 
 
+def test_a_scope_record_inside_the_window_outranks_one_outside_it():
+    """**앵커가 사고와 무관한 곳에 몰려 있으면 거리만으로는 창 밖이 이긴다.**
+
+    2026-09-07 `K-TEST-518-VERIFY` 의 실제 실패다. 프리패치 자리 넷을
+    2026-05-28 의 창 밖 레코드가 다 가져갔고, 조사 대상인 `518.EXE` 의
+    창 안 실행 기록은 한 자리도 받지 못했다. 03단계가 정확히 골라 온
+    것을 05단계가 떨어뜨린 것이라, 선별의 실패로 보이지도 않는다.
+
+    `signal_source: scope` 라 둘 다 플래그가 없고, 둘 다 앵커에서 멀어
+    2순위로 간다. 거기서 갈리는 것이 이 띠다.
+    """
+    # 둘 다 앵커에서 300초(DEFAULT_WINDOW_SECONDS) 넘게 떨어져 2순위로
+    # 간다. 그리고 **창 밖인 쪽이 앵커에 더 가깝다** — 띠가 없으면 거리만
+    # 보고 이쪽이 이긴다.
+    outside = dict(_reg(1, days=0, seconds=4 * 3600), flags=["outside_time_range"])
+    inside = _reg(2, days=0, seconds=10 * 3600)
+    anchor = _evtx(9, seconds=0)
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [outside, inside, anchor], signal_sources=SCOPE_SOURCES, limit=2
+    )
+
+    assert [r["ref"] for r in chosen if r["artifact"] == "registry:SYSTEM"] == ["REG-SYS#2"]
+
+
+def test_the_band_reaches_the_neighbours_too_not_just_the_signals():
+    """**띠를 0순위에만 걸면 부족하다.** 1순위(앵커 주변)에도 걸어야 한다.
+
+    `K-TEST-518-VERIFY` 에서 실제로 물린 자리다. 신호가 337,650건 중
+    143,877건(대부분 `$UsnJrnl`)이라 앵커가 143,261개였고, 타임라인
+    전체에 깔린 앵커 때문에 프리패치 296건이 **전부 1순위**로 들어갔다.
+    거기서는 앵커까지의 거리로 줄을 세우는데 그 거리가 사실상 무작위라,
+    창 밖 레코드가 자리를 다 가져갔다.
+
+    아래 둘은 **둘 다 앵커에서 300초 안**이라 1순위다. 창 밖인 쪽이
+    앵커에 더 가까우므로, 띠가 1순위에 안 걸리면 그쪽이 이긴다.
+    """
+    anchor = _evtx(9, seconds=0)
+    outside = dict(_reg(1, days=0, seconds=10), flags=["outside_time_range"])
+    inside = _reg(2, days=0, seconds=200)
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [outside, inside, anchor], signal_sources=SCOPE_SOURCES, limit=2
+    )
+
+    assert [r["ref"] for r in chosen if r["artifact"] == "registry:SYSTEM"] == ["REG-SYS#2"]
+
+
+# ============================================ 시나리오가 이름을 댄 레코드
+
+
+def test_a_named_process_beats_a_signal_in_the_same_artifact():
+    """**엔티티 매칭은 순위보다 바깥이다.**
+
+    `K-TEST-518-VERIFY` 에서 `518.exe` 를 이름에 가진 레코드 23건 중 8건이
+    플래그가 하나도 없었다 — 프리패치의 실행 기록이 그중 하나다. 순위
+    안에 넣으면 이 8건은 0순위 신호에게 져서 영영 못 온다.
+    """
+    named = dict(_usn(1, seconds=30), name="518.exe", flags=[])
+    signal = _usn(2, seconds=10)  # flags=("deleted",) — 0순위 신호다
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [signal, named], entities={"processes": ["518.exe"]}, limit=1
+    )
+
+    assert [r["ref"] for r in chosen] == ["USN#1"]
+
+
+def test_the_name_is_matched_whole_not_in_pieces():
+    """조각으로 보면 무관한 것이 자리를 다 먹는다.
+
+    실측: `518` 로 보면 `$UsnJrnl` 185건이 걸리는데 대부분
+    `mat-debug-5188.log` 였고, `518.exe` 로 보면 21건이었다.
+    """
+    decoy = dict(_usn(1, seconds=10), name="mat-debug-5188.log", flags=[])
+    real = dict(_usn(2, seconds=10), name="518.exe", flags=[])
+    names = allocation.entity_names({"processes": ["518.exe"]})
+
+    assert allocation.mentions_entity(real, names)
+    assert not allocation.mentions_entity(decoy, names)
+
+
+def test_a_name_inside_a_path_still_matches():
+    record = dict(
+        _usn(1), name=None, path=r"C:\Users\test\Desktop\ksj_080-[kisec123]518\518.exe"
+    )
+    assert allocation.mentions_entity(
+        record, allocation.entity_names({"processes": ["518.exe"]})
+    )
+
+
+def test_a_scalar_event_field_counts_but_a_list_does_not():
+    """evtx 4688 의 `NewProcessName` 은 보고, 프리패치의 `loaded_files` 는 안 본다.
+
+    적재된 DLL 목록까지 보면 흔한 이름 하나로 프리패치 전량이 매칭된다.
+    반대로 evtx 의 스칼라 값은 **누가 그것을 실행했는지**를 담고 있다.
+    """
+    names = allocation.entity_names({"processes": ["518.exe"]})
+    scalar = {"ref": "EVTX-SEC#1", "fields": {"NewProcessName": r"C:\tmp\518.exe"}}
+    listed = {"ref": "PF#1", "fields": {"loaded_files": [r"C:\tmp\518.exe"]}}
+
+    assert allocation.mentions_entity(scalar, names)
+    assert not allocation.mentions_entity(listed, names)
+
+
+def test_entities_we_were_not_given_change_nothing():
+    records = [_usn(1, seconds=10), _evtx(2, seconds=20)]
+    plain, _q, _b = allocation.allocate_records(records, limit=60)
+    empty, _q, _b = allocation.allocate_records(records, entities={}, limit=60)
+    assert [r["ref"] for r in plain] == [r["ref"] for r in empty]
+
+
+def test_a_name_too_short_to_discriminate_is_dropped():
+    # 한두 글자짜리 이름은 거의 모든 레코드에 걸려 배분을 무의미하게 만든다.
+    assert allocation.entity_names({"processes": ["a", "ex", "518.exe"]}) == ("518.exe",)
+
+
+def test_only_processes_are_matched_not_paths():
+    # paths[0] 은 03단계가 web_root 로 쓰는 디렉터리다. 걸면 그 아래 전부가
+    # 매칭된다(scope_resolver.ENTITY_VARIABLES).
+    assert allocation.entity_names({"paths": [r"C:\inetpub\wwwroot"]}) == ()
+
+
 def test_an_out_of_window_signal_is_deferred_not_dropped():
     """**버리는 것이 아니라 후순위다.** 자리가 남으면 간다 — 창을 좁히는
     것과 다르다."""
