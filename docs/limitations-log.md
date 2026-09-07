@@ -2409,6 +2409,8 @@ PF#328281288   LISTDLLS64.EXE      2026-05-28  outside_time_range
 제외한 이유는 프리패치의 `loaded_files` 입니다 — 적재 DLL 목록까지 보면
 흔한 이름 하나로 프리패치 전량이 매칭됩니다. 반대로 `fields` 의 스칼라는
 evtx 4688 의 `NewProcessName` 처럼 **누가 실행했는지**를 담고 있습니다.
+단, `Parent*` 필드는 대상 자체가 아니라 관계이므로 제외하고 별도의
+ProcessGuid/PID·Image 계보 검사에서만 사용합니다.
 
 결과(실물, `K-TEST-518-VERIFY`): 프리패치 1등, `$MFT` 1등, `$UsnJrnl`
 상위 21건이 전부 `518.exe` 관련으로 바뀌었습니다.

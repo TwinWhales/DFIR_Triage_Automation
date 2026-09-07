@@ -372,6 +372,7 @@ def test_a_scalar_event_field_counts_but_a_list_does_not():
 
     적재된 DLL 목록까지 보면 흔한 이름 하나로 프리패치 전량이 매칭된다.
     반대로 evtx 의 스칼라 값은 **누가 그것을 실행했는지**를 담고 있다.
+    Parent* 필드는 프로세스 계보 로직이 별도로 검증하므로 여기서는 제외한다.
     """
     names = allocation.entity_names({"processes": ["518.exe"]})
     scalar = {"ref": "EVTX-SEC#1", "fields": {"NewProcessName": r"C:\tmp\518.exe"}}
@@ -1072,3 +1073,183 @@ def test_an_unknown_budget_does_not_split():
 def test_no_records_means_no_chunks():
     assert allocation.chunk_records([], 1000) == []
 
+
+
+def _sysmon_process(
+    num,
+    seconds,
+    image,
+    pid,
+    guid="",
+    parent_image="",
+    parent_pid="",
+    parent_guid="",
+    flags=(),
+):
+    return {
+        "ref": f"SYSMON#{num}",
+        "artifact": "evtx:Sysmon",
+        "event_id": 1,
+        "timestamp": _at(seconds=seconds),
+        "flags": list(flags),
+        "fields": {
+            "Image": image,
+            "ProcessId": str(pid),
+            "ProcessGuid": guid,
+            "ParentImage": parent_image,
+            "ParentProcessId": str(parent_pid),
+            "ParentProcessGuid": parent_guid,
+        },
+    }
+
+
+def test_a_direct_sysmon_child_follows_the_named_process_into_a_small_quota():
+    target = _sysmon_process(
+        1,
+        100,
+        r"C:\Users\test\Desktop\evil.exe",
+        1200,
+        guid="{target}",
+        flags=("unexpected_parent_process",),
+    )
+    child = _sysmon_process(
+        2,
+        101,
+        r"C:\Windows\System32\msiexec.exe",
+        1300,
+        guid="{child}",
+        parent_image=r"C:\Users\test\Desktop\evil.exe",
+        parent_pid=1200,
+        parent_guid="{target}",
+    )
+    old_noise = _sysmon_process(
+        3,
+        10,
+        r"C:\Windows\System32\cmd.exe",
+        900,
+        guid="{noise}",
+        flags=("shell_spawned",),
+    )
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [old_noise, target, child],
+        entities={"processes": ["evil.exe"]},
+        limit=2,
+    )
+
+    assert {record["ref"] for record in chosen} == {"SYSMON#1", "SYSMON#2"}
+
+
+def test_pid_fallback_requires_parent_image_and_a_forward_two_minute_window():
+    target = _sysmon_process(
+        1, 100, r"C:\tmp\evil.exe", 1200, flags=("unexpected_parent_process",)
+    )
+    child = _sysmon_process(
+        2,
+        101,
+        r"C:\Windows\System32\cmd.exe",
+        1300,
+        parent_image=r"C:\tmp\evil.exe",
+        parent_pid=1200,
+    )
+    reused_pid = _sysmon_process(
+        3,
+        400,
+        r"C:\Windows\System32\powershell.exe",
+        1400,
+        parent_image=r"C:\tmp\evil.exe",
+        parent_pid=1200,
+    )
+    wrong_image = _sysmon_process(
+        4,
+        102,
+        r"C:\Windows\System32\whoami.exe",
+        1500,
+        parent_image=r"C:\Windows\explorer.exe",
+        parent_pid=1200,
+    )
+
+    distances, _times = allocation._process_context(
+        [target, child, reused_pid, wrong_image],
+        ("evil.exe",),
+        allocation.DEFAULT_BURST_SECONDS,
+    )
+
+    assert distances == {"SYSMON#1": 0, "SYSMON#2": 1}
+
+
+def test_records_in_the_named_execution_burst_beat_older_noise():
+    target = _sysmon_process(
+        1,
+        100,
+        r"C:\tmp\evil.exe",
+        1200,
+        guid="{target}",
+        flags=("unexpected_parent_process",),
+    )
+    near = {
+        "ref": "PS#2",
+        "artifact": "evtx:PowerShell",
+        "event_id": 4104,
+        "timestamp": _at(seconds=110),
+        "flags": ["powershell_execution"],
+    }
+    old = {
+        "ref": "PS#1",
+        "artifact": "evtx:PowerShell",
+        "event_id": 4104,
+        "timestamp": _at(seconds=10),
+        "flags": ["powershell_execution"],
+    }
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [old, target, near],
+        entities={"processes": ["evil.exe"]},
+        limit=2,
+    )
+
+    assert {record["ref"] for record in chosen} == {"SYSMON#1", "PS#2"}
+
+
+def test_assemble_context_default_has_the_16k_floor():
+    from src.stage05_interpret import llm_client
+
+    assert llm_client.ASSEMBLE_NUM_CTX >= 16384
+
+
+def test_process_time_wins_over_an_earlier_named_file_timestamp_for_the_burst():
+    target = _sysmon_process(
+        1,
+        100,
+        r"C:\tmp\evil.exe",
+        1200,
+        guid="{target}",
+        flags=("unexpected_parent_process",),
+    )
+    named_mft = {
+        "ref": "MFT#1",
+        "artifact": "$MFT",
+        "path": r"C:\tmp\evil.exe",
+        "si_btime": _at(seconds=10),
+        "flags": [],
+    }
+    near_process = {
+        "ref": "PS#2",
+        "artifact": "evtx:PowerShell",
+        "timestamp": _at(seconds=101),
+        "flags": ["powershell_execution"],
+    }
+    near_file_creation = {
+        "ref": "PS#1",
+        "artifact": "evtx:PowerShell",
+        "timestamp": _at(seconds=10),
+        "flags": ["powershell_execution"],
+    }
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [named_mft, near_file_creation, target, near_process],
+        entities={"processes": ["evil.exe"]},
+        limit=3,
+    )
+
+    assert {record["ref"] for record in chosen} == {"MFT#1", "SYSMON#1", "PS#2"}

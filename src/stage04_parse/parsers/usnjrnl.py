@@ -79,6 +79,30 @@ _log = logging.getLogger(__name__)
 #: 걸친 레코드를 이어 붙일 수 있다.
 DEFAULT_CHUNK_SIZE = 1 << 20  # 1 MiB
 
+#: KAPE 수집 결함으로 $J 이름의 파일에 $MFT 고정 레코드가 들어온
+#: 실물이 있었다. 세 레코드의 FILE 시그니처와 연속 레코드 번호를 함께
+#: 확인해 우연한 본문 문자열과 구별한다.
+_MFT_RECORD_SIZES = (1024, 2048, 4096)
+_MFT_PREFLIGHT_SIZE = max(_MFT_RECORD_SIZES) * 3 + 8
+
+
+def _mft_record_layout(head: bytes) -> tuple[int, int] | None:
+    """작은 접두어 뒤에서 시작한 $MFT 열이면 (접두어, 레코드 크기)."""
+    for record_size in _MFT_RECORD_SIZES:
+        for shift in range(8):
+            offsets = [shift + i * record_size for i in range(3)]
+            if any(offset + 48 > len(head) for offset in offsets):
+                continue
+            if any(head[offset : offset + 4] != b"FILE" for offset in offsets):
+                continue
+            numbers = [
+                int.from_bytes(head[offset + 44 : offset + 48], "little")
+                for offset in offsets
+            ]
+            if numbers[1] == numbers[0] + 1 and numbers[2] == numbers[1] + 1:
+                return shift, record_size
+    return None
+
 
 class _Rewound:
     """앞에서 미리 읽은 바이트를 되돌려 놓은 스트림.
@@ -159,12 +183,21 @@ class UsnJrnlParser:
         # 두 경우가 구별되지 않는다. evidence 계층이 0바이트 파일을
         # 걸러 주지만, 다른 경로로 빈 스트림이 들어올 수 있으므로
         # 파서도 자기 앞을 지킨다.
-        head = stream.read(structs.V2_HEADER_SIZE)
+        head = stream.read(_MFT_PREFLIGHT_SIZE)
         if not head:
             raise ValueError(
                 f"{self.artifact}: 저널이 비어 있습니다. "
                 "$UsnJrnl:$J 의 내용이 아니라 이름 없는 $DATA 스트림을 "
                 "뽑았을 수 있습니다 — 추출을 확인하십시오."
+            )
+        mft_layout = _mft_record_layout(head)
+        if mft_layout is not None:
+            mft_shift, mft_record_size = mft_layout
+            raise ValueError(
+                f"{self.artifact}: 내용이 USN 변경 저널이 아니라 $MFT FILE "
+                f"레코드 열입니다(FILE 시그니처 @0x{mft_shift:X}, "
+                f"레코드 크기 {mft_record_size}바이트). "
+                "KAPE 수집본과 희소 파일/ADS 보존 상태를 확인하십시오."
             )
         stream = _Rewound(head, stream)
 
