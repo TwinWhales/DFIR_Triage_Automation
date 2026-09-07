@@ -84,6 +84,59 @@ def build_usn_record(
     return header + encoded + b"\x00" * (padded - unpadded)
 
 
+def build_usn_record_v3(
+    *,
+    usn: int,
+    name: str,
+    reason: int = u.UsnReason.FILE_CREATE,
+    source: int = 0,
+    timestamp: dt.datetime | None = None,
+    file_entry: int = 100,
+    file_sequence: int = 1,
+    parent_entry: int = 5,
+    parent_sequence: int = 5,
+    file_id_high: int = 0,
+    parent_id_high: int = 0,
+    file_attributes: int = 0x20,
+    minor_version: int = 0,
+    record_length: int | None = None,
+) -> bytes:
+    """USN_RECORD_V3 하나를 만든다.
+
+    V2와 다른 것은 파일 참조 둘이 ``FILE_ID_128`` 이라는 것뿐입니다.
+    NTFS에서는 하위 8바이트가 곧 64비트 파일 참조이고 상위는 0이므로,
+    기본값은 그렇게 만듭니다. ``file_id_high`` 를 주면 **NTFS가 아닌**
+    128비트 ID(ReFS)를 흉내 낼 수 있습니다.
+    """
+    encoded = name.encode("utf-16-le", "surrogatepass")
+    name_offset = u.V3_HEADER_SIZE
+    unpadded = name_offset + len(encoded)
+    padded = (unpadded + u.RECORD_ALIGNMENT - 1) // u.RECORD_ALIGNMENT * u.RECORD_ALIGNMENT
+    length = padded if record_length is None else record_length
+
+    moment = timestamp if timestamp is not None else dt.datetime(2026, 7, 20, 3, 14, 22, tzinfo=UTC)
+
+    header = struct.pack(
+        "<IHHQQQQQQIIIIHH",
+        length,
+        3,
+        minor_version,
+        (file_sequence << 48) | file_entry,
+        file_id_high,
+        (parent_sequence << 48) | parent_entry,
+        parent_id_high,
+        usn,
+        to_filetime(moment),
+        int(reason),
+        int(source),
+        0,  # security id
+        file_attributes,
+        len(encoded),
+        name_offset,
+    )
+    return header + encoded + b"\x00" * (padded - unpadded)
+
+
 def build_journal(records: list[bytes], *, leading_zeros: int = 0) -> bytes:
     """레코드를 이어 붙인 ``$J`` 스트림.
 
@@ -159,11 +212,118 @@ def test_a_broken_length_is_refused(kwargs, reason):
         u.UsnRecord.unpack(raw)
 
 
-def test_a_v3_record_is_refused_as_unsupported_not_corrupt():
-    """V3를 V2로 오해하면 필드가 통째로 밀린다. 손상과는 구분해야 한다."""
-    raw = build_usn_record(usn=8, name="x", major_version=3)
+def test_a_v4_record_is_refused_as_unsupported_not_corrupt():
+    """V4를 V2로 오해하면 필드가 통째로 밀린다. 손상과는 구분해야 한다.
+
+    V4는 **읽을 수 없는 것이 아니라 낼 수 없는 것**이다 — 이름도 시각도
+    파일 속성도 없이 변경된 바이트 구간만 들고 있어, 04단계 출력이
+    요구하는 ``name``·``is_directory`` 를 지어내지 않고는 만들 수 없다.
+    """
+    raw = build_usn_record(usn=8, name="x", major_version=4)
     with pytest.raises(u.UnsupportedVersion):
         u.UsnRecord.unpack(raw)
+
+
+# ==================================================== V3 레이아웃
+
+
+def test_v3_header_size_matches_the_spec():
+    # 76바이트. V2보다 16 큰 것은 파일 참조 둘이 16바이트가 됐기 때문이다.
+    assert struct.calcsize("<IHHQQQQQQIIIIHH") == u.V3_HEADER_SIZE == 76
+    assert u.V3_HEADER_SIZE - u.V2_HEADER_SIZE == 16
+
+
+def test_a_v3_record_round_trips():
+    """V2와 다른 것은 파일 참조의 폭뿐이고 나머지는 그대로다."""
+    raw = build_usn_record_v3(usn=4096, name="shell.aspx")
+    record = u.UsnRecord.unpack(raw)
+
+    assert record.major_version == 3
+    assert record.usn == 4096
+    assert record.name == "shell.aspx"
+    assert record.reason_names == ["file_create"]
+    assert record.timestamp == dt.datetime(2026, 7, 20, 3, 14, 22, tzinfo=UTC)
+
+
+def test_the_128_bit_file_id_splits_like_a_64_bit_reference_on_ntfs():
+    """**v3 를 못 읽던 이유였던 자리다.**
+
+    NTFS의 ``FILE_ID_128`` 은 64비트 파일 참조를 하위 8바이트에 담고
+    상위 8바이트를 0으로 둔다. 그래서 (엔트리, 시퀀스)로 쪼개지고,
+    ``$MFT`` 와 잇는 통로가 v2와 똑같이 열린다.
+    """
+    record = u.UsnRecord.unpack(
+        build_usn_record_v3(
+            usn=8, name="x", file_entry=12345, file_sequence=7, parent_entry=5, parent_sequence=5
+        )
+    )
+
+    assert record.file_reference.entry == 12345
+    assert record.file_reference.sequence == 7
+    assert record.parent_reference.entry == 5
+
+
+def test_a_non_ntfs_128_bit_id_is_refused_instead_of_truncated():
+    """상위 64비트가 0이 아니면 NTFS 참조가 아니다 — 잘라 담으면 안 된다.
+
+    하위만 취하면 **존재하지 않는 MFT 엔트리를 가리키는 레코드**가 되고,
+    06단계는 그것을 대조할 수 없다. 04단계가 값을 지어내는 셈이다.
+    """
+    raw = build_usn_record_v3(usn=8, name="x", file_id_high=0xDEAD)
+
+    with pytest.raises(u.UnmappableFileId) as caught:
+        u.UsnRecord.unpack(raw)
+    assert caught.value.record_length == len(raw), "레코드를 통째로 건너뛸 수 있어야 한다"
+
+
+def test_a_v3_record_is_read_alongside_v2_in_one_stream():
+    """섞여 있어도 각자의 레이아웃으로 읽는다."""
+    data = build_journal(
+        [
+            build_usn_record(usn=0, name="two.txt"),
+            build_usn_record_v3(usn=80, name="three.txt"),
+            build_usn_record(usn=176, name="two-again.txt"),
+        ]
+    )
+    parser = usnjrnl.UsnJrnlParser()
+    records = list(parser.parse(_io.BytesIO(data), Scope()))
+
+    assert [r["name"] for r in records] == ["two.txt", "three.txt", "two-again.txt"]
+    assert parser.stats["parse_errors"] == 0
+    assert parser.stats["unsupported_version"] == 0
+
+
+def test_a_v3_record_says_which_layout_it_came_from():
+    """v3 는 실물로 대조한 적이 없는 경로다. 나중에 골라낼 수 있어야 한다."""
+    data = build_journal([build_usn_record_v3(usn=0, name="a.txt")])
+    v3 = parse(data)[0]
+    v2 = parse(build_journal([build_usn_record(usn=0, name="a.txt")]))[0]
+
+    assert v3["fields"]["usn_record_version"] == 3
+    assert "fields" not in v2, "v2 출력은 달라지지 않는다"
+
+
+def test_a_v3_record_validates_against_the_schema():
+    data = build_journal([build_usn_record_v3(usn=0, name="shell.aspx")])
+    record = next(flagging.apply_all(iter(parse(data)), None))
+
+    schema.validate(record, "parsed_record")
+
+
+def test_an_unmappable_v3_record_is_skipped_whole_not_resynced():
+    """레코드 본문을 8바이트씩 걸어 들어가면 가짜 손상이 줄줄이 잡힌다."""
+    data = build_journal(
+        [
+            build_usn_record_v3(usn=0, name="refs.txt", file_id_high=0xDEAD),
+            build_usn_record(usn=96, name="after.txt"),
+        ]
+    )
+    parser = usnjrnl.UsnJrnlParser()
+    records = list(parser.parse(_io.BytesIO(data), Scope()))
+
+    assert [r["name"] for r in records] == ["after.txt"]
+    assert parser.stats["unsupported_version"] == 1
+    assert parser.stats["parse_errors"] == 0, "손상이 아니다"
 
 
 def test_unknown_reason_bits_are_kept():
@@ -307,6 +467,43 @@ def test_a_record_straddling_the_buffer_boundary_is_read():
     assert [r["name"] for r in parsed] == [r["name"] for r in parse(data)]
 
 
+def test_a_record_straddling_the_boundary_is_not_counted_as_corruption():
+    """**회귀 — 청크 경계에 걸친 레코드를 손상으로 세면 그 레코드를 잃는다.**
+
+    버퍼 끝에 걸친 레코드는 "덜 들어온 것"이지 손상이 아니다. 둘을
+    뭉뚱그리면 파서가 8바이트씩 걸어 들어가 재동기화하는데, 그 사이에
+    레코드 시작점을 지나쳐 **레코드 하나가 통째로 사라진다.** 게다가
+    있지도 않은 손상 구간이 ``parse_errors`` 로 결산에 오른다.
+
+    이 테스트가 놓는 배치가 정확히 그 자리다 — 경계 앞에 80바이트가
+    남아 있어 (옛 코드의 예비 검사값 60을 넘으므로) 읽기를 시도하는데,
+    레코드는 280바이트라 버퍼 밖으로 나간다.
+
+    고치기 전 실측: 레코드 1건 유실 + ``parse_errors`` 1 · 24바이트.
+    """
+    chunk = u.MAX_RECORD_SIZE * 2
+    filler = build_usn_record(usn=0, name="f.txt")
+    step = len(filler)
+    straddler_at = chunk - 80
+
+    count = straddler_at // step
+    pad = straddler_at - count * step
+    assert pad % u.RECORD_ALIGNMENT == 0, "정렬을 깨면 이 테스트가 다른 것을 잰다"
+
+    data = b"".join(build_usn_record(usn=i * step, name="f.txt") for i in range(count))
+    data += b"\x00" * pad  # 레코드 사이 패딩 — 경계 위치를 정확히 맞춘다
+    data += build_usn_record(usn=straddler_at, name="S" * 109)  # 280바이트
+    assert len(data) == straddler_at + 280
+
+    parser = usnjrnl.UsnJrnlParser(chunk_size=chunk)
+    records = list(parser.parse(_io.BytesIO(data), Scope()))
+
+    assert records[-1]["name"].startswith("S"), "경계에 걸친 레코드를 잃었다"
+    assert len(records) == count + 1
+    assert parser.stats["parse_errors"] == 0, "손상이 아니라 덜 들어온 것이다"
+    assert parser.stats["unreadable_bytes"] == 0
+
+
 def test_a_truncated_tail_record_is_dropped_not_guessed():
     data = build_journal([build_usn_record(usn=0, name="whole.txt")])
     data += build_usn_record(usn=80, name="cut.txt")[:40]
@@ -343,15 +540,15 @@ def test_a_nonempty_stream_still_sees_its_first_record():
 def test_a_run_of_unsupported_records_is_logged_once(caplog):
     """**경고 단위 회귀.**
 
-    미지원 레코드마다 경고를 찍으면 v3 를 쓰는 볼륨에서 저널 전체가
-    미지원이라 레코드 수만큼 쏟아진다. 그러면 04단계 요약 줄과
+    미지원 레코드마다 경고를 찍으면 범위 추적을 켠 볼륨에서 v4 가
+    쏟아지는 만큼 경고가 쏟아진다. 그러면 04단계 요약 줄과
     ``errors.jsonl`` 한 줄이 그 사이에 묻힌다 — 2026-09-01 실측에서
     evtx 청크 복구 경고 215줄이 프리패치 전량 실패를 덮은 것과 같은
     일이다. 집계는 레코드 단위로 남기고 **로그만 구간으로 묶는다.**
     """
     data = build_journal(
         [
-            build_usn_record(usn=i * 80, name=f"v3-{i}.dll", major_version=3)
+            build_usn_record(usn=i * 80, name=f"v4-{i}.dll", major_version=4)
             for i in range(5)
         ]
     )
@@ -366,17 +563,21 @@ def test_a_run_of_unsupported_records_is_logged_once(caplog):
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1, "연속된 미지원은 한 구간이다"
     assert "5건" in warnings[0].getMessage(), "규모가 그 한 줄에 있어야 한다"
-    assert "v3.0" in warnings[0].getMessage(), "어느 버전인지 없으면 조치를 못 정한다"
+    assert "v4.0" in warnings[0].getMessage(), "어느 버전인지 없으면 조치를 못 정한다"
 
 
-def test_unsupported_runs_are_split_by_version(caplog):
-    """v3 와 v4 를 한 줄에 묶으면 어느 쪽이 몇 건인지 말할 수 없다."""
+def test_unsupported_runs_are_split_by_reason(caplog):
+    """사유가 다르면 다른 구간이다 — 한 줄에 묶으면 어느 쪽이 몇 건인지 모른다.
+
+    v4(읽지 않는 버전)와 "파일 ID 가 NTFS 참조가 아님"은 조치가 다르다.
+    앞은 스키마 이야기고 뒤는 그 볼륨이 NTFS가 아니라는 이야기다.
+    """
     data = build_journal(
         [
-            build_usn_record(usn=0, name="a.dll", major_version=3),
-            build_usn_record(usn=80, name="b.dll", major_version=3),
-            build_usn_record(usn=160, name="c.dll", major_version=4),
-            build_usn_record(usn=240, name="d.dll", major_version=4),
+            build_usn_record(usn=0, name="a.dll", major_version=4),
+            build_usn_record(usn=80, name="b.dll", major_version=4),
+            build_usn_record_v3(usn=160, name="c.dll", file_id_high=0xDEAD),
+            build_usn_record_v3(usn=256, name="d.dll", file_id_high=0xDEAD),
         ]
     )
 
@@ -386,18 +587,20 @@ def test_unsupported_runs_are_split_by_version(caplog):
 
     messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len(messages) == 2
-    assert any("v3.0" in m for m in messages) and any("v4.0" in m for m in messages)
+    assert any("v4.0" in m for m in messages)
+    assert any("NTFS 참조가 아님" in m for m in messages)
+    assert parser.stats["unsupported_version"] == 4
 
 
 def test_a_normal_record_between_two_unsupported_runs_splits_them(caplog):
     """정상 레코드를 만나면 구간이 끊긴다 — 손상 구간과 같은 규약이다."""
     data = build_journal(
         [
-            build_usn_record(usn=0, name="a.dll", major_version=3),
-            build_usn_record(usn=80, name="b.dll", major_version=3),
+            build_usn_record(usn=0, name="a.dll", major_version=4),
+            build_usn_record(usn=80, name="b.dll", major_version=4),
             build_usn_record(usn=160, name="kept.txt"),
-            build_usn_record(usn=240, name="c.dll", major_version=3),
-            build_usn_record(usn=320, name="d.dll", major_version=3),
+            build_usn_record(usn=240, name="c.dll", major_version=4),
+            build_usn_record(usn=320, name="d.dll", major_version=4),
         ]
     )
 
@@ -409,11 +612,11 @@ def test_a_normal_record_between_two_unsupported_runs_splits_them(caplog):
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 2
 
 
-def test_a_v3_record_is_counted_separately_from_corruption():
+def test_a_v4_record_is_counted_separately_from_corruption():
     data = build_journal(
         [
             build_usn_record(usn=0, name="v2.txt"),
-            build_usn_record(usn=80, name="v3.txt", major_version=3),
+            build_usn_record(usn=80, name="v4.txt", major_version=4),
             build_usn_record(usn=160, name="after.txt"),
         ]
     )

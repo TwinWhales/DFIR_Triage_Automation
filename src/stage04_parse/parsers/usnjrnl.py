@@ -40,6 +40,12 @@
 모두 검사하므로, 아무 위치에서나 그럴듯한 레코드가 만들어지지는
 않습니다.
 
+**"덜 들어온 것"은 손상이 아닙니다.** 버퍼 끝에 걸친 레코드는
+``IncompleteRecord`` 로 돌아오고, 그때는 재동기화하지 않고 **더 읽어 와서
+다시 시도합니다.** 둘을 뭉뚱그리면 청크 경계마다 레코드 하나가 사라지고
+있지도 않은 손상 구간이 결산에 오릅니다 — 실제로 그랬습니다
+(``docs/limitations-log.md``).
+
 건너뛴 횟수는 ``stats``에 남고 ``_manifest.json``의 ``parse_errors``로
 보고됩니다. **조용히 넘어가지 않습니다** — 저널의 어느 구간을 못 읽었는지
 모르면 "이 시각에 아무 일도 없었다"고 잘못 읽게 됩니다.
@@ -133,6 +139,9 @@ class UsnJrnlParser:
             #: 못 읽은 총 바이트. 구간 수(``parse_errors``)와 함께 봐야
             #: 규모를 알 수 있다. 구간 1곳이 8바이트인 것과 500KB인 것은 다르다.
             "unreadable_bytes": 0,
+            #: 실재하지만 04단계 출력으로 낼 수 없어 건너뛴 레코드.
+            #: v4(이름도 시각도 없다)와, v3 인데 파일 ID 가 NTFS 참조가
+            #: 아닌 것이 여기로 온다. **손상과 섞지 않는다** — 조치가 갈린다.
             "unsupported_version": 0,
             "zero_bytes_skipped": 0,
             #: 이름에 짝 없는 서로게이트가 있어 원본 바이트를 따로 실은 레코드.
@@ -276,11 +285,15 @@ class UsnJrnlParser:
 
             progressed = False
             while cursor < len(buf):
-                if len(buf) - cursor < structs.V2_HEADER_SIZE:
+                if len(buf) - cursor < structs.PRELUDE_SIZE:
                     if eof:
                         close_runs()
-                        return  # 헤더도 안 되는 꼬리 조각
+                        return  # 크기·버전도 못 읽는 꼬리 조각
                     break  # 더 읽어 와서 이어 붙인다
+
+                # 여기부터는 ``unpack`` 이 판단한다. **버전마다 헤더 크기가
+                # 다르므로**(v2 60 · v3 76) 이 자리에서 한 값으로 미리
+                # 거를 수 없다 — 모자라면 ``IncompleteRecord`` 로 돌아온다.
 
                 # 0 구간 — 스파스 홀이거나 정렬 패딩이다. 구분할 필요 없다.
                 if not int.from_bytes(buf[cursor : cursor + 4], "little"):
@@ -291,10 +304,23 @@ class UsnJrnlParser:
 
                 try:
                     record = structs.UsnRecord.unpack(buf, cursor)
-                except structs.UnsupportedVersion as e:
-                    # V3/V4. 손상이 아니라 지원 범위 밖이므로 따로 센다.
+                except structs.IncompleteRecord:
+                    # **손상이 아니다.** 레코드가 버퍼 끝에 걸쳐 있을 뿐이다.
+                    # 재동기화하면 그 레코드를 잃으므로, 더 읽어 와서 같은
+                    # 자리를 다시 본다. 스트림이 끝났으면 잘린 꼬리다.
+                    if eof:
+                        close_runs()
+                        return
+                    break
+                except structs.UnsupportedRecord as e:
+                    # V4이거나, v3인데 파일 ID가 NTFS 참조가 아닌 것.
+                    # 손상이 아니라 우리가 낼 수 없는 레코드라 따로 센다.
                     # **레코드 하나를 통째로** 건너뛴다 — 8바이트씩 걸어
                     # 들어가면 본문을 레코드로 오해해 가짜 손상이 잡힌다.
+                    #
+                    # 사유 문자열이 다르면 다른 구간으로 갈린다. v4 와
+                    # "NTFS 참조가 아닌 파일 ID" 를 한 줄에 묶으면 어느 쪽이
+                    # 몇 건인지 말할 수 없다.
                     close_bad_run()
                     self.stats["unsupported_version"] += 1
                     reason = str(e)
@@ -324,12 +350,8 @@ class UsnJrnlParser:
                     progressed = True
                     continue
 
-                if len(buf) - cursor < record.record_length:
-                    if eof:
-                        close_runs()
-                        return  # 잘린 마지막 레코드
-                    break  # 뒷부분을 더 읽어 온다
-
+                # 레코드가 버퍼에 다 들어왔다는 것은 ``unpack`` 이 이미
+                # 보장한다(안 들어왔으면 ``IncompleteRecord`` 로 돌아온다).
                 # 유효한 레코드를 만났으므로 열려 있던 구간이 여기서 끝난다.
                 close_runs()
                 yield base + cursor, record
@@ -392,11 +414,19 @@ class UsnJrnlParser:
         # 레코드를 버리면 이상함 자체가 증거인 경우를 놓친다.
         if record.timestamp is not None:
             out["timestamp"] = record.timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f0Z")
+        fields: dict[str, Any] = {}
         if name_raw is not None:
+            fields["name_raw_utf16le"] = name_raw
+        if record.major_version != 2:
+            # **어느 레이아웃에서 나왔는지 남긴다.** v3 는 실물로 대조한 적이
+            # 없는 경로다(``structs/usn_record.py`` 의 "출처"). 나중에 이
+            # 레코드들만 골라 되짚을 수 있어야 한다.
+            fields["usn_record_version"] = record.major_version
+        if fields:
             # 최상위에 새 키를 만들지 않는다 — 스키마가 동결이고
             # ``additionalProperties: false`` 다. ``fields`` 는 자유 형식으로
             # 선언된 자리라 여기 싣는 것이 스키마 변경이 아니다.
-            out["fields"] = {"name_raw_utf16le": name_raw}
+            out["fields"] = fields
         return out
 
     def _encodable_name(self, name: str) -> "tuple[str, str | None]":
