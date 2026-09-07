@@ -777,21 +777,54 @@ def test_corroborates_defaults_to_empty(tmp_path, catalog):
     assert mapping_loader.load_mapping(path, catalog).corroborates == frozenset()
 
 
-def test_no_shipped_mapping_declares_corroborates_yet(catalog):
-    """**아직 아무것도 넓히지 않았다.** 실측 근거가 없기 때문이다.
+#: `corroborates:` 를 선언한 매핑. **넓힐 때마다 여기도 늘린다.**
+#:
+#: 2026-09-04 까지는 비어 있었다 — 오기각이 관측되지 않은 상태에서 넓히면
+#: 06 에서 유일하게 실제로 판정하는 체커를 가설로 무르게 만드는 것이라서다.
+#:
+#: 2026-09-07 에 첫 항목이 생겼다. `K-TEST-518-VERIFY` 에서 05가 Defender 의
+#: `Trojan:Win32/PossibleMalware.A` 탐지·격리 기록을 정확히 골라 왔는데
+#: 06이 `technique_unsupported` 로 기각했다 — 정탐 기각이다. 격리 시각이
+#: 같은 파일의 `$UsnJrnl` `deleted` 와 초 단위로 맞는다.
+EXPECTED_CORROBORATES = {
+    "T1204.002": ["evtx:Defender"],
+}
 
-    2026-09-04 기준으로 나온 소견의 (기법, 인용 아티팩트) 쌍 여섯 중 기각은
-    하나이고 그것은 정탐이었다 — `T1091`(USB) 이 Wazuh 에이전트 재시작
-    레코드를 인용했다. 오기각이 관측되지 않은 상태에서 넓히면, 06 에서
-    유일하게 실제로 판정하는 체커를 가설로 무르게 만드는 것이 된다.
 
-    **이 테스트가 깨졌다면 누군가 넓힌 것이다.** 그 자체는 정상이지만,
-    `technique_unsupported` 기각 기록을 근거로 삼았는지 확인하고 이 테스트를
-    그 근거와 함께 고친다.
+def test_only_the_adjudicated_mappings_declare_corroborates(catalog):
+    """**넓힌 것이 여기 적힌 것과 정확히 같아야 한다.**
+
+    조용히 넓히는 것을 막는 지뢰선이다. 이 테스트가 깨졌다면 누군가
+    넓혔거나 좁힌 것이고, 그 자체는 정상이지만 `technique_unsupported`
+    기각 기록을 근거로 삼았는지 확인하고 위 표를 함께 고쳐야 한다.
     """
     declared = {
         technique: sorted(mapping.corroborates)
         for technique, mapping in mapping_loader.load_all(MAPPINGS, "windows", catalog).items()
         if mapping.corroborates
     }
-    assert declared == {}, declared
+    assert declared == EXPECTED_CORROBORATES, declared
+
+
+def test_every_widened_mapping_has_a_human_verdict_behind_it(catalog):
+    """**넓힌 근거가 대장에 있어야 한다.**
+
+    `benchmark/rejections.yaml` 이 "기각을 사람이 가른 기록"이고, 그
+    판단이 곧 `corroborates:` 에 적을 값이다(그 파일의 머리말). 매핑만
+    넓히고 근거를 안 남기면 나중에 이 판단을 뒤집을 때 무엇을 보고 넣었는지
+    알 수 없다 — 실측 없이 채운 것과 구별되지 않는다.
+    """
+    ledger = yaml.safe_load((REPO_ROOT / "benchmark" / "rejections.yaml").read_text(encoding="utf-8"))
+    widened = {
+        (entry["technique"], artifact)
+        for entry in ledger["decided"]
+        if entry["verdict"] == "mapping_narrow"
+        for artifact in entry["artifacts"]
+    }
+
+    for technique, mapping in mapping_loader.load_all(MAPPINGS, "windows", catalog).items():
+        for artifact in mapping.corroborates:
+            assert (technique, artifact) in widened, (
+                f"{technique} 이 {artifact} 로 넓혀져 있는데 "
+                f"benchmark/rejections.yaml 에 mapping_narrow 판단이 없다"
+            )

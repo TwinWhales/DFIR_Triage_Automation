@@ -70,3 +70,36 @@ decided:
       실행된 파일은 Sysmon EID 1 의 Image 가 이동식 드라이브를 가리키므로
       직접 증거에 가깝고, 그렇다면 corroborates 가 아니라 artifacts 에
       들어가야 한다. 실물로 확인한 뒤의 일이다(work.md 0번·10번).
+
+  - technique: T1204.002
+    artifacts: [evtx:Defender]
+    verdict: mapping_narrow
+    decided_on: "2026-09-07"
+    case: K-TEST-518-VERIFY
+    note: |
+      **정탐 기각이다.** 05단계가 Windows Defender 의 탐지·격리 기록을
+      정확히 골라 왔는데, T1204.002 매핑에 evtx:Defender 가 없어서 06이
+      기각했다.
+
+        EVTX-DEF#489  EID 1116  2026-09-03T02:35:03Z  탐지
+        EVTX-DEF#490  EID 1116  2026-09-03T02:35:06Z  탐지
+        EVTX-DEF#498  EID 1117  2026-09-03T02:35:18Z  격리
+        EVTX-DEF#499  EID 1117  2026-09-03T02:35:18Z  격리
+
+        Threat Name    Trojan:Win32/PossibleMalware.A
+        Severity       높음
+        Path           C:\Users\test\Desktop\ksj_080-[kisec123]518\518.exe
+        Process Name   C:\Windows\explorer.exe
+        Detection User DESKTOP-2ODVJV1\test
+
+      **격리 시각이 같은 파일의 $UsnJrnl `deleted`(02:35:18)와 초 단위로
+      맞는다.** 안티바이러스가 그 파일을 악성으로 판정하고 지운 기록은
+      "사용자가 악성 파일을 실행했다"의 근거가 맞다 — 실행 흔적을 찾는
+      자리가 아니라 이미 찾은 것을 뒷받침하는 자리다.
+
+      artifacts 가 아니라 corroborates 로 넣었다. 저쪽은 03단계가 "어디를
+      수집할까"로 읽는 축이라 넓히면 04 파싱 시간과 05 토큰 예산이 커진다.
+
+      이 조합이 나중에 다른 이유로 올라오면 — 예컨대 Defender 가 정상
+      파일을 오탐한 기록을 모델이 T1204.002 로 읽으면 — 그때는 이 판단이
+      맞지 않는다. 이 note 를 읽고 지우면 된다.
