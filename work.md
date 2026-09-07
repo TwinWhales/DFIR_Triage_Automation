@@ -18,8 +18,9 @@
 |---|---|---|
 | 1 | **8번 — 벤치마크 정답 데이터** (팀원에게 넘긴다) | 없다. 막아 둘 것 둘은 2026-09-02 에 닫혔다 |
 | 2 | **12-2 — claims 가 문장을 다 덮는가** | 없다. 8번과 같은 트랙이다 |
-| 3 | 0번 — 키오스크 축 다섯 채널 | Assigned Access 를 켠 스냅샷 |
-| 4 | 1번 — 버전 축에 남은 다섯 줄 | 빌드가 다른 이미지 (제안서 1-2 의 우선순위) |
+| 3 | **16번 — attention 시그널 선언형 분리** | `work-GPT.md` 10단계(SVCStealer 실측 관통) 완료 후 |
+| 4 | 0번 — 키오스크 축 다섯 채널 | Assigned Access 를 켠 스냅샷 |
+| 5 | 1번 — 버전 축에 남은 다섯 줄 | 빌드가 다른 이미지 (제안서 1-2 의 우선순위) |
 | 이후 | 10번 근거 모으기 · 3번 Wazuh · 5번 GUI 대조 · 4번 설계 판단 | |
 
 **12-1 이 닫혀서 순서가 바뀌었다** (2026-09-06). 문장이 증거 밖의 것을 말하는
@@ -250,6 +251,26 @@ EXPLORER.EXE 가 KIOSK 사용자 폴더에서 실행되어 …"(claims 는
 
 증상과 지금도 참인 것은 `docs/limitations.md` 의 "`--mode assemble` 에서
 환각률 0% 는 품질을 뜻하지 않습니다".
+
+## 16. attention 시그널 선언형 분리 — `mappings/_attention_signals.yaml`
+
+`src/stage05_interpret/attention.py` 에 하드코딩된 `if "netsh" in blob...` 관측
+조건들을 **선언형 설정 파일(`mappings/_attention_signals.yaml`)로 분리**한다.
+
+지금은 TDD 검증을 위해 파이썬 if 문으로 최소 구현되어 있다. 새 악성코드나
+시그널 추가 시 파이썬 코드를 건드려야 하고, `mappings/_flags.yaml` 처럼 일관된
+관리와 스키마 검증이 되지 않는다.
+
+**할 일:**
+1. `mappings/_attention_signals.yaml` 작성:
+   - 시그널 ID (`credential_export_option_observed` 등)
+   - 매칭 규칙 (`all_contain`, `any_contain`, 대상 필드)
+   - `must_review: true` 여부
+2. `attention.py` 가 하드코딩 if 대신 YAML 을 로드해 매칭하도록 리팩토링.
+3. `tests/test_attention.py` 및 `tests/test_svcstealer_benchmark.py` 회귀 통과 확인.
+4. 시그널이 과도하게 늘어날 경우를 대비한 보장 레인 상한/우선순위 가드 마련.
+
+**착수 조건:** 코덱스의 `work-GPT.md` 10단계(SVCStealer 실측 관통) 완료 후.
 
 ---
 
