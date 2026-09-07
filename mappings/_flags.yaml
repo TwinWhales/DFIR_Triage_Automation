@@ -43,6 +43,37 @@ flags:
       # MISMATCH_PAIRS 주석 참조 — 세 쌍을 다 보면 오탐 59%였다.
       handler: si_earlier_than_fn
 
+  log_cleared:
+    artifacts: [evtx:Security, evtx:System]
+    condition: 감사 로그 삭제(Security 1102) · 이벤트 로그 삭제(System 104)
+    note: |
+      T1070.001 이 요구한다. **흔적 인멸 중에서도 성질이 다르다** — 파일
+      삭제(T1070.004)나 타임스탬프 조작(T1070.006)은 지운 자리가 남지만,
+      로그를 지우면 **지웠다는 사실 자체가 유일하게 남는 흔적**이다. 그
+      한 건이 사라지면 그 구간에 무슨 일이 있었는지 말할 방법이 없다.
+
+      채널 둘이 서로 다른 삭제를 남긴다. Security 1102 는 보안 감사 로그를
+      지운 것이고, System 104 는 임의의 채널을 지운 것이다(어느 채널인지는
+      이벤트 안에 있다). 둘 다 보는 이유는 공격자가 어느 쪽을 지울지 모르기
+      때문이다.
+
+      **실물로 확인한 것은 1102 뿐이다** (`snapshotA` 의 `Security.evtx`
+      16,647건 중 1건, 2026-09-07). 104 는 같은 수집의 `System.evtx`
+      1,683건에 0건이라 **명세를 옮긴 값이다** —
+      `docs/limitations.md` 의 "매핑 — 검증되지 않은 채 채운 항목".
+
+      **이 플래그는 시간창 밖이어도 1순위다**(아래 `window_independent`).
+      로그를 언제 지웠는지는 공격자가 고르는 것이라, 사고 시간창 안에서
+      일어났으리라 가정할 근거가 없다.
+    rule:
+      when:
+        - artifact: evtx:Security
+          match: event_id
+          values: [1102]
+        - artifact: evtx:System
+          match: event_id
+          values: [104]
+
   deleted:
     artifacts: [$MFT, $UsnJrnl]
     condition: MFT 레코드 미할당 상태 / USN 사유에 file_delete
@@ -703,6 +734,8 @@ window_independent:
   - firewall_config_changed
   # ③ 흔적을 지우는 것
   - timestamp_mismatch
+  # 로그 삭제는 **지웠다는 사실 자체가 유일한 흔적**이라, 언제 지웠든 본다.
+  - log_cleared
 
 # 특권 그룹 판정 기준. privileged_group_add 의 handler 가 참조한다.
 # 이쪽은 예전부터 런타임에 읽던 값이라 이름만 추가하면 바로 반영된다.

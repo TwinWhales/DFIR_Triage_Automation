@@ -2659,3 +2659,60 @@ J='evidence/KAPE_Results/KIOSK_snapshotA_20260831T094536/C/$Extend/$J'
 스크립트를 두 번 돌리고 USN 집합을 비교하는 방식입니다. 페이지 정렬은
 `_as_dict` 를 감싸 `(offset, record_length)` 를 모으고 `offset // 4096` 과
 `(offset + length - 1) // 4096` 을 비교했습니다.
+
+---
+
+## 2026-09-07 · Security 1102 — 실물 한 건으로 `log_cleared` 를 대조했다
+
+`T1070.001`(Clear Windows Event Logs) 매핑과 `log_cleared` 플래그를 만들며
+잰 값입니다. 대상은 키오스크 KAPE 수집
+(`evidence/KAPE_Results/KIOSK_snapshotA_20260831T094536/C`) 입니다.
+
+### 있나 — 채널 둘을 전량 훑었다
+
+매핑의 `event_ids` 필터를 거치지 않고 파서를 직접 돌렸습니다. 필터를 거치면
+"없다" 와 "안 요청했다" 가 구별되지 않습니다.
+
+| 채널 | 총 레코드 | 찾는 ID | 결과 |
+|---|---:|---:|---:|
+| `Security.evtx` | 16,647 | 1102 | **1건** |
+| `System.evtx` | 1,683 | 104 | **0건** |
+
+### 그 한 건
+
+```
+ref        EVTX-SEC#2622
+timestamp  2026-08-26T06:59:10.5481530Z
+flags      ['log_cleared']
+channel    Security          computer  DESKTOP-RJRKJG1
+fields     Provider=Microsoft-Windows-Eventlog
+           SubjectUserName=kiosk
+           SubjectLogonId=0x000000000001920a
+```
+
+플래그가 붙고 `parsed_record` 스키마를 통과합니다.
+
+### **5분 12초 뒤에 계정이 생겼다**
+
+같은 수집의 `EVTX-SEC#2670` 이 `2026-08-26T07:04:23.141` 의
+`account_created`(`testuser`) 입니다. **로그를 지우고 5분 12초 뒤입니다.**
+
+이 둘은 **사고 시간창(`08-30~08-31`) 밖**입니다. `window_independent` 가
+없었다면 배분에서 후순위로 밀렸을 자리이고, 안티포렌식 플래그를 그 목록에
+넣은 판단이 실물로 뒷받침된 것이 이 한 쌍입니다.
+
+**둘을 잇는 것은 아직 아무도 하지 않습니다.** 05단계가 문장으로 이을 수는
+있지만 결정론적으로 엮는 장치는 없습니다(`work.md` 4번 "3대 상관분석").
+
+### 재현
+
+```bash
+# 매핑 필터를 거치지 않고 채널을 통째로 훑는다
+.venv/Scripts/python.exe -c "
+from src.stage04_parse.parsers.evtx import EvtxParser
+from src.stage04_parse.parsers.base import Scope
+p = EvtxParser(artifact='evtx:Security')
+with open(r'<수집>/C/Windows/System32/winevt/Logs/Security.evtx','rb') as fh:
+    print(sum(1 for r in p.parse(fh, Scope()) if r.get('event_id')==1102))
+"
+```

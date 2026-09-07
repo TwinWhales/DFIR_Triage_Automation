@@ -33,6 +33,7 @@
       "items": {
         "enum": [
           "timestamp_mismatch",
+          "log_cleared",
           "deleted",
           "zero_timestamp",
           "file_created",
