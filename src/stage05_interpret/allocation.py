@@ -678,6 +678,23 @@ def _rank(
         띠 0   창 밖이지만 window_independent 플래그를 든 것
         띠 1   그 밖의 창 밖 신호
 
+    ## 띠는 세 순위에 다 걸린다 (2026-09-07)
+
+    **처음에는 0순위에만 걸었는데 그것으로는 부족했다.** 1·2순위는
+    **앵커까지의 거리**로 줄을 세우는데, 앵커는 플래그가 붙은 레코드이지
+    사고와 관계있는 레코드가 아니다. 시끄러운 아티팩트가 하나 있으면
+    타임라인 전체에 앵커가 깔리고, 그러면 거리가 사실상 무작위가 되어
+    **창 밖이 창 안을 밀어낸다.**
+
+    실측(`K-TEST-518-VERIFY`, 2026-09-07): 신호가 337,650건 중 143,877건
+    (대부분 `$UsnJrnl`)이라 앵커가 143,261개였다. 프리패치 296건이 **전부
+    1순위**에 들어갔고, 자리 넷을 2026-05-28 의 창 밖 레코드가 가져갔다.
+    조사 대상인 `518.EXE` 의 창 안 실행 기록(`PF#1909267505`,
+    `2026-09-07T01:57:30Z`)은 앵커에서 0.031초 떨어져 있었는데 **121등**
+    이었다 — 앞의 120건이 그보다 더 가까웠을 뿐이다.
+
+    그래서 세 순위가 같은 띠 값을 쓴다. **거리는 띠 다음이다.**
+
     **버리지 않는다.** 후순위일 뿐이라 자리가 남으면 간다 — 시간창을 좁히는
     것과 다르다. 그리고 **전부 내리지도 않는다.** 공격자의 잠복과 사전
     작업이 창 밖에 남는다(이 케이스의 ``account_created`` 도 사고 5일 전이다).
@@ -701,19 +718,27 @@ def _rank(
     for index, record in enumerate(records):
         times = activity_times(record)
         ref = str(record.get("ref", ""))
+        flags = set(record.get("flags") or [])
+        # 창 밖인데 남을 이유가 없으면 자기 순위 안에서 뒤로 간다.
+        # **셋 다 같은 값을 쓴다** — 아래 "띠는 세 순위에 다 걸린다" 참조.
+        #
+        # ``keep_outside`` 면제는 실제로 0순위에서만 걸린다. 그 이름들은
+        # 전부 신호 플래그라(``mappings/_flags.yaml``) 그것을 든 레코드는
+        # 애초에 ``is_signal`` 을 통과해 0순위로 간다. 1·2순위에서 이 항은
+        # 항상 거짓이다. 그래도 식을 하나로 두는 이유는 **갈라 두면
+        # 언젠가 한쪽만 고쳐지기 때문**이다 — 0순위에만 띠를 걸었다가
+        # 1순위에서 물린 것이 바로 이 자리다.
+        band = int(OUTSIDE_WINDOW in flags and not (flags & keep_outside))
 
         if is_signal(record):
             moment = min(times) if times else NO_TIME
-            flags = set(record.get("flags") or [])
-            # 창 밖인데 남을 이유가 없으면 신호끼리의 경쟁에서 뒤로 간다.
-            band = int(OUTSIDE_WINDOW in flags and not (flags & keep_outside))
             entries.append(((0, band, moment, ref), moment, record))
             continue
 
         found = anchors.nearest(times, window_seconds)
         if found is not None:
             distance, moment = found
-            entries.append(((1, distance, moment, ref), moment, record))
+            entries.append(((1, band, distance, moment, ref), moment, record))
             continue
 
         if signal_source == "scope":
@@ -722,7 +747,9 @@ def _rank(
             # 없으면 파일에 있던 순서를 쓴다 — 근거가 아니라 재현성을 위한
             # 것이며, 6-6이 말하는 "임시"가 바로 이 자리다.
             moment = min(times) if times else NO_TIME
-            entries.append(((2, anchors.distance_to_any(times), index), moment, record))
+            entries.append(
+                ((2, band, anchors.distance_to_any(times), index), moment, record)
+            )
 
     entries.sort(key=lambda item: item[0])
     return entries

@@ -72,6 +72,8 @@ from src.stage05_interpret.llm_client import (  # noqa: E402
 )
 from src.stage05_interpret import allocation, assembly, record_filter  # noqa: E402
 from src.stage02_normalize.llm_client import DEFAULT_MODEL  # noqa: E402
+from src.stage03_select import mapping_loader  # noqa: E402
+from src.stage03_select import select as select_mod  # noqa: E402
 
 BAR = "─" * 74
 
@@ -129,9 +131,11 @@ PLAN: list[Plan] = [
     Plan(
         "stage03",
         "03 선별 — 볼 아티팩트 결정",
-        "기법마다 매핑이 있어 읽을 대상이 정해지는가",
+        "기법마다 매핑이 있어 읽을 대상이 정해지는가. --artifacts 를 줬다면 "
+        "그것이 기법 매핑과 무관하게 Tier 1 로 올라오는가",
         "selected ≥ 1. 매핑 없는 기법은 stderr에 '매핑 없음'으로 드러나야 하고 "
-        "조용히 사라지면 안 된다",
+        "조용히 사라지면 안 된다. --artifacts 로 지정한 것은 전부 selected 이거나 "
+        "(OS 미해당이면) excluded 에 사유와 함께 있어야 한다",
     ),
     Plan(
         "stage04",
@@ -392,11 +396,16 @@ class Runner:
                 "--raw 는 자연어 전용이고 알럿은 --input 으로 넣는다"
             )
         if self.args.artifacts:
-            # artifacts_available 은 02 프롬프트에만 실리는 힌트다(03·04를 막지 않는다).
-            # make_case 의 기본값은 레지스트리를 빼므로 필요하면 여기서 채운다.
+            # 두 군데에 쓰인다. artifacts_available 은 02 프롬프트에 실리는
+            # 힌트이고(make_case 의 기본값은 레지스트리를 빼므로 여기서 채운다),
+            # 같은 목록이 03단계에 --force-artifacts 로 넘어가 Tier 1 을 강제한다.
+            # **힌트만으로는 부족했다** — 2026-09-07 `518_Test_0907` 에서 prefetch 를
+            # 지정했는데 02가 T1059.003 을 고르는 바람에 03이 그것을 유예했고,
+            # Tier 2 루프백이 없어 영구 미수집이 됐다.
             document["evidence"]["artifacts_available"] = self.args.artifacts
             io.write_json(self.case_dir / "01_input.json", document)
-            print(f"  artifacts_available 지정: {', '.join(self.args.artifacts)}")
+            forced = "" if self.args.no_force_artifacts else " (03단계 Tier 1 강제)"
+            print(f"  artifacts_available 지정: {', '.join(self.args.artifacts)}{forced}")
         if self.parsed_dir.exists():
             raise StepFailed(f"{self.parsed_dir} 가 벌써 있다 — 이번 실행이 판 것이 아니다")
 
@@ -454,14 +463,15 @@ class Runner:
         )
 
     def do_stage03(self, result: Result) -> str:
-        code, _, err = self.run_cmd(
-            self.py(
-                "-m", "src.stage03_select.select",
-                "--in", str(self.case_dir / "02_scenario.json"),
-                "--out", str(self.case_dir / "03_selection.json"),
-                "--mappings", "mappings/",
-            )
+        cmd = self.py(
+            "-m", "src.stage03_select.select",
+            "--in", str(self.case_dir / "02_scenario.json"),
+            "--out", str(self.case_dir / "03_selection.json"),
+            "--mappings", "mappings/",
         )
+        if self.args.artifacts and not self.args.no_force_artifacts:
+            cmd += ["--force-artifacts", *self.args.artifacts]
+        code, _, err = self.run_cmd(cmd)
         if code != 0:
             raise StepFailed(
                 f"03 실패 (코드 {code}). 선별된 아티팩트가 없으면 매핑 결손이다 — "
@@ -478,6 +488,27 @@ class Runner:
             print(f"  참고: 매핑 없는 기법 {', '.join(unmapped)} — 판정에는 안 넣는다(측정치)")
         result.measures["unmapped_techniques"] = unmapped
         result.measures["selected_artifacts"] = sorted({s["artifact"] for s in selection["selected"]})
+
+        if self.args.artifacts and not self.args.no_force_artifacts:
+            # **판정이다.** 사람이 "이건 꼭 봐라"고 적어 준 것이 선별에서
+            # 빠지면 뒤 단계는 그것을 되살릴 자리가 없다(Tier 2 루프백 없음).
+            # OS 때문에 못 읽는 것은 excluded 가 사유와 함께 받으므로 뺀다.
+            catalog = mapping_loader.load_catalog("mappings/")
+            forced = select_mod.resolve_force_names(self.args.artifacts, catalog)
+            excluded_names = {e["artifact"] for e in selection["excluded"]}
+            missing = [
+                name
+                for name in forced
+                if name not in result.measures["selected_artifacts"]
+                and name not in excluded_names
+            ]
+            if missing:
+                raise StepFailed(
+                    f"--artifacts 로 지정한 {', '.join(missing)} 가 selected 에도 "
+                    "excluded 에도 없다 — 강제 선별이 일하지 않았다"
+                )
+            result.measures["forced_artifacts"] = forced
+
         return (
             f"selected {stats['selected_count']} / deferred {stats['deferred_count']} "
             f"/ excluded {stats['excluded_count']} "
@@ -966,7 +997,19 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         nargs="+",
         default=None,
         metavar="NAME",
-        help="artifacts_available 을 덮어쓴다 (02 프롬프트 힌트). 예: --artifacts '$MFT' evtx registry",
+        help=(
+            "이번 실행에서 반드시 볼 아티팩트. 01_input 의 artifacts_available 을 덮고"
+            "(02 프롬프트 힌트), **03단계에 --force-artifacts 로 그대로 넘어가** 기법 "
+            "매핑과 무관하게 Tier 1 로 올라간다. 예: --artifacts '$MFT' evtx registry"
+        ),
+    )
+    parser.add_argument(
+        "--no-force-artifacts",
+        action="store_true",
+        help=(
+            "--artifacts 를 02 프롬프트 힌트로만 쓰고 03단계에 강제하지 않는다. "
+            "예전 동작이다 — 강제 선별이 결과를 얼마나 바꾸는지 재려고 남겨 둔다"
+        ),
     )
     parser.add_argument("--model", default=DEFAULT_MODEL, help="02 정규화 모델. 기본 %(default)s")
     parser.add_argument(

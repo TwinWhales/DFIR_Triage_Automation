@@ -276,6 +276,54 @@ def test_the_band_orders_within_an_artifact_not_across_them():
     assert {r["ref"] for r in chosen} == {"USN#1", "EVTX-SEC#2"}
 
 
+def test_a_scope_record_inside_the_window_outranks_one_outside_it():
+    """**앵커가 사고와 무관한 곳에 몰려 있으면 거리만으로는 창 밖이 이긴다.**
+
+    2026-09-07 `K-TEST-518-VERIFY` 의 실제 실패다. 프리패치 자리 넷을
+    2026-05-28 의 창 밖 레코드가 다 가져갔고, 조사 대상인 `518.EXE` 의
+    창 안 실행 기록은 한 자리도 받지 못했다. 03단계가 정확히 골라 온
+    것을 05단계가 떨어뜨린 것이라, 선별의 실패로 보이지도 않는다.
+
+    `signal_source: scope` 라 둘 다 플래그가 없고, 둘 다 앵커에서 멀어
+    2순위로 간다. 거기서 갈리는 것이 이 띠다.
+    """
+    # 둘 다 앵커에서 300초(DEFAULT_WINDOW_SECONDS) 넘게 떨어져 2순위로
+    # 간다. 그리고 **창 밖인 쪽이 앵커에 더 가깝다** — 띠가 없으면 거리만
+    # 보고 이쪽이 이긴다.
+    outside = dict(_reg(1, days=0, seconds=4 * 3600), flags=["outside_time_range"])
+    inside = _reg(2, days=0, seconds=10 * 3600)
+    anchor = _evtx(9, seconds=0)
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [outside, inside, anchor], signal_sources=SCOPE_SOURCES, limit=2
+    )
+
+    assert [r["ref"] for r in chosen if r["artifact"] == "registry:SYSTEM"] == ["REG-SYS#2"]
+
+
+def test_the_band_reaches_the_neighbours_too_not_just_the_signals():
+    """**띠를 0순위에만 걸면 부족하다.** 1순위(앵커 주변)에도 걸어야 한다.
+
+    `K-TEST-518-VERIFY` 에서 실제로 물린 자리다. 신호가 337,650건 중
+    143,877건(대부분 `$UsnJrnl`)이라 앵커가 143,261개였고, 타임라인
+    전체에 깔린 앵커 때문에 프리패치 296건이 **전부 1순위**로 들어갔다.
+    거기서는 앵커까지의 거리로 줄을 세우는데 그 거리가 사실상 무작위라,
+    창 밖 레코드가 자리를 다 가져갔다.
+
+    아래 둘은 **둘 다 앵커에서 300초 안**이라 1순위다. 창 밖인 쪽이
+    앵커에 더 가까우므로, 띠가 1순위에 안 걸리면 그쪽이 이긴다.
+    """
+    anchor = _evtx(9, seconds=0)
+    outside = dict(_reg(1, days=0, seconds=10), flags=["outside_time_range"])
+    inside = _reg(2, days=0, seconds=200)
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [outside, inside, anchor], signal_sources=SCOPE_SOURCES, limit=2
+    )
+
+    assert [r["ref"] for r in chosen if r["artifact"] == "registry:SYSTEM"] == ["REG-SYS#2"]
+
+
 def test_an_out_of_window_signal_is_deferred_not_dropped():
     """**버리는 것이 아니라 후순위다.** 자리가 남으면 간다 — 창을 좁히는
     것과 다르다."""

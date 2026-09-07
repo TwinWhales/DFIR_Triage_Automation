@@ -42,8 +42,12 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 .venv/Scripts/python.exe benchmark/validator_check.py
 
 # 실물 관통 점검 — 단계마다 판정하고 시간을 잰다 (목업 없음, 판정 실패면 1)
+# --artifacts 는 힌트가 아니라 강제다 — 적은 것은 기법 매핑과 무관하게
+# 03단계에서 Tier 1 로 올라가고, 안 올라오면 판정에 실패한다.
+# 'evtx' 처럼 접두어만 주면 evtx:* 전부가 열린다 (그만큼 04가 오래 걸린다).
 .venv/Scripts/python.exe tools/live_check.py --case-id <케이스> \
-  --evidence <이미지> --volume 1 --model <올라마태그> --raw "<상황 서술>"
+  --evidence <이미지> --volume 1 --model <올라마태그> --raw "<상황 서술>" \
+  --artifacts '$MFT' prefetch
 
 # 그렇게 쌓인 실행 기록을 한 표로 (환각률·소요 시간)
 .venv/Scripts/python.exe benchmark/collect.py
@@ -181,6 +185,10 @@ Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
   **이것은 할 일이 아니라 닫힌 판단이다** — 02 에 가드를 두면 검사기가 아니라
   분류기를 다시 만드는 것이라, 완화를 뒤(`work.md` 10번)에 맡겼다. 지금도
   참인 내용은 `docs/limitations.md` 의 "02단계가 축을 놓치면" 절.
+  **가드가 하나 생겼지만 이 판단을 뒤집지는 않는다**(2026-09-07) —
+  `grounding.MECHANISM_CUES` 에 적힌 기법에 한해 "이름이 도구를 지목하는데
+  서술에 그 도구가 없는가"만 본다. 어느 기법이 맞는지는 여전히 판정하지
+  않으므로 **오배정은 그대로**다.
 - **문장이 claims 를 뒷받침하는지는 절반만 본다.** 증거 어디에도 없는
   파일명·경로·수를 말하면 06 이 `unverifiable` 로 강등한다(2026-09-06에
   닫혔다). 하지만 **레코드에는 있는데 claims 에는 없는** 것을 말한 문장은

@@ -37,7 +37,7 @@ from ..common import attack
 from ..common import errors as errlog
 from ..common import io, llm, schema
 from ..common.llm import DEFAULT_NUM_CTX, DEFAULT_TIMEOUT
-from . import alert_adapter, coverage
+from . import alert_adapter, coverage, grounding, timeband
 from .llm_client import (
     DEFAULT_MODEL,
     DEFAULT_NUM_PREDICT,
@@ -49,7 +49,9 @@ __all__ = [
     "STAGE",
     "build_scenario",
     "check_attack_ids",
+    "correct_time_range",
     "dump_raw",
+    "enforce_grounding",
     "normalize",
     "record_coverage",
     "main",
@@ -169,6 +171,83 @@ def record_coverage(
     return scenario
 
 
+def enforce_grounding(
+    scenario: dict[str, Any], raw: str, log: errlog.ErrorLog
+) -> dict[str, Any]:
+    """입력에 근거가 없는 세부 기법을 떨구고, 입력이 댄 파일명을 되돌려 놓는다.
+
+    `record_coverage` **앞에** 부른다. 여기서 기법이 빠지면 그 기법이 인용
+    했던 구간은 아무 데도 안 남으므로, 뒤이어 도는 커버리지 검사가 그것을
+    ``unmapped_text`` 로 집어 준다 — 놓친 축이 07단계 보고서에 보인다.
+
+    **떨구다가 기법이 하나도 안 남으면 `SchemaViolation` 을 낸다.** 빈
+    배열은 스키마 위반이고(``techniques.minItems: 1``), 그러면 호출부가
+    "이 기법은 근거가 없다"는 피드백과 함께 다시 물어본다. 이 자리는
+    커버리지 검사와 다르게 재시도가 값을 한다 — 지적이 기법 하나로
+    구체적이라 소형 모델도 대개 다른 기법을 낸다.
+    """
+    added = grounding.restore_named_processes(scenario, raw)
+    if added:
+        # 지어낸 것이 아니라 **원문에 있는데 모델이 흘린 것**이다.
+        # ``entities`` 가 03단계 scope 와 05단계 후보 선정에 함께 쓰이므로,
+        # 조사 대상의 이름이 여기 없으면 그 파일은 아무도 찾지 않는다.
+        log.record(
+            STAGE,
+            "ungrounded_entity",
+            {"field": "entities.processes", "restored": added},
+            action="record",
+        )
+
+    ungrounded = grounding.ungrounded_techniques(scenario, raw)
+    if not ungrounded:
+        return scenario
+
+    dropped = {entry["technique"] for entry in ungrounded}
+    kept = [t for t in scenario["techniques"] if t["id"] not in dropped]
+    log.record(
+        STAGE,
+        "ungrounded_technique",
+        {"field": "techniques[].id", "dropped": ungrounded},
+        action="record",
+    )
+
+    if not kept:
+        raise schema.SchemaViolation(
+            field="techniques",
+            value=sorted(dropped),
+            message=(
+                f"입력 서술에 근거가 없는 기법만 골랐다 ({', '.join(sorted(dropped))}). "
+                "이 기법들은 이름 붙은 도구(cmd·PowerShell·rundll32 등)가 서술에 "
+                "나와야 고를 수 있다. 서술이 말한 것만으로 판단하십시오"
+            ),
+        )
+
+    scenario["techniques"] = kept
+    return scenario
+
+
+def correct_time_range(
+    scenario: dict[str, Any], raw: str, log: errlog.ErrorLog
+) -> dict[str, Any]:
+    """한국어 서술의 벽시계 시각을 UTC 범위가 덮게 만든다.
+
+    **옮기지 않고 넓힌다.** 이유는 `timeband` 모듈에 있다 — 모델이 변환을
+    했는지 안 했는지 알 수 없으므로 두 읽기를 다 덮는다. 이미 덮고 있으면
+    아무 일도 일어나지 않는다.
+    """
+    adjustment = timeband.widen_for_local_time(scenario["time_range"], raw)
+    if adjustment is None:
+        return scenario
+
+    basis = str(scenario["time_range"].get("basis") or "").strip()
+    sentence = adjustment.sentence()
+    # basis 는 "범위가 틀렸을 때 원인이 드러난다"는 자리다(스키마). 우리가
+    # 넓힌 것도 그 원인의 일부이므로 모델의 근거를 지우지 않고 잇는다.
+    scenario["time_range"]["basis"] = f"{basis} {sentence}".strip()
+    log.record(STAGE, "timezone_adjusted", adjustment.as_detail(), action="record")
+    return scenario
+
+
 def normalize(
     input_doc: dict[str, Any],
     client: NormalizeClient,
@@ -191,7 +270,13 @@ def normalize(
             # **받아들이기로 한 응답에만** 센다. 검증 전에 부르면 재시도로
             # 버려질 응답의 커버리지가 errors.jsonl 에 남아, 나중에 "얼마나
             # 자주 놓치는가"를 셀 때 분모가 실행 수가 아니라 시도 수가 된다.
+            #
+            # **근거 검사가 먼저다.** 여기서 기법이 빠지면 그 기법이 인용
+            # 했던 구간을 뒤이은 커버리지 검사가 ``unmapped_text`` 로 집는다.
+            # 순서를 뒤집으면 떨어진 축이 아무 데도 안 남는다.
+            scenario = enforce_grounding(scenario, raw, log)
             scenario = record_coverage(scenario, raw, log)
+            scenario = correct_time_range(scenario, raw, log)
             # 우리가 넣은 값도 같은 관문을 지난다.
             schema.validate(scenario, "scenario")
             return scenario
