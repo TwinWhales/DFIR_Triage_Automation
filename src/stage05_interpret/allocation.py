@@ -93,6 +93,8 @@ __all__ = [
     "priorities_from_selection",
     "allocate_seats",
     "allocate_records",
+    "entity_names",
+    "mentions_entity",
 ]
 
 #: 글자 하나가 몇 토큰인가 — 의 역수. **이제 실측값이다** (2026-09-03).
@@ -527,11 +529,67 @@ def allocate_seats(
     return seats
 
 
+#: ``entities`` 중 레코드 매칭에 쓰는 축.
+#:
+#: **``processes`` 하나뿐이다.** ``paths`` 를 넣지 않는 이유가 있다 — 그
+#: 첫 항목은 03단계가 ``web_root`` 로 쓰는 **디렉터리** 문자열이라
+#: (`scope_resolver.ENTITY_VARIABLES`) 걸면 그 아래 전부가 매칭된다.
+#: ``hosts`` 는 한 실행이 한 볼륨이라 전 레코드가 같은 호스트다.
+MATCH_ENTITY_AXES = ("processes",)
+
+#: 엔티티 이름을 찾을 필드. 값이 **문자열인 것만** 본다.
+#:
+#: 목록형 필드를 제외하는 이유는 프리패치의 ``fields.loaded_files`` 다 —
+#: 적재된 DLL 목록이라, 거기까지 보면 흔한 DLL 이름 하나로 프리패치
+#: 전량이 매칭된다. 반대로 ``fields`` 의 스칼라 값은 evtx 4688 의
+#: ``NewProcessName`` 처럼 **누가 그것을 실행했는지**를 담고 있어 넣는다.
+_MATCH_TOP_FIELDS = ("name", "path")
+
+
+def entity_names(entities: "dict[str, Any] | None") -> tuple[str, ...]:
+    """시나리오가 이름을 댄 것들. 소문자로, 중복 없이.
+
+    **두 글자 이하는 버린다.** 한 글자짜리 이름이 들어오면 거의 모든
+    레코드가 매칭되어 배분이 무의미해진다.
+    """
+    found: list[str] = []
+    for axis in MATCH_ENTITY_AXES:
+        for value in (entities or {}).get(axis) or []:
+            name = str(value).strip().lower()
+            if len(name) > 2 and name not in found:
+                found.append(name)
+    return tuple(found)
+
+
+def mentions_entity(record: dict[str, Any], names: "tuple[str, ...]") -> bool:
+    r"""이 레코드가 시나리오가 댄 이름을 말하고 있는가.
+
+    **이름 전체로 본다.** 조각으로 보면 무관한 것이 쓸려 온다 — 실측
+    (`K-TEST-518-VERIFY`, 2026-09-07): ``518`` 로 보면 `$UsnJrnl` 185건이
+    걸리는데 대부분 ``mat-debug-5188.log`` 였고, ``518.exe`` 로 보면
+    21건이었다. 전자는 자리를 무관한 파일이 다 먹는다.
+
+    경로 안에 들어 있어도 매칭이다 —
+    ``C:\Users\test\Desktop\...\518.exe`` 는 그 파일의 레코드가 맞다.
+    """
+    if not names:
+        return False
+    haystacks = [str(record.get(key, "")) for key in _MATCH_TOP_FIELDS]
+    haystacks += [
+        str(value)
+        for value in (record.get("fields") or {}).values()
+        if isinstance(value, str)
+    ]
+    blob = " ".join(haystacks).lower()
+    return any(name in blob for name in names)
+
+
 def allocate_records(
     records: Iterable[dict[str, Any]],
     *,
     priorities: dict[str, int] | None = None,
     signal_sources: dict[str, str] | None = None,
+    entities: "dict[str, Any] | None" = None,
     limit: int = DEFAULT_LIMIT,
     window_seconds: float = DEFAULT_WINDOW_SECONDS,
     char_budget: int | None = None,
@@ -542,6 +600,10 @@ def allocate_records(
     ``priorities``가 비면 모든 아티팩트가 중립(``DEFAULT_PRIORITY``)이다.
     선별 결과 없이도 아티팩트별 배분은 그대로 작동한다 — 시나리오 반영만
     빠진다.
+
+    ``entities``는 02단계 시나리오의 것이다. 여기 이름이 있는 레코드는
+    아티팩트 안에서 **맨 앞으로 간다**(`_rank` 의 "엔티티 매칭이 맨
+    바깥이다" 참조). 주지 않으면 예전과 똑같이 돈다.
 
     ``char_budget``을 주면 **레코드 전체가 그 글자 수 안에 들어올 때까지
     ``limit``을 낮춰 다시 배분한다.** 자릿수만으로는 창을 넘는지 알 수
@@ -554,6 +616,7 @@ def allocate_records(
     """
     priorities = priorities or {}
     signal_sources = signal_sources or {}
+    names = entity_names(entities)
 
     by_artifact: dict[str, list[dict[str, Any]]] = {}
     for record in records:
@@ -581,6 +644,7 @@ def allocate_records(
             anchor_index,
             window_seconds,
             signal_sources.get(artifact, DEFAULT_SIGNAL_SOURCE),
+            names,
         )
         for artifact, artifact_records in by_artifact.items()
     }
@@ -652,8 +716,29 @@ def _rank(
     anchors: "AnchorIndex",
     window_seconds: float,
     signal_source: str,
+    entity_names: "tuple[str, ...]" = (),
 ) -> list[tuple[tuple[Any, ...], datetime, dict[str, Any]]]:
     """한 아티팩트 안에서 전달 순서를 매긴다. 앞에서부터 쿼터만큼 나간다.
+
+    ## 엔티티 매칭이 맨 바깥이다 (2026-09-07)
+
+    **시나리오가 이름을 댄 파일의 레코드가 무조건 먼저 간다.** 아래 세
+    순위보다도 앞이다.
+
+    왜 순위 안이 아니라 밖인가. 실측(`K-TEST-518-VERIFY`)에서 조사 대상
+    ``518.exe`` 를 이름에 가진 레코드 23건 중 **8건이 플래그가 하나도
+    없었다** — 프리패치의 실행 기록(`PF#1909267505`, run_count 3)이
+    그중 하나다. 순위 안에 넣으면 이 8건은 0순위 신호 수만 건에게 져서
+    영영 못 온다. 실제로 그랬다.
+
+    **입력이 말한 것만 쓴다.** 여기 오는 이름은 02단계 ``entities`` 이고,
+    그것은 입력 원문에 글자 그대로 있는 값만 남는다
+    (`coverage.ungrounded_entities`·`grounding.restore_named_processes`).
+    모델이 지어낸 이름으로 배분이 기울지는 않는다.
+
+    **대신 이 배분은 사람의 심증 쪽으로 기운다.** "무엇을 찾는지 모르는
+    채로 고른다"는 성질이 여기서 깨지므로, 재현율 수치를 인용할 때는
+    실행 조건으로 함께 적어야 한다(`benchmark/README.md`).
 
     순위는 셋으로 나뉜다.
 
@@ -729,16 +814,18 @@ def _rank(
         # 언젠가 한쪽만 고쳐지기 때문**이다 — 0순위에만 띠를 걸었다가
         # 1순위에서 물린 것이 바로 이 자리다.
         band = int(OUTSIDE_WINDOW in flags and not (flags & keep_outside))
+        # 0이 먼저다. 시나리오가 이름을 댄 레코드가 순위·띠·거리보다 앞선다.
+        named = 0 if mentions_entity(record, entity_names) else 1
 
         if is_signal(record):
             moment = min(times) if times else NO_TIME
-            entries.append(((0, band, moment, ref), moment, record))
+            entries.append(((named, 0, band, moment, ref), moment, record))
             continue
 
         found = anchors.nearest(times, window_seconds)
         if found is not None:
             distance, moment = found
-            entries.append(((1, band, distance, moment, ref), moment, record))
+            entries.append(((named, 1, band, distance, moment, ref), moment, record))
             continue
 
         if signal_source == "scope":
@@ -748,7 +835,7 @@ def _rank(
             # 것이며, 6-6이 말하는 "임시"가 바로 이 자리다.
             moment = min(times) if times else NO_TIME
             entries.append(
-                ((2, band, anchors.distance_to_any(times), index), moment, record)
+                ((named, 2, band, anchors.distance_to_any(times), index), moment, record)
             )
 
     entries.sort(key=lambda item: item[0])
