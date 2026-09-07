@@ -1023,7 +1023,7 @@ Stage 4에 `T1078`(상위)을 쓰는데 우리에겐 `T1078.003`(하위)도 있�
 | T1547.004 | registry:SOFTWARE (Winlogon) | 0/5 | **5/5** (`signal_source: scope`) |
 | T1112 | registry:SOFTWARE·SYSTEM | 0/6 | **6/6** (`signal_source: scope`) |
 | T1547.001 | registry:Amcache | 0/5 | **5/5** (`signal_source: scope`) |
-| T1070.001 | evtx:Security (1102) · evtx:System (104) | 5/5 | **5/5** (`log_cleared` 신설, 2026-09-07) |
+| T1070.001 | evtx:Security (1102) · evtx:System (104) | 5/5 | **5/5** (`log_cleared` 신설, 2026-09-07). **이 줄만 합성이 아니라 실물이다** — 실제 1건이 03→04→05 를 관통했다(`docs/artifact-notes.md`) |
 
 **레지스트리 쪽 플래그가 0인 것은 그대로입니다.** 달라진 것은 그것이
 탈락 사유가 아니게 된 점입니다 — 05단계 배분이 아티팩트별로 자리를
