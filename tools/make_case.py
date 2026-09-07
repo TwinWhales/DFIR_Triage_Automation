@@ -25,6 +25,10 @@
     python tools/make_case.py --case-id C-001 --evidence /mnt/evidence/WEB01 \\
         --input     benchmark/datasets/C-001-webshell/input.json \\
         --seed-parsed benchmark/fixtures/C-001-webshell/04_parsed
+
+    # alerts/ 에 들어온 Wazuh 알럿 하나로 케이스 생성
+    python tools/make_case.py --case-id C-004 --evidence /mnt/evidence/WEB04 \
+        --alert alerts/wazuh-alert.json
 """
 
 from __future__ import annotations
@@ -57,6 +61,26 @@ def build_input(case_id: str, raw: str, evidence: str, os_hint: str) -> dict:
     }
 
 
+def build_alert_input(case_id: str, alert_path: str, evidence: str, os_hint: str) -> dict:
+    """Wazuh JSON 알럿으로 ``01_input.json`` 본문을 만든다."""
+    alert = io.read_json(alert_path)
+    if not isinstance(alert, dict):
+        raise ValueError("--alert 파일의 최상위 값은 JSON 객체여야 합니다")
+    return {
+        "case_id": case_id,
+        "stage": "01_input",
+        "schema_version": io.SCHEMA_VERSION,
+        "generated_at": io.utc_now(),
+        "source_type": "edr_alert",
+        "raw": alert,
+        "evidence": {
+            "root": evidence,
+            "os_hint": os_hint,
+            "artifacts_available": ["$MFT", "$UsnJrnl", "evtx"],
+        },
+    }
+
+
 def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python tools/make_case.py", description="신규 케이스 디렉터리를 만든다."
@@ -74,6 +98,11 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--cases-dir", default="cases", help="기본 %(default)s")
     parser.add_argument("--raw", default=None, help="자연어 서술")
     parser.add_argument("--input", default=None, help="기존 01_input.json을 복사")
+    parser.add_argument(
+        "--alert",
+        default=None,
+        help="alerts/ 에 저장된 Wazuh JSON 알럿 하나",
+    )
     parser.add_argument("--os-hint", default="windows_server_2019")
     parser.add_argument(
         "--seed-parsed",
@@ -84,8 +113,9 @@ def main(argv: "list[str] | None" = None) -> int:
     args = parser.parse_args(argv)
     io.configure_console()
 
-    if bool(args.raw) == bool(args.input):
-        parser.error("--raw 또는 --input 중 하나만 지정하십시오")
+    selected_inputs = [value is not None for value in (args.raw, args.input, args.alert)]
+    if sum(selected_inputs) != 1:
+        parser.error("--raw, --input, --alert 중 하나만 지정하십시오")
 
     case_dir = Path(args.cases_dir) / args.case_id
     input_path = case_dir / "01_input.json"
@@ -99,6 +129,12 @@ def main(argv: "list[str] | None" = None) -> int:
         document = io.read_json(args.input)
         document["case_id"] = args.case_id
         document.setdefault("evidence", {})["root"] = args.evidence
+    elif args.alert:
+        try:
+            document = build_alert_input(args.case_id, args.alert, args.evidence, args.os_hint)
+        except (OSError, ValueError) as error:
+            print(f"알럿을 읽을 수 없습니다: {error}", file=sys.stderr)
+            return 1
     else:
         document = build_input(args.case_id, args.raw, args.evidence, args.os_hint)
 

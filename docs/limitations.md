@@ -3091,3 +3091,20 @@ Manager, Amcache 실행 이력 키로 기본 범위를 좁힙니다. 정확한
 **남은 것은 반대 방향입니다** — 입력이 **진짜로 경로를 말하는** 경우에 이
 검사가 통과시키는지 아직 못 쟀습니다(통과시켜야 맞습니다). 실측에 쓴 두
 입력이 모두 경로를 언급하지 않았습니다.
+
+
+---
+
+## Wazuh 알럿 연동의 남은 한계 (2026-09-07)
+
+Wazuh JSON 알럿 파일 하나를 받아 `01_input.json`을 만들고 02단계에서 평탄화(`flatten_wazuh`)하는 배선은 구현되었습니다(`feat/wazuh-alert-intake`). 하지만 자동화 체계 완성까지 아래 세 가지 한계가 남아 있습니다.
+
+### ① Wazuh Active-Response 자동 수집·실행 래퍼 부재
+현재는 Wazuh가 알럿을 파일(`alerts/<파일>.json`)로 떨어뜨린 뒤 분석가가 수동으로 `tools/make_case.py --alert`를 실행해야 합니다. Wazuh 매니저/에이전트의 Active-Response 훅에서 알럿을 전달받아 KAPE/증거 수집 도구를 구동하고 파이프라인을 비동기로 기동하는 통합 래퍼(스크립트)는 아직 구현되지 않았습니다.
+
+### ② Linux 환경 알럿(Auditd / Syslog) 평탄화 미지원
+`alert_adapter.flatten_wazuh()`는 현재 Windows 환경의 Sysmon/이벤트 로그 구조(`data.win.eventdata.image`, `parentImage`, `commandLine`)를 기준으로 프로세스 정보를 추출합니다. Linux Auditd 기반 Wazuh 알럿(`data.audit.*`, `data.command` 등)의 프로세스 및 실행 인자 평탄화는 아직 지원하지 않으며, 이 경우 프로세스 엔티티가 누락될 수 있습니다.
+
+### ③ 라이브 호스트 직접 수집(`\\.\C:`) 미지원
+파이프라인의 증거 접근 계층(`src/stage04_parse/evidence.py`)은 마운트된 디렉터리나 이미지 파일 경로만 입력으로 받습니다. Wazuh 알럿이 발생한 라이브 시스템에서 파이프라인이 볼륨 장치를 직접 열어 실시간 트리아지를 수행할 수 없으므로, KAPE 등으로 추출된 볼륨 덤프 폴더(`--evidence`)가 반드시 선행되어야 합니다.
+

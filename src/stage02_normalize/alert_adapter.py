@@ -17,7 +17,13 @@ from typing import Any
 
 from ..common import attack
 
-__all__ = ["AlertAdapterError", "convert", "SEVERITY_CONFIDENCE", "DEFAULT_WINDOW_DAYS"]
+__all__ = [
+    "AlertAdapterError",
+    "convert",
+    "flatten_wazuh",
+    "SEVERITY_CONFIDENCE",
+    "DEFAULT_WINDOW_DAYS",
+]
 
 
 class AlertAdapterError(ValueError):
@@ -42,10 +48,63 @@ DEFAULT_WINDOW_DAYS = 2
 LOOKBACK_DAYS = 3
 
 
-def convert(raw: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
-    """알럿 하나를 시나리오 본문으로 옮긴다."""
+def flatten_wazuh(raw: dict[str, Any]) -> dict[str, Any]:
+    """Wazuh alert를 기존 alert_adapter 입력 계약으로 평탄화한다."""
     if not isinstance(raw, dict):
         raise AlertAdapterError(f"알럿 본문이 객체가 아님: {type(raw).__name__}")
+
+    rule = raw.get("rule")
+    if not isinstance(rule, dict):
+        return raw
+
+    mitre = rule.get("mitre") or {}
+    if isinstance(mitre, dict):
+        technique_ids = _as_list(mitre.get("id"))
+    else:
+        technique_ids = _as_list(mitre)
+
+    agent = raw.get("agent") or {}
+    data = raw.get("data") or {}
+    windows = data.get("win") or {}
+    eventdata = windows.get("eventdata") or {}
+
+    image = eventdata.get("image")
+    parent_image = eventdata.get("parentImage") or eventdata.get("parent_image")
+    command_line = eventdata.get("commandLine") or eventdata.get("commandline")
+    process = {
+        key: value
+        for key, value in {
+            "path": image,
+            "name": _basename(image),
+            "parent": _basename(parent_image),
+            "cmdline": command_line,
+        }.items()
+        if value
+    }
+
+    ips = _values(
+        agent.get("ip"),
+        data.get("srcip"),
+        data.get("dstip"),
+        data.get("src_ip"),
+        data.get("dst_ip"),
+    )
+    flattened: dict[str, Any] = {
+        "alert_id": raw.get("id") or raw.get("alert_id"),
+        "rule_name": rule.get("description"),
+        "severity": _wazuh_severity(rule.get("level")),
+        "detected_at": raw.get("timestamp"),
+        "host": agent.get("name"),
+        "ips": ips,
+        "process": process,
+        "mitre": technique_ids,
+    }
+    return {key: value for key, value in flattened.items() if value not in (None, "", [])}
+
+
+def convert(raw: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    """알럿 하나를 시나리오 본문으로 옮긴다."""
+    raw = flatten_wazuh(raw)
 
     techniques = _techniques(raw)
     if not techniques:
@@ -100,6 +159,38 @@ def _techniques(raw: dict[str, Any]) -> list[dict[str, Any]]:
 def _confidence(raw: dict[str, Any]) -> float:
     severity = str(raw.get("severity", "")).strip().lower()
     return SEVERITY_CONFIDENCE.get(severity, DEFAULT_CONFIDENCE)
+
+
+def _wazuh_severity(level: Any) -> str:
+    try:
+        value = int(level)
+    except (TypeError, ValueError):
+        return ""
+    if value >= 13:
+        return "critical"
+    if value >= 10:
+        return "high"
+    if value >= 7:
+        return "medium"
+    if value >= 4:
+        return "low"
+    return "informational"
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _values(*values: Any) -> list[str]:
+    return [str(value) for item in values for value in _as_list(item) if value]
+
+
+def _basename(path: Any) -> str | None:
+    if not path:
+        return None
+    return str(path).replace("\\", "/").rsplit("/", 1)[-1]
 
 
 def _detected_at(raw: dict[str, Any]) -> datetime:
