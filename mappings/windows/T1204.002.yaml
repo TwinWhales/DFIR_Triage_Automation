@@ -73,3 +73,24 @@ artifacts:
     trigger: Tier1 에서 실행 시각을 좁히지 못했고, 해당 앱이 알림을 쓰는 경우
     scope_template: {}
     rationale: 알림이 도착한 시각 — 그 앱이 그때 살아 있었다는 근거 (Notification.ArrivalTime)
+
+# 06단계만 읽는다. 03단계는 이것을 수집하지 않는다.
+#
+# **이 프로젝트에서 corroborates 를 쓰는 첫 매핑이다.** 규칙대로 실측
+# 기각을 보고 넣었다(docs/mapping-guide.md — "넓히는 것은 기각 기록을 보고").
+#
+# 근거: 2026-09-07 `K-TEST-518-VERIFY`. 05단계가 Defender 의 탐지·격리
+# 기록을 정확히 골라 왔는데 06이 technique_unsupported 로 기각했다.
+#
+#     EID 1116  09-03 02:35:03  Trojan:Win32/PossibleMalware.A  탐지
+#     EID 1117  09-03 02:35:18  Trojan:Win32/PossibleMalware.A  격리
+#
+# 격리 시각이 같은 파일의 $UsnJrnl `deleted`(02:35:18)와 초 단위로 맞는다.
+# **정탐 기각이다** — 안티바이러스가 그 파일을 악성으로 판정한 기록은
+# "사용자가 악성 파일을 실행했다"의 근거가 맞다.
+#
+# **artifacts 로 올리지 않는 이유.** 저쪽은 03단계가 "어디를 수집할까"로
+# 읽는 축이라 넓히면 04 파싱 시간과 05 토큰 예산이 커진다. Defender 로그는
+# 실행 흔적을 **찾는** 자리가 아니라 이미 찾은 것을 **뒷받침하는** 자리다.
+corroborates:
+  - evtx:Defender

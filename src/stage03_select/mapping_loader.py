@@ -285,8 +285,16 @@ def _load_corroborates(data: dict[str, Any], catalog: Catalog, where: str) -> fr
 
     2026-09-04 기준 실측: 지금까지 나온 소견의 (기법, 인용 아티팩트) 쌍
     여섯 중 기각은 하나이고, 그 하나는 **정탐이었다** — `T1091`(USB) 이
-    Wazuh 에이전트 재시작 레코드를 인용했다. 그래서 아직 아무 매핑도 이
-    키를 쓰지 않는다.
+    Wazuh 에이전트 재시작 레코드를 인용했다. 그래서 한동안 아무 매핑도 이
+    키를 쓰지 않았다.
+
+    **2026-09-07 에 첫 항목이 생겼다** — `T1204.002` ← `evtx:Defender`.
+    `K-TEST-518-VERIFY` 에서 05가 Defender 의
+    `Trojan:Win32/PossibleMalware.A` 탐지·격리 기록을 정확히 골라 왔는데
+    06이 기각했다. 격리 시각이 같은 파일의 `$UsnJrnl` `deleted` 와 초
+    단위로 맞는 **오기각**이었다. 판단은 `benchmark/rejections.yaml` 에
+    있고, 대장에 근거가 없는 확장은 `tests/test_mapping_loader.py` 가
+    막는다.
     """
     names = data.get("corroborates") or []
     if not isinstance(names, list):
