@@ -118,7 +118,7 @@ vmdk는 미확인입니다.
 | `prefetch` | 구현 — 전부 자체 구현 (압축 해제 포함). 아래 단서 참조 |
 | `srum:NetworkUsage` / `srum:AppResourceUsage` / `srum:NetworkConnectivity` | 구현 — dissect.esedb 기반 어댑터. **Windows 8 이상에만 존재.** 아래 단서 참조 |
 | `sqlite:StateRepository` / `sqlite:Notifications` | 구현 — 전부 자체 구현(페이지·셀 엔진). `sqlite3` 와 전수 일치. **`WITHOUT ROWID`·WAL·삭제 레코드는 범위 밖**, 아래 2026-09-02 절 참조 |
-| `$LogFile` | 미지원 (카탈로그에서 제외 처리) |
+| `$LogFile` | 미지원 (카탈로그에서 제외 처리). **못 한 것이 아니라 비목표다** — `work-guide.md` 1.4 |
 
 **카탈로그의 아티팩트는 전부 파서가 있습니다.** 어긋나면
 `tests/test_pipeline_e2e.py`가 양방향으로 잡습니다 — 카탈로그가 지원한다는데
