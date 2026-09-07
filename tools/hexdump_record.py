@@ -26,7 +26,8 @@
 ``$MFT``              헤더 ``0x2C``의 레코드 번호. 덤으로 업데이트 시퀀스가
                       섹터 끝마다 맞는지 본다 — 레코드 경계에 정확히
                       내려앉았다는 가장 강한 증거다
-``$UsnJrnl``          ``0x18``의 USN. 이 값이 곧 ``record_num``이다
+``$UsnJrnl``          USN. 이 값이 곧 ``record_num``이다. **자리가 버전에
+                      따라 다르다** — v2 는 ``0x18``, v3 는 ``0x28``
 ``evtx:*``            ``0x8``의 EventRecordID. 매직 ``**\\x00\\x00``도 함께 본다
 ``registry:*``        ``nk`` 매직과 오프셋 자신. 레지스트리는 일련번호가 없어
                       **오프셋이 곧 식별자**라, 키 이름까지 맞춰 본다
@@ -519,16 +520,35 @@ def _update_sequence_checks(data: bytes) -> list[Check]:
 def _verify_usn(record: dict[str, Any], window: Window) -> list[Check]:
     data = window.data
     number = int(record["record_num"])
-    if len(data) < 0x3C:
-        return [Check(False, "헤더", f"{len(data)}바이트뿐이라 USN 헤더를 읽을 수 없다")]
+    if len(data) < 0x8:
+        return [Check(False, "헤더", f"{len(data)}바이트뿐이라 크기·버전도 읽을 수 없다")]
 
     length = _u32(data, 0x0)
     major = _u16(data, 0x4)
-    usn = _u64(data, 0x18)
+
+    # **USN 의 자리가 버전에 따라 다르다.** v3 는 파일 참조 둘이 16바이트라
+    # 그 뒤가 통째로 16 밀린다. 한 자리로 못박으면 v3 레코드에서 엉뚱한
+    # 8바이트를 USN 이라고 읽는다 — 값이 다르면 "파서가 틀렸다"고 잘못
+    # 말하고, 우연히 같으면 틀린 것을 통과시킨다.
+    layout = {2: (0x18, 0x3C), 3: (0x28, 0x4C)}.get(major)
+    if layout is None:
+        return [Check(False, "주 버전", f"0x04 = {major} (이 파서가 내는 것은 v2·v3 뿐이다)")]
+    usn_offset, header_size = layout
+
+    if len(data) < header_size:
+        return [
+            Check(False, "헤더", f"{len(data)}바이트뿐이라 v{major} 헤더({header_size})를 읽을 수 없다")
+        ]
+
+    usn = _u64(data, usn_offset)
     checks = [
-        Check(0x3C <= length <= 1024 and length % 8 == 0, "레코드 크기", f"0x00 = {length}바이트"),
-        Check(major == 2, "주 버전", f"0x04 = {major} (이 파서는 V2를 읽는다)"),
-        Check(usn == number, "USN", f"0x18 = {usn} / ref = {number}"),
+        Check(
+            header_size <= length <= 1024 and length % 8 == 0,
+            "레코드 크기",
+            f"0x00 = {length}바이트",
+        ),
+        Check(True, "주 버전", f"0x04 = {major}"),
+        Check(usn == number, "USN", f"0x{usn_offset:02X} = {usn} / ref = {number}"),
     ]
     name_check = _name_in(data, str(record.get("name") or ""))
     if name_check is not None:
