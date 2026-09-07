@@ -26,6 +26,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import pathlib
+
 from src.stage03_select.mapping_loader import DEFAULT_PRIORITY
 from src.stage04_parse import flagging
 from src.stage05_interpret import allocation, record_filter
@@ -205,6 +207,114 @@ def test_an_anchor_from_one_artifact_pulls_in_another():
 
 
 # ============================================================ 시나리오 반영
+
+
+# ============================================ 창 밖 신호의 순서 (work.md 15번)
+
+
+def test_an_in_window_signal_outranks_an_older_one_outside_the_window():
+    """**실측 회귀** (`K-LIVE-0907-wide`, 2026-09-07).
+
+    0순위 정렬이 시각 오름차순이라 **오래된 신호가 먼저 나갔다.** 전달
+    60건 중 42건이 창 밖이었고, 창 안 신호 1,356건 — 사고 당일의
+    ``shell_spawned`` 를 포함해 — 이 **한 건도** 모델에 가지 않았다.
+
+    ``outside_time_range`` 는 ``NON_SIGNAL_FLAGS`` 로 이미 "신호 아님" 이었지만
+    그것은 후보 자격이지 순서가 아니었다.
+    """
+    older_outside = _usn(1, seconds=-5 * 86400, flags=("file_created", "outside_time_range"))
+    newer_inside = _usn(2, seconds=10, flags=("file_created",))
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [older_outside, newer_inside], limit=1
+    )
+
+    assert [r["ref"] for r in chosen] == ["USN#2"], "창 안 신호가 먼저다"
+
+
+def test_a_persistence_flag_keeps_its_seat_even_outside_the_window():
+    """**잠복과 사전 작업은 창 밖에 남는다.**
+
+    이 케이스의 ``testuser`` 계정 생성도 사고 5일 전이었다. 창 밖을 전부
+    내리면 그것이 사라진다 — 어느 이름이 남는지는
+    ``mappings/_flags.yaml`` 의 ``window_independent`` 절이다.
+
+    **한 아티팩트 안에서 잰다.** 아티팩트끼리는 띠가 아니라 자릿수 배분이
+    가른다(아래 회귀 시험 참조).
+    """
+    dwelling = _evtx(1, seconds=-5 * 86400, flags=("account_created", "outside_time_range"))
+    ordinary_outside = _evtx(
+        2, seconds=-6 * 86400, flags=("logon_success", "outside_time_range")
+    )
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [ordinary_outside, dwelling], limit=1
+    )
+
+    assert [r["ref"] for r in chosen] == ["EVTX-SEC#1"]
+
+
+def test_the_band_orders_within_an_artifact_not_across_them():
+    """**띠는 아티팩트 안에서만 순서를 정한다.**
+
+    자릿수 배분이 먼저 아티팩트별로 자리를 나누고, 띠는 그 자리 안에서
+    누가 먼저 갈지를 정한다. 그래서 창 밖 신호밖에 없는 아티팩트도
+    **자기 자리는 그대로 받는다** — 바닥 한 자리가 그것을 보장하기
+    때문이고(이 배분의 존재 이유다), 창 밖이라고 아티팩트를 통째로
+    굶기지는 않는다.
+
+    이 성질을 모르고 보면 "창 밖이 아직도 간다"로 읽힌다. 그것은 띠가
+    안 걸린 것이 아니라 **다른 기계가 정한 것**이다.
+    """
+    only_outside = _usn(1, seconds=-5 * 86400, flags=("file_created", "outside_time_range"))
+    inside = _evtx(2, seconds=10, flags=("account_created",))
+
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [only_outside, inside], limit=2
+    )
+
+    assert {r["ref"] for r in chosen} == {"USN#1", "EVTX-SEC#2"}
+
+
+def test_an_out_of_window_signal_is_deferred_not_dropped():
+    """**버리는 것이 아니라 후순위다.** 자리가 남으면 간다 — 창을 좁히는
+    것과 다르다."""
+    outside = _usn(1, seconds=-5 * 86400, flags=("file_created", "outside_time_range"))
+    inside = _usn(2, seconds=10, flags=("file_created",))
+
+    chosen, _quotas, _budget = allocation.allocate_records([outside, inside], limit=2)
+
+    assert {r["ref"] for r in chosen} == {"USN#1", "USN#2"}
+
+
+def test_the_window_independent_names_must_exist_in_the_vocabulary(tmp_path):
+    """**오타가 조용히 아무 일도 하지 않는 것**이 이 파일에서 두 번 물린
+    자리다. 여기서는 더 나쁘다 — 배분은 되기는 하므로 아무도 멈추지 않고,
+    창 밖 레코드가 조용히 후순위로 내려간다."""
+    # 진짜 어휘를 그대로 쓰고 오타 하나만 더한다. 최소 YAML을 손으로 쓰면
+    # 어휘 형식이 바뀔 때 이 시험이 형식 때문에 깨진다.
+    real = pathlib.Path("mappings/_flags.yaml").read_text(encoding="utf-8")
+    (tmp_path / "_flags.yaml").write_text(
+        real.replace(
+            "window_independent:\n", "window_independent:\n  - acount_created\n", 1
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(flagging.VocabularyError, match="acount_created"):
+        flagging.window_independent_flags(str(tmp_path))
+
+
+def test_the_window_independent_list_is_the_one_the_yaml_declares():
+    """코드가 이름을 만들지 않는다. `mappings/_flags.yaml` 이 원본이다."""
+    names = flagging.window_independent_flags()
+
+    assert "account_created" in names
+    assert "timestamp_mismatch" in names
+    # 시간에 비례해 쌓이는 사건형은 여기 오면 안 된다 — 오면 후순위로 내린
+    # 뜻이 사라진다.
+    assert "file_created" not in names
+    assert names <= set(flagging.FLAGS)
 
 
 def test_the_strongest_requesting_technique_sets_the_priority():
