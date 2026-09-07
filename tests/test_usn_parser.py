@@ -812,3 +812,19 @@ def test_the_replaced_record_still_validates_against_the_schema():
     record = next(flagging.apply_all(iter(parse(data)), None))
 
     schema.validate(record, "parsed_record")
+
+
+def test_an_mft_slice_mislabeled_as_journal_is_rejected_once():
+    """ValleyRAT KAPE 실물처럼 2바이트 뒤에서 시작한 MFT 조각을 구별한다."""
+    data = bytearray(b"\x06\x00" + b"\x00" * (1024 * 3))
+    for index, record_number in enumerate((436917, 436918, 436919)):
+        offset = 2 + index * 1024
+        data[offset : offset + 4] = b"FILE"
+        struct.pack_into("<I", data, offset + 44, record_number)
+
+    parser = usnjrnl.UsnJrnlParser()
+    with pytest.raises(ValueError, match=r"USN 변경 저널이 아니라 \$MFT FILE"):
+        list(parser.parse(_io.BytesIO(data), Scope()))
+
+    assert parser.stats["records"] == 0
+    assert parser.stats["parse_errors"] == 0

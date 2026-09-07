@@ -51,6 +51,7 @@
 from __future__ import annotations
 
 import json
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from fractions import Fraction
@@ -95,6 +96,7 @@ __all__ = [
     "allocate_records",
     "entity_names",
     "mentions_entity",
+    "DEFAULT_BURST_SECONDS",
 ]
 
 #: 글자 하나가 몇 토큰인가 — 의 역수. **이제 실측값이다** (2026-09-03).
@@ -543,7 +545,15 @@ MATCH_ENTITY_AXES = ("processes",)
 #: 적재된 DLL 목록이라, 거기까지 보면 흔한 DLL 이름 하나로 프리패치
 #: 전량이 매칭된다. 반대로 ``fields`` 의 스칼라 값은 evtx 4688 의
 #: ``NewProcessName`` 처럼 **누가 그것을 실행했는지**를 담고 있어 넣는다.
+#: ``Parent*`` 필드는 제외한다. 부모 이름이 맞는 자식까지 대상 프로세스
+#: 자체로 취급하면 PID 재사용과 오래된 자식이 전부 최상위가 되기 때문이다.
 _MATCH_TOP_FIELDS = ("name", "path")
+
+#: 시나리오가 이름을 댄 실행 시점 주변을 한 묶음으로 보는 범위.
+DEFAULT_BURST_SECONDS = 120.0
+_PROCESS_ARTIFACT = "evtx:Sysmon"
+_PROCESS_EVENT_ID = 1
+_MAX_CHAIN_DEPTH = 4
 
 
 def entity_names(entities: "dict[str, Any] | None") -> tuple[str, ...]:
@@ -577,11 +587,84 @@ def mentions_entity(record: dict[str, Any], names: "tuple[str, ...]") -> bool:
     haystacks = [str(record.get(key, "")) for key in _MATCH_TOP_FIELDS]
     haystacks += [
         str(value)
-        for value in (record.get("fields") or {}).values()
-        if isinstance(value, str)
+        for key, value in (record.get("fields") or {}).items()
+        if isinstance(value, str) and not str(key).lower().startswith("parent")
     ]
     blob = " ".join(haystacks).lower()
     return any(name in blob for name in names)
+
+
+def _process_context(
+    records: Sequence[dict[str, Any]],
+    names: tuple[str, ...],
+    fallback_seconds: float,
+) -> tuple[dict[str, int], list[datetime]]:
+    """Sysmon EID 1에서 이름이 확인된 프로세스와 자손의 거리·시각을 찾는다.
+
+    ProcessGuid를 우선하고, GUID가 없는 로그에서는 PID와 Image/ParentImage가
+    모두 맞고 자식이 부모 뒤 fallback_seconds 안에 생성됐을 때만 잇는다.
+    이 제한은 PID 재사용으로 무관한 프로세스를 자식으로 묶는 것을 막는다.
+    """
+    if not names:
+        return {}, []
+
+    processes = [
+        record
+        for record in records
+        if record.get("artifact") == _PROCESS_ARTIFACT
+        and int(record.get("event_id") or 0) == _PROCESS_EVENT_ID
+    ]
+    seeds = [record for record in processes if mentions_entity(record, names)]
+    if not seeds:
+        return {}, []
+
+    def scalar(record: dict[str, Any], key: str) -> str:
+        value = (record.get("fields") or {}).get(key)
+        return str(value).strip().lower() if value is not None else ""
+
+    def moment(record: dict[str, Any]) -> datetime:
+        times = activity_times(record)
+        return min(times) if times else NO_TIME
+
+    by_parent_guid: dict[str, list[dict[str, Any]]] = {}
+    by_parent_identity: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for child in processes:
+        parent_guid = scalar(child, "ParentProcessGuid")
+        if parent_guid and parent_guid != "-":
+            by_parent_guid.setdefault(parent_guid, []).append(child)
+        parent_pid = scalar(child, "ParentProcessId")
+        parent_image = scalar(child, "ParentImage")
+        if parent_pid and parent_image:
+            by_parent_identity.setdefault((parent_pid, parent_image), []).append(child)
+
+    distances = {str(record.get("ref", "")): 0 for record in seeds}
+    queue = deque((record, 0) for record in seeds)
+    while queue:
+        parent, depth = queue.popleft()
+        if depth >= _MAX_CHAIN_DEPTH:
+            continue
+
+        candidates: list[dict[str, Any]] = []
+        guid = scalar(parent, "ProcessGuid")
+        if guid and guid != "-":
+            candidates.extend(by_parent_guid.get(guid, []))
+
+        identity = (scalar(parent, "ProcessId"), scalar(parent, "Image"))
+        if all(identity):
+            for child in by_parent_identity.get(identity, []):
+                delta = (moment(child) - moment(parent)).total_seconds()
+                if 0 <= delta <= fallback_seconds:
+                    candidates.append(child)
+
+        for child in candidates:
+            ref = str(child.get("ref", ""))
+            if not ref or ref in distances:
+                continue
+            distances[ref] = depth + 1
+            queue.append((child, depth + 1))
+
+    seed_times = [time for record in seeds for time in activity_times(record)]
+    return distances, seed_times
 
 
 def allocate_records(
@@ -638,6 +721,23 @@ def allocate_records(
     # 만들면 정렬 비용이 아티팩트 수만큼 붙는다.
     anchor_index = AnchorIndex(anchors)
 
+    all_records = [record for group in by_artifact.values() for record in group]
+    chain_distances, process_seed_times = _process_context(
+        all_records, names, DEFAULT_BURST_SECONDS
+    )
+    # Sysmon이 없는 케이스도 프리패치·MFT처럼 이름이 맞은 레코드의 실행
+    # 시점 주변은 묶을 수 있다. 중복 시각은 AnchorIndex가 처리한다.
+    entity_times = [
+        time
+        for record in all_records
+        if mentions_entity(record, names)
+        for time in activity_times(record)
+    ]
+    # 프로세스 실행 시각이 있으면 그것만 쓴다. MFT의 생성·수정 시각까지
+    # 섞으면 실행 직전 압축 해제 같은 잡음이 더 가까운 앵커가 되어 자리를
+    # 가져간다. Sysmon이 없을 때만 다른 이름 일치 레코드를 대체 앵커로 쓴다.
+    incident_anchors = AnchorIndex(process_seed_times or entity_times)
+
     ranked = {
         artifact: _rank(
             artifact_records,
@@ -645,6 +745,8 @@ def allocate_records(
             window_seconds,
             signal_sources.get(artifact, DEFAULT_SIGNAL_SOURCE),
             names,
+            chain_distances,
+            incident_anchors,
         )
         for artifact, artifact_records in by_artifact.items()
     }
@@ -717,6 +819,8 @@ def _rank(
     window_seconds: float,
     signal_source: str,
     entity_names: "tuple[str, ...]" = (),
+    chain_distances: "dict[str, int] | None" = None,
+    incident_anchors: "AnchorIndex | None" = None,
 ) -> list[tuple[tuple[Any, ...], datetime, dict[str, Any]]]:
     """한 아티팩트 안에서 전달 순서를 매긴다. 앞에서부터 쿼터만큼 나간다.
 
@@ -799,6 +903,7 @@ def _rank(
     """
     entries: list[tuple[tuple[Any, ...], datetime, dict[str, Any]]] = []
     keep_outside = window_independent_flags()
+    chain_distances = chain_distances or {}
 
     for index, record in enumerate(records):
         times = activity_times(record)
@@ -814,18 +919,42 @@ def _rank(
         # 언젠가 한쪽만 고쳐지기 때문**이다 — 0순위에만 띠를 걸었다가
         # 1순위에서 물린 것이 바로 이 자리다.
         band = int(OUTSIDE_WINDOW in flags and not (flags & keep_outside))
-        # 0이 먼저다. 시나리오가 이름을 댄 레코드가 순위·띠·거리보다 앞선다.
-        named = 0 if mentions_entity(record, entity_names) else 1
+        # 이름이 맞은 실행 자체, 그 자손, 나머지 순이다. 이름이 없으면
+        # 모두 예전 값 1을 써 기존 정렬을 그대로 보존한다.
+        if not entity_names:
+            affinity = 1
+        elif mentions_entity(record, entity_names):
+            affinity = 0
+        elif ref in chain_distances:
+            affinity = 1 + chain_distances[ref]
+        else:
+            affinity = 1000
+
+        burst = (
+            incident_anchors.nearest(times, DEFAULT_BURST_SECONDS)
+            if incident_anchors is not None
+            else None
+        )
+        burst_band = 0 if burst is not None else 1
+        burst_distance = burst[0] if burst is not None else float("inf")
 
         if is_signal(record):
             moment = min(times) if times else NO_TIME
-            entries.append(((named, 0, band, moment, ref), moment, record))
+            entries.append(
+                ((affinity, burst_band, 0, band, burst_distance, moment, ref), moment, record)
+            )
             continue
 
         found = anchors.nearest(times, window_seconds)
         if found is not None:
             distance, moment = found
-            entries.append(((named, 1, band, distance, moment, ref), moment, record))
+            entries.append(
+                (
+                    (affinity, burst_band, 1, band, burst_distance, distance, moment, ref),
+                    moment,
+                    record,
+                )
+            )
             continue
 
         if signal_source == "scope":
@@ -835,7 +964,19 @@ def _rank(
             # 것이며, 6-6이 말하는 "임시"가 바로 이 자리다.
             moment = min(times) if times else NO_TIME
             entries.append(
-                ((named, 2, band, anchors.distance_to_any(times), index), moment, record)
+                (
+                    (
+                        affinity,
+                        burst_band,
+                        2,
+                        band,
+                        burst_distance,
+                        anchors.distance_to_any(times),
+                        index,
+                    ),
+                    moment,
+                    record,
+                )
             )
 
     entries.sort(key=lambda item: item[0])

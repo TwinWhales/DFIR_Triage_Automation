@@ -30,7 +30,7 @@ from ..common import errors as errlog
 from ..common import io, schema
 from . import mapping_loader, scope_resolver
 
-__all__ = ["FORCE_PRIORITY", "resolve_force_names", "select", "main"]
+__all__ = ["FORCE_PRIORITY", "resolve_force_names", "resolve_force_scopes", "select", "main"]
 
 STAGE = "03_select"
 
@@ -49,6 +49,35 @@ FORCE_PRIORITY = 1
 #: 읽는 사람이 "이건 기법 매핑이 고른 게 아니라 사람이 지정한 것"임을
 #: 알 수 있어야 한다.
 FORCE_RATIONALE = "사용자 지정 필수 수집 대상(--force-artifacts)"
+
+#: 묶음 접두어는 편의를 위한 요청이라 하이브 전체를 파는 뜻으로 보지
+#: 않는다. 정확한 registry:SOFTWARE 요청은 기존처럼 전체 하이브를 뜻한다.
+FORCE_GROUP_SCOPES: dict[str, dict[str, dict[str, list[str]]]] = {
+    "registry": {
+        "registry:SOFTWARE": {
+            "path_prefix": [
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run",
+                r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache",
+                r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon",
+            ]
+        },
+        "registry:SYSTEM": {
+            "path_prefix": [
+                r"SYSTEM\CurrentControlSet\Services",
+                r"SYSTEM\CurrentControlSet\Control\Session Manager",
+            ]
+        },
+        "registry:Amcache": {
+            "path_prefix": [
+                r"Amcache\Root\InventoryApplicationFile",
+                r"Amcache\Root\File",
+                r"Amcache\Root\Programs",
+            ]
+        },
+    }
+}
 
 
 def resolve_force_names(
@@ -87,6 +116,21 @@ def resolve_force_names(
     return resolved
 
 
+def resolve_force_scopes(
+    names: "list[str] | tuple[str, ...]", catalog: mapping_loader.Catalog
+) -> dict[str, dict[str, Any]]:
+    """묶음으로 강제한 아티팩트에만 적용할 기본 조사 범위를 돌려준다."""
+    scopes: dict[str, dict[str, Any]] = {}
+    exact = {name for name in names if name in catalog}
+    for name in names:
+        if name in exact:
+            continue
+        for artifact, scope in FORCE_GROUP_SCOPES.get(name, {}).items():
+            if artifact in catalog and artifact not in exact:
+                scopes[artifact] = scope
+    return scopes
+
+
 def select(
     scenario: dict[str, Any],
     catalog: mapping_loader.Catalog,
@@ -94,6 +138,7 @@ def select(
     *,
     generator: str = "select.py",
     force: "list[str] | tuple[str, ...]" = (),
+    force_scopes: "dict[str, dict[str, Any]] | None" = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """선별을 수행한다. 문서와 "매핑이 없던 기법 목록"을 함께 돌려준다.
 
@@ -174,6 +219,7 @@ def select(
         selected=selected,
         deferred_requests=deferred_requests,
         requested=requested,
+        force_scopes=force_scopes or {},
     )
 
     # 이미 Tier 1로 읽는 아티팩트를 다시 유예할 이유가 없다. 보고서에
@@ -229,6 +275,7 @@ def _force_select(
     selected: list[dict[str, Any]],
     deferred_requests: dict[str, tuple[mapping_loader.ArtifactRequest, dict[str, str]]],
     requested: set[str],
+    force_scopes: dict[str, dict[str, Any]],
 ) -> None:
     """사람이 지정한 아티팩트를 기법 매핑과 무관하게 Tier 1 로 올린다.
 
@@ -276,7 +323,7 @@ def _force_select(
                 "rationale": f"{FORCE_RATIONALE} — Tier 2 승격: {request.rationale}",
             }
         else:
-            scope = scope_resolver.resolve({}, {}, time_range)
+            scope = scope_resolver.resolve(force_scopes.get(artifact, {}), {}, time_range)
             reason = {
                 "technique": _leading_technique(scenario),
                 "rationale": (
@@ -359,11 +406,14 @@ def main(argv: "list[str] | None" = None) -> int:
         catalog = mapping_loader.load_catalog(args.mappings)
         mappings = mapping_loader.load_all(args.mappings, scenario["target_os"], catalog)
         forced = resolve_force_names(args.force_artifacts, catalog)
+        forced_scopes = resolve_force_scopes(args.force_artifacts, catalog)
     except mapping_loader.MappingError as e:
         log.abort(STAGE, "schema_violation", {"field": "<mappings>", "message": str(e)})
 
     try:
-        selection, unmapped = select(scenario, catalog, mappings, force=forced)
+        selection, unmapped = select(
+            scenario, catalog, mappings, force=forced, force_scopes=forced_scopes
+        )
     except scope_resolver.UnresolvedVariable as e:
         log.abort(STAGE, "empty_result", {"field": "<scope_template>", "message": str(e)})
 

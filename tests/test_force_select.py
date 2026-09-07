@@ -185,3 +185,54 @@ def test_an_artifact_this_os_cannot_read_is_not_forced_up(catalog, mappings):
     )
     assert unsupported not in _by_artifact(document)
     assert unsupported in {entry["artifact"] for entry in document["excluded"]}
+
+
+def test_registry_group_uses_incident_critical_subkeys(catalog, mappings):
+    forced = select_mod.resolve_force_names(["registry"], catalog)
+    scopes = select_mod.resolve_force_scopes(["registry"], catalog)
+    document, _ = select_mod.select(
+        _scenario("T1059.003"),
+        catalog,
+        mappings,
+        force=forced,
+        force_scopes=scopes,
+    )
+    selected = _by_artifact(document)
+
+    software_paths = selected["registry:SOFTWARE"]["scope"]["path_prefix"]
+    assert any("Schedule\\TaskCache" in path for path in software_paths)
+    assert any(path.endswith("\\Run") for path in software_paths)
+    assert selected["registry:SYSTEM"]["scope"]["path_prefix"] == [
+        r"SYSTEM\CurrentControlSet\Services",
+        r"SYSTEM\CurrentControlSet\Control\Session Manager",
+    ]
+    assert selected["registry:Amcache"]["scope"]["path_prefix"]
+
+
+def test_exact_registry_name_still_means_the_whole_hive(catalog, mappings):
+    forced = select_mod.resolve_force_names(["registry:SOFTWARE"], catalog)
+    scopes = select_mod.resolve_force_scopes(["registry:SOFTWARE"], catalog)
+    document, _ = select_mod.select(
+        _scenario("T1059.003"),
+        catalog,
+        mappings,
+        force=forced,
+        force_scopes=scopes,
+    )
+
+    assert scopes == {}
+    assert _by_artifact(document)["registry:SOFTWARE"]["scope"] == {
+        "time_range": {
+            "start": "2026-09-07T00:00:00Z",
+            "end": "2026-09-07T12:00:00Z",
+        }
+    }
+
+
+def test_exact_registry_member_overrides_the_group_default(catalog):
+    scopes = select_mod.resolve_force_scopes(
+        ["registry", "registry:SOFTWARE"], catalog
+    )
+
+    assert "registry:SOFTWARE" not in scopes
+    assert "registry:SYSTEM" in scopes
