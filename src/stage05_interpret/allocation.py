@@ -61,11 +61,17 @@ from ..stage03_select.mapping_loader import (
     DEFAULT_SIGNAL_SOURCE,
     PRIORITIES,
 )
-from ..stage04_parse.flagging import KeepPaths, prompt_drop_fields, prompt_keep_paths
+from ..stage04_parse.flagging import (
+    KeepPaths,
+    prompt_drop_fields,
+    prompt_keep_paths,
+    window_independent_flags,
+)
 from .record_filter import (
     DEFAULT_LIMIT,
     DEFAULT_WINDOW_SECONDS,
     NO_TIME,
+    OUTSIDE_WINDOW,
     AnchorIndex,
     activity_times,
     is_signal,
@@ -651,11 +657,36 @@ def _rank(
 
     순위는 셋으로 나뉜다.
 
-    0. **신호** — 룰이 볼 만하다고 판정했다. 가장 이른 활동 시각 순.
+    0. **신호** — 룰이 볼 만하다고 판정했다. 아래 "0순위 안의 띠" 참조.
     1. **시간창 안의 주변 레코드** — 신호에 가까운 순. 의심스러운 사건
        하나만 보면 그것이 정상 작업인지 알 수 없다는 이유로 함께 넣는다.
     2. **선별이 골라 온 나머지** — ``signal_source: scope``인 아티팩트에만
        있다. 아래 설명 참조.
+
+    ## 0순위 안의 띠 — 창 밖이 자리를 다 먹던 자리다
+
+    **정렬이 시각 오름차순이라 오래된 신호가 먼저 나갔다.**
+    ``outside_time_range`` 는 ``NON_SIGNAL_FLAGS`` 로 이미 "신호 아님" 이지만
+    그것은 **신호 여부에만** 쓰이고 순서에는 쓰이지 않았다. 실측
+    (``K-LIVE-0907-wide``, 2026-09-07): 전달 60건 중 42건이 창 밖이었고,
+    **창 안 신호 1,356건 — 사고 당일의 ``shell_spawned`` 를 포함해 — 이 한
+    건도 모델에 가지 않았다.**
+
+    .. code-block:: text
+
+        띠 0   창 안 신호
+        띠 0   창 밖이지만 window_independent 플래그를 든 것
+        띠 1   그 밖의 창 밖 신호
+
+    **버리지 않는다.** 후순위일 뿐이라 자리가 남으면 간다 — 시간창을 좁히는
+    것과 다르다. 그리고 **전부 내리지도 않는다.** 공격자의 잠복과 사전
+    작업이 창 밖에 남는다(이 케이스의 ``account_created`` 도 사고 5일 전이다).
+    어느 이름이 남는지와 그 기준은 ``mappings/_flags.yaml`` 의
+    ``window_independent`` 절이다.
+
+    띠 **안에서는** 여전히 시각 오름차순이다. 사건은 이른 것부터 읽는 것이
+    맞고, 쿼터가 모자랄 때 뒤가 잘리는 성질은 이번에 건드리지 않았다 —
+    한 번에 둘을 바꾸면 어느 쪽이 효과인지 가를 수 없다(``work.md`` 15번).
 
     ``signal_source``가 갈리는 지점이 2번이다. ``flags`` 아티팩트에서
     플래그도 없고 시간창에도 안 걸린 레코드는 볼 이유가 없으므로 후보에서
@@ -665,6 +696,7 @@ def _rank(
     대개 OS 설치 시각이라 사건 시간창에 걸리지 않는다.
     """
     entries: list[tuple[tuple[Any, ...], datetime, dict[str, Any]]] = []
+    keep_outside = window_independent_flags()
 
     for index, record in enumerate(records):
         times = activity_times(record)
@@ -672,7 +704,10 @@ def _rank(
 
         if is_signal(record):
             moment = min(times) if times else NO_TIME
-            entries.append(((0, moment, ref), moment, record))
+            flags = set(record.get("flags") or [])
+            # 창 밖인데 남을 이유가 없으면 신호끼리의 경쟁에서 뒤로 간다.
+            band = int(OUTSIDE_WINDOW in flags and not (flags & keep_outside))
+            entries.append(((0, band, moment, ref), moment, record))
             continue
 
         found = anchors.nearest(times, window_seconds)

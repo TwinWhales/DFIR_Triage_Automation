@@ -38,6 +38,7 @@ __all__ = [
     "DEFAULT_WINDOW_SECONDS",
     "NON_SIGNAL_FLAGS",
     "NO_TIME",
+    "OUTSIDE_WINDOW",
     "SI_TIME_FIELDS",
     "AnchorIndex",
     "activity_times",
@@ -56,11 +57,19 @@ DEFAULT_LIMIT = 60
 #: 신호 주변으로 함께 볼 시간 폭(초).
 DEFAULT_WINDOW_SECONDS = 300
 
+#: 선별한 시간창 밖이라는 표시.
+#:
+#: **두 곳이 쓴다.** ``NON_SIGNAL_FLAGS`` 로서 "이것만 붙은 레코드는 신호가
+#: 아니다" 이고, ``allocation._rank`` 에서 "신호끼리의 경쟁에서 뒤로 간다"
+#: 이다. 둘은 다른 판단이다 — 앞은 후보 자격이고 뒤는 순서다. 앞만 있던
+#: 동안 창 밖 신호가 자리를 다 먹었다(``allocation._rank`` 설명).
+OUTSIDE_WINDOW = "outside_time_range"
+
 #: 플래그이긴 하나 "볼 만하다"는 신호가 아닌 것.
 #:
 #: ``outside_time_range``는 정보 표시일 뿐이다. 이것을 신호로 치면
 #: 선별 범위 밖 레코드가 우선 전달되어, 시간 범위를 좁힌 의미가 사라진다.
-NON_SIGNAL_FLAGS = frozenset({"outside_time_range"})
+NON_SIGNAL_FLAGS = frozenset({OUTSIDE_WINDOW})
 
 #: MFT 레코드에서 "활동 시각"으로 볼 필드.
 #:

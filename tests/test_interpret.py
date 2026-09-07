@@ -650,6 +650,52 @@ def test_a_field_the_record_lacks_is_retried_with_feedback(monkeypatch, tmp_path
     assert "evidence_fields" in backend.calls[1][1]
 
 
+def test_a_reason_that_only_lists_flags_is_retried(monkeypatch, tmp_path):
+    """**실측 회귀 (`K-LIVE-0907-wide`, 2026-09-07).**
+
+    소견 18건 중 13건의 문장이 ``"file_created, outside_time_range"`` 처럼
+    그 레코드의 플래그를 그대로 옮긴 것이었고, **13건 전부 06단계를
+    통과해** 보고서의 "확인된 사항 15건"에 들어갔다. 글자는 있는데 사실이
+    없으므로 빈 문장과 성질이 같다.
+
+    막는 자리를 05 로 둔 것은, 06 에서 강등하면 수치는 정직해지지만 소견이
+    남지 않기 때문이다. 모델에게 다시 쓰게 하는 것이 답이다.
+    """
+    backend = FakeBackend(
+        _selection(_pick("MFT#12345", reason="file_created, outside_time_range")),
+        _selection(_pick("MFT#12345", reason="webshell.aspx 가 웹 루트에 생성됐다")),
+    )
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+
+    recorded = _errors(tmp_path)
+    assert [(e["type"], e["action"]) for e in recorded] == [("claim_validation", "retry")]
+    assert len(backend.calls) == 2
+
+    # **무엇을 고쳐야 하는지가 실려 나가는가.** 필드가 틀렸다고 말하면 모델은
+    # 문장을 그대로 두고 필드만 만진다.
+    followup = backend.calls[1][1]
+    assert "flags" in followup and "한 문장" in followup
+    assert "evidence_fields" not in followup, "이 실패는 필드 문제가 아니다"
+
+
+def test_a_reason_that_mentions_a_flag_but_says_more_is_kept(monkeypatch, tmp_path):
+    """**판정은 좁게 한다.** 정상 문장을 기각하는 쪽이 더 나쁘다.
+
+    낱말 하나라도 어휘 밖이면 통과시킨다 — 무내용을 놓치면 06 이 한 번 더
+    보지만, 정상 문장을 기각하면 증거가 사라진다.
+    """
+    backend = FakeBackend(
+        _selection(
+            _pick("MFT#12345", reason="outside_time_range 이지만 webshell.aspx 가 생성됐다")
+        )
+    )
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+    assert _errors(tmp_path) == []
+    assert len(backend.calls) == 1
+
+
 def test_our_own_bug_stops_at_once_instead_of_burning_three_calls(
     monkeypatch, tmp_path
 ):

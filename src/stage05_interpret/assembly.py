@@ -32,11 +32,12 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
 from ..common.io import parse_timestamp
-from ..stage04_parse.flagging import ClaimFields, claim_fields
+from ..stage04_parse.flagging import FLAGS, ClaimFields, claim_fields
 from .record_filter import NO_TIME, activity_times
 
 __all__ = [
@@ -44,6 +45,7 @@ __all__ = [
     "SelectionError",
     "assemble_body",
     "claim_for",
+    "is_flag_dump",
     "validate_selection",
     "walk_field",
 ]
@@ -52,15 +54,26 @@ __all__ = [
 class SelectionError(ValueError):
     """모델이 고른 것이 레코드와 맞지 않는다. **모델 잘못이다.**
 
-    지금 하나뿐이다 — 그 레코드에 **없는 필드**를 근거로 지목한 경우.
-    문법이 막지 못하는 자리다. ``evidence_fields`` 의 enum 은 배치 전체가
-    가진 이름의 합집합이라, 옆 레코드의 필드 이름을 이 레코드에 붙이는 것은
-    문법상 합법이다.
+    둘이다.
 
-    **이것이 조립 경로에서 유일하게 살아남은 모델 오류 채널이다.** 값은
-    파이썬이 옮기므로 옮겨 적기 오류가 없고, ``ref``·기법은 enum 이 막는다.
-    남는 자유도 중 기계적으로 잡히는 것이 이 하나라, 재시도할 값이 있다.
+    1. 그 레코드에 **없는 필드**를 근거로 지목한 경우. 문법이 막지 못하는
+       자리다 — ``evidence_fields`` 의 enum 은 배치 전체가 가진 이름의
+       합집합이라, 옆 레코드의 필드 이름을 이 레코드에 붙이는 것은 문법상
+       합법이다.
+    2. ``reason`` 이 **플래그 이름의 나열**인 경우 (``is_flag_dump``).
+
+    **이것이 조립 경로에서 살아남은 모델 오류 채널이다.** 값은 파이썬이
+    옮기므로 옮겨 적기 오류가 없고, ``ref``·기법은 enum 이 막는다. 남는
+    자유도 중 기계적으로 잡히는 것이 이 둘이라, 재시도할 값이 있다.
+
+    ``guidance`` 는 **모델에게 돌려줄 말**이다. 사유마다 고쳐야 할 것이
+    다르므로 재시도 피드백을 한 문장으로 못박을 수 없다 — 필드가 틀린 것에
+    "문장을 다시 쓰라"고 하면 모델은 엉뚱한 곳을 고친다.
     """
+
+    def __init__(self, message: str, guidance: str = "") -> None:
+        super().__init__(message)
+        self.guidance = guidance
 
 
 class AssemblyError(ValueError):
@@ -71,6 +84,43 @@ class AssemblyError(ValueError):
     같은 코드가 같은 입력으로 같은 답을 낸다. 재시도하면 모델을 세 번 더
     부르고 똑같이 죽는다.
     """
+
+
+#: 낱말 사이를 가르는 것들. 쉼표·빗금·가운뎃점과 공백.
+_SEPARATORS = re.compile(r"[\s,;/|·、]+")
+
+#: 토큰 양끝에서 떼어 낼 것. 모델이 플래그를 따옴표나 괄호에 넣는다.
+_TRIM = "\"'`()[]{}.:"
+
+#: 이것만 남으면 여전히 무내용이다. 플래그를 잇는 말일 뿐 사실이 아니다.
+#: **짧게 유지한다** — 여기에 일반 낱말을 넣기 시작하면 정상 문장을 기각한다.
+_CONNECTORS = frozenset({"및", "과", "와", "그리고", "또는", "and", "or", "+", "-", "~"})
+
+
+def is_flag_dump(text: str) -> bool:
+    """``reason`` 이 **플래그 이름의 나열**인가.
+
+    실측(``K-LIVE-0907-wide``, 2026-09-07): 소견 18건 중 13건의 문장이
+    ``"file_created, outside_time_range"`` 처럼 그 레코드의 플래그를 그대로
+    옮긴 것이었다. 그리고 **13건 전부 06단계를 통과했다** —
+    ``technique`` 이 ``null`` 이라 ``technique_supported`` 가 볼 것이 없고,
+    플래그 이름은 증거 안에 있는 토큰이라 ``statement_grounded`` 가 걸지
+    않으며, 조립 경로의 ``value_match`` 는 항등식이다. 셋이 동시에 침묵한다.
+
+    그래서 **여기서 막는다.** 06 에서 강등하면 수치는 정직해지지만 소견이
+    남지 않는다 — 모델에게 다시 쓰게 하는 것이 답이다.
+
+    **판정은 좁게 한다.** 낱말 하나라도 어휘 밖이면 통과시킨다. 정상 문장을
+    기각하는 것이 무내용을 놓치는 것보다 나쁘다 — 그쪽은 증거가 사라지고,
+    이쪽은 06 이 한 번 더 본다. 그래서 "짧다"나 "동사가 없다"로는 재지
+    않는다. **플래그 어휘는 ``mappings/_flags.yaml`` 이 원본이다.**
+    """
+    tokens = [t.strip(_TRIM) for t in _SEPARATORS.split(text.strip())]
+    tokens = [t for t in tokens if t]
+    if not tokens:
+        return True
+    known = set(FLAGS)
+    return all(t in known or t.lower() in _CONNECTORS for t in tokens)
 
 
 def walk_field(record: dict[str, Any], name: str) -> "tuple[bool, Any]":
@@ -138,6 +188,16 @@ def claim_for(
     return claims
 
 
+#: 사유가 비었거나 플래그 나열일 때 모델에게 돌려줄 말.
+_REASON_GUIDANCE = (
+    "reason 은 **그 레코드가 말하는 사실 한 문장**이어야 합니다. "
+    "flags 에 있는 이름을 그대로 옮겨 적지 마십시오 — 플래그는 이미 "
+    "레코드에 붙어 있으므로 그것을 다시 적는 것은 아무것도 더하지 않습니다. "
+    "그 레코드의 어느 값이 왜 눈여겨볼 만한지를 쓰십시오. "
+    "쓸 말이 없으면 그 레코드는 고르지 마십시오."
+)
+
+
 def validate_selection(
     selections: list[dict[str, Any]], records: dict[str, dict[str, Any]]
 ) -> None:
@@ -147,10 +207,12 @@ def validate_selection(
     틀렸는지 그 자리에서 알아야 **그 조각만** 다시 물을 수 있다. 조립까지
     미루면 어느 질의를 다시 해야 하는지 알 수 없어 전부 다시 돌게 된다.
 
-    보는 것은 둘이다.
+    보는 것은 셋이다.
 
     1. ``reason`` 이 비지 않았는가 — 빈 문장은 소견이 될 수 없다.
-    2. ``evidence_fields`` 가 **그 레코드에** 있는가 — enum 은 배치 전체가
+    2. ``reason`` 이 **플래그 이름의 나열**이 아닌가 (``is_flag_dump``) —
+       빈 문장과 성질이 같다. 글자는 있는데 사실이 없다.
+    3. ``evidence_fields`` 가 **그 레코드에** 있는가 — enum 은 배치 전체가
        가진 이름의 합집합이라 옆 레코드의 필드를 붙이는 것이 문법상 합법이다.
 
     ``ref`` 가 목록에 없는 것은 여기서 보지 않는다. 그것은 우리가 잘못
@@ -163,8 +225,15 @@ def validate_selection(
         if record is None:
             continue
 
-        if not str(selection.get("reason") or "").strip():
-            raise SelectionError(f"{ref} 의 reason 이 비었다.")
+        reason = str(selection.get("reason") or "").strip()
+        if not reason:
+            raise SelectionError(f"{ref} 의 reason 이 비었다.", guidance=_REASON_GUIDANCE)
+
+        if is_flag_dump(reason):
+            raise SelectionError(
+                f"{ref} 의 reason 이 플래그 이름의 나열이다: {reason!r}",
+                guidance=_REASON_GUIDANCE,
+            )
 
         missing = [
             name
@@ -173,7 +242,11 @@ def validate_selection(
         ]
         if missing:
             raise SelectionError(
-                f"{ref} 에 없는 필드를 근거로 지목했다: {', '.join(missing)}"
+                f"{ref} 에 없는 필드를 근거로 지목했다: {', '.join(missing)}",
+                guidance=(
+                    "evidence_fields 에는 각 레코드에 **실제로 있는** 필드 "
+                    "이름만 적으십시오. 옆 레코드의 필드 이름을 붙이지 마십시오."
+                ),
             )
 
 

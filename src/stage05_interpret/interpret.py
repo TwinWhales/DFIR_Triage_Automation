@@ -634,11 +634,11 @@ def _select_chunk(
             if saved:
                 detail["raw"] = saved
             log.record(STAGE, "claim_validation", detail, action="retry", attempt=attempt)
-            feedback = (
-                "이전 응답의 evidence_fields 가 그 레코드와 맞지 않습니다.\n"
-                f"{e}\n"
-                "각 레코드에 **실제로 있는** 필드 이름만 적으십시오."
-            )
+            # **무엇을 고쳐야 하는지는 사유마다 다르다.** 한 문장으로 못박으면
+            # 사유가 늘어날 때마다 엉뚱한 곳을 고치라고 말하게 된다 — 문장이
+            # 무내용인 것에 "필드 이름을 확인하라"고 하면 모델은 문장을 그대로
+            # 두고 필드만 만진다. 그래서 예외가 자기 안내문을 들고 온다.
+            feedback = f"이전 응답을 고쳐야 합니다.\n{e}\n{e.guidance}".rstrip()
 
         except llm.MalformedOutput as e:
             detail = {"message": f"{where}: {e}"}

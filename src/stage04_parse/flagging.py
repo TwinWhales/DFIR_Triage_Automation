@@ -702,6 +702,40 @@ def privileged_groups(directory: str | None = None) -> frozenset[str]:
     return frozenset(str(n).strip().lower() for n in names) or DEFAULT_PRIVILEGED_GROUPS
 
 
+@functools.lru_cache(maxsize=None)
+def window_independent_flags(directory: str | None = None) -> frozenset[str]:
+    """사고 시간창 **밖이어도 1순위를 유지하는** 플래그 이름들.
+
+    05단계 배분(``allocation._rank``)이 읽습니다. **플래그 룰이 아닙니다** —
+    여기 있는 이름이 플래그를 붙이지는 않습니다. ``prompt_keep_paths`` 와 같은
+    성격이고, 기준과 근거는 ``_flags.yaml`` 의 그 절에 있습니다.
+
+    **모르는 이름은 거부합니다.** 오타가 조용히 아무 일도 하지 않는 것이 이
+    프로젝트에서 이미 두 번 물린 자리입니다(``docs/limitations-log.md``
+    2026-09-01 "매핑이 모르는 키를 써도 아무도 말하지 않았다"). 여기서는 더
+    나쁩니다 — 배분은 **되기는 하므로** 아무도 멈추지 않고, 창 밖 레코드가
+    조용히 후순위로 내려갑니다.
+
+    키가 없으면 빈 집합입니다. 그때는 창 밖이 전부 후순위가 되는데, 그것은
+    이 키가 생기기 전의 동작이 아니라 **더 강한 동작**이므로 배분 쪽에서
+    빈 집합을 어떻게 다룰지는 그쪽이 정합니다.
+    """
+    path = Path(directory or mappings_dir()) / "_flags.yaml"
+    if not path.is_file():
+        return frozenset()
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    names = [str(n).strip() for n in (data.get("window_independent") or [])]
+
+    known = set(load_vocabulary(directory).names)
+    unknown = sorted(n for n in names if n not in known)
+    if unknown:
+        raise VocabularyError(
+            f"window_independent 에 없는 플래그 이름: {', '.join(unknown)}. "
+            f"어휘는 같은 파일의 flags 절에 정의되어 있다."
+        )
+    return frozenset(names)
+
+
 @dataclass(frozen=True)
 class KeepPaths:
     """긴 목록에서 먼저 남길 항목의 기준. ``prompt_keep_paths`` 참조."""
