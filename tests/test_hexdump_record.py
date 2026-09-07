@@ -92,6 +92,22 @@ def build_usn_record(usn: int, name: str) -> bytes:
     return bytes(record)
 
 
+def build_usn_record_v3(usn: int, name: str) -> bytes:
+    """``USN_RECORD_V3`` 하나. V2보다 파일 참조 둘이 16바이트씩이라 76부터 이름이다."""
+    encoded = name.encode("utf-16-le")
+    length = 0x4C + len(encoded)
+    length += (-length) % 8
+    record = bytearray(length)
+    struct.pack_into("<I", record, 0x0, length)
+    struct.pack_into("<H", record, 0x4, 3)
+    struct.pack_into("<H", record, 0x6, 0)
+    struct.pack_into("<Q", record, 0x28, usn)
+    struct.pack_into("<H", record, 0x48, len(encoded))
+    struct.pack_into("<H", record, 0x4A, 0x4C)
+    record[0x4C : 0x4C + len(encoded)] = encoded
+    return bytes(record)
+
+
 def build_evtx_record(record_id: int, payload: int = 0x60) -> bytes:
     """evtx 레코드 하나. 크기가 앞뒤로 두 번 적히는 것까지 만든다."""
     size = 0x18 + payload
@@ -319,6 +335,44 @@ def test_usn_is_matched_by_its_own_usn():
 
     row["record_num"] = 5063400
     assert "USN" in hard_failures(verify(row, window_for("$UsnJrnl", 0x18, record)))
+
+
+def test_a_v3_usn_record_is_read_at_its_own_offset():
+    """**USN 의 자리가 버전에 따라 다르다** — v2 0x18, v3 0x28.
+
+    한 자리로 못박으면 v3 레코드에서 엉뚱한 8바이트를 USN 이라고 읽는다.
+    값이 다르면 파서를 틀렸다고 잘못 말하고, **우연히 같으면 틀린 것을
+    통과시킨다.** 검증 도구가 틀리는 쪽이 더 나쁘다.
+    """
+    record = build_usn_record_v3(5063392, "webshell.aspx")
+    row = {
+        "ref": "USN#5063392",
+        "artifact": "$UsnJrnl",
+        "record_num": 5063392,
+        "offset": "0x18",
+        "name": "webshell.aspx",
+        "flags": [],
+    }
+    assert not hard_failures(verify(row, window_for("$UsnJrnl", 0x18, record)))
+
+    row["record_num"] = 5063400
+    assert "USN" in hard_failures(verify(row, window_for("$UsnJrnl", 0x18, record)))
+
+
+def test_a_record_version_the_parser_never_emits_is_a_failure():
+    """v4 는 이 파서가 내지 않는다. 레코드가 있다면 도구 쪽이 틀린 것이다."""
+    record = bytearray(build_usn_record(5063392, "a.txt"))
+    struct.pack_into("<H", record, 0x4, 4)
+    row = {
+        "ref": "USN#5063392",
+        "artifact": "$UsnJrnl",
+        "record_num": 5063392,
+        "offset": "0x18",
+        "name": "a.txt",
+        "flags": [],
+    }
+
+    assert "주 버전" in hard_failures(verify(row, window_for("$UsnJrnl", 0x18, bytes(record))))
 
 
 def test_evtx_is_matched_by_event_record_id():
