@@ -12,6 +12,7 @@ from src.common import errors as errlog
 from src.common import io, llm, schema
 from src.stage02_normalize import alert_adapter
 from src.stage02_normalize import normalize as normalize_mod
+from tools import make_case
 from src.stage02_normalize.llm_client import DEFAULT_NUM_PREDICT, NormalizeClient
 from src.stage02_normalize.normalize import build_scenario, check_attack_ids, normalize
 from casepaths import FIXTURES
@@ -339,6 +340,43 @@ def test_alert_converts_without_any_model(alert):
     assert [t["id"] for t in doc["techniques"]] == ["T1505.003"]
 
 
+def test_wazuh_alert_is_flattened_before_conversion():
+    wazuh = {
+        "id": "1690000000.123",
+        "timestamp": "2026-07-20T12:16:40+0900",
+        "rule": {
+            "level": 13,
+            "description": "Suspicious web shell process",
+            "mitre": {"id": ["T1505.003"]},
+        },
+        "agent": {"name": "WEB01", "ip": "10.0.0.5"},
+        "data": {
+            "srcip": "10.0.0.9",
+            "win": {
+                "eventdata": {
+                    "image": "C:\\Windows\\System32\\cmd.exe",
+                    "parentImage": "C:\\Windows\\System32\\w3wp.exe",
+                    "commandLine": "cmd.exe /c whoami",
+                }
+            },
+        },
+    }
+
+    flattened = alert_adapter.flatten_wazuh(wazuh)
+    assert flattened["severity"] == "critical"
+    assert flattened["process"] == {
+        "path": "C:\\Windows\\System32\\cmd.exe",
+        "name": "cmd.exe",
+        "parent": "w3wp.exe",
+        "cmdline": "cmd.exe /c whoami",
+    }
+    assert flattened["ips"] == ["10.0.0.5", "10.0.0.9"]
+    body = alert_adapter.convert(wazuh, {"os_hint": "windows_server_2019"})
+    assert [t["id"] for t in body["techniques"]] == ["T1505.003"]
+    assert body["entities"]["paths"] == ["C:\\Windows\\System32\\cmd.exe"]
+    assert body["entities"]["processes"] == ["cmd.exe", "w3wp.exe"]
+
+
 def test_alert_output_has_the_same_shape_as_the_llm_path(alert, scenario_body):
     body = alert_adapter.convert(alert, {"os_hint": "windows_server_2019"})
     assert set(body) == set(scenario_body)
@@ -450,6 +488,40 @@ def test_cli_takes_the_adapter_path_for_edr_alerts(tmp_path):
     # 03단계 이후를 개발할 수 있는 이유다.
     assert normalize_mod.main(["--in", str(src), "--out", str(out)]) == 0
     assert io.read_json(out)["generator"] == "alert_adapter.py"
+
+
+def test_make_case_accepts_a_wazuh_alert_file(tmp_path):
+    alert_path = tmp_path / "wazuh-alert.json"
+    io.write_json(
+        alert_path,
+        {
+            "timestamp": "2026-07-20T12:16:40+0900",
+            "rule": {
+                "level": 10,
+                "description": "Suspicious process",
+                "mitre": {"id": ["T1505.003"]},
+            },
+            "agent": {"name": "WEB01", "ip": "10.0.0.5"},
+        },
+    )
+
+    assert make_case.main(
+        [
+            "--case-id",
+            "C-004",
+            "--evidence",
+            str(tmp_path / "evidence"),
+            "--cases-dir",
+            str(tmp_path / "cases"),
+            "--alert",
+            str(alert_path),
+        ]
+    ) == 0
+
+    document = io.read_json(tmp_path / "cases" / "C-004" / "01_input.json")
+    schema.validate(document, "input")
+    assert document["source_type"] == "edr_alert"
+    assert document["raw"]["rule"]["mitre"]["id"] == ["T1505.003"]
 
 
 def test_an_ungrounded_entity_is_dropped_and_recorded(tmp_path, scenario_body):

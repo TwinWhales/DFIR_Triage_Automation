@@ -41,6 +41,15 @@ ollama pull qwen2.5:7b
 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 /mnt/evidence/WEB01
 ```
 
+Wazuh 알럿은 저장소의 `alerts/` 폴더에 JSON 파일로 넣고 케이스 입력으로 감싼다.
+알럿 원문은 `01_input.json`의 `raw`에 그대로 보존되며, 02단계에서 Wazuh의
+중첩 필드를 기존 EDR 알럿 계약으로 평탄화한다.
+
+```bash
+.venv/Scripts/python.exe tools/make_case.py --case-id C-004 \
+  --evidence /mnt/evidence/WEB04 --alert alerts/wazuh-alert.json
+```
+
 ## 산출물 확인 — 실제 사건에서 거치는 두 자리
 
 **아래 "평가"는 벤치마크용입니다.** 실제 케이스에서 보는 것은 이 둘입니다.

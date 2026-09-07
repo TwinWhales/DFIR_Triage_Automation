@@ -1,24 +1,25 @@
-# Wazuh 알럿을 그대로는 못 받는다 — 배선 설계
+# Wazuh 알럿 입력 — 배선 설계
 
 > `work.md` 3번의 상세입니다. **무엇을 할 차례인가**는 `work.md` 에 있고,
 > 여기에는 다음 세션이 바로 집을 수 있게 적어 둔 배선이 있습니다.
 > (2026-09-05 에 `work.md` 에서 옮겨 왔습니다.)
 
-레포 전체에 `wazuh`·`sigma`·`winlogbeat`·`active-response` 참조가 0건이다.
-`edr_alert` 경로는 있으나 **자체 형식**을 기대한다. 실측:
+`edr_alert` 경로는 자체 형식을 기대하므로 Wazuh 원문을 바로 넣을 수 없었다.
+현재는 02단계 경계에서 평탄화한다. 실측:
 
 ```
 Wazuh 원본(rule.mitre.id / rule.level / agent.name)  →  AlertAdapterError
 평탄화한 자체 형식(mitre / severity / host)          →  정상 변환
 ```
 
-**할 일 셋.**
+**구현된 배선.**
 
-- `src/stage02_normalize/alert_adapter.py`에 Wazuh 모양을 평탄화하는 변환
-  추가 (약 50줄). `rule.mitre.id`→`mitre`, `rule.level`→`severity`,
-  `agent.name`→`host`, `data.win.eventdata.*`→`process.*`
-- `tools/make_case.py`에 `--alert` 경로. 지금은 자연어 입력만 만든다
-- Wazuh active-response에서 부를 래퍼
+- `src/stage02_normalize/alert_adapter.py`의 `flatten_wazuh()`가
+  `rule.mitre.id`→`mitre`, `rule.level`→`severity`, `agent.name`→`host`,
+  `data.win.eventdata.*`→`process.*`로 변환한다.
+- `tools/make_case.py --alert alerts/<파일>`이 원문을 `01_input.json`의 `raw`에
+  보존하면서 `source_type=edr_alert`로 감싼다.
+- active-response에서 호출하는 래퍼는 아직 없다.
 
 **라이브 호스트에서 바로 못 읽는다는 것도 함께 본다.** `open_source()`는
 이미지 파일 또는 폴더만 받는다(`\\.\C:` 없음). 알럿이 나면 KAPE가 먼저
@@ -57,6 +58,10 @@ raw(Wazuh)  →  _flatten_wazuh(raw)  →  convert(raw, evidence)  →  시나�
 | `agent.name` | `host` | `agent.ip` 는 `ips[]` 로 |
 | `data.win.eventdata.image` | `process.path` | 소문자 키다. Windows 이벤트 경유일 때만 있다 |
 | `timestamp` | `detected_at` | Wazuh 는 `+0900` 오프셋을 붙여 보낸다. `_detected_at()` 이 받는지 확인 |
+
+Wazuh `rule.level`은 0~3 informational, 4~6 low, 7~9 medium, 10~12 high,
+13~15 critical로 변환한다. `0`은 알럿 파일에 남아 있어도 ATT&CK 기법이 없으면
+기존 어댑터 정책에 따라 중단한다.
 
 **확인 방법** — 샘플을 넣어 02단계를 돌리고, 지금 자체 형식으로 만든
 K-ALERT 시나리오와 `techniques`·`time_range`·`entities` 가 같은지 본다.

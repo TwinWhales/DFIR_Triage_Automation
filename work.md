@@ -121,12 +121,12 @@
 무엇을 어느 순서로 모으는지, 수집 방법, 이 기계에 이미 있는 외부 도구,
 확인 방법은 **`docs/proposals/windows-version-axis.md`** 에 있다.
 
-## 3. Wazuh 알럿을 그대로는 못 받는다
+## 3. Wazuh 알럿 입력
 
-`alert_adapter` 는 평탄한 EDR 알럿을 받는데 Wazuh 는 중첩 JSON 이다.
-그대로 넣으면 필드를 못 찾는다.
-
-배선 설계는 **`docs/proposals/wazuh-alert-intake.md`** 에 있다.
+`tools/make_case.py --alert alerts/<파일>`이 Wazuh JSON 원문을 `01_input.json`에
+보존하고, 02단계의 `alert_adapter.flatten_wazuh()`가 기존 EDR 알럿 계약으로
+평탄화한다. 상세 매핑과 남은 active-response 래퍼 작업은
+**`docs/proposals/wazuh-alert-intake.md`** 에 기록한다.
 
 ## 4. 설계 판단이 필요한 것 둘 — 혼자 정하지 않는다
 
