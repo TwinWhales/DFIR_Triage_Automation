@@ -2,7 +2,7 @@
 
 > **문서 상태**: 프로토타입 검토 완료 → **합의된 설계** (2026-09-03)
 > **작업 순서와 착수 조건**: 9번은 2026-09-03 에 끝나 `work.md` 에서 내렸다
-> (`docs/limitations.md` "05단계 레코드 배분"). 이 문서는 *왜 그렇게
+> (`docs/limitations.md` 3-2). 이 문서는 *왜 그렇게
 > 하기로 했나*를 적는다.
 > **실측 근거**: `docs/limitations.md`(지금도 참인 제약),
 > `docs/limitations-log.md`(고친 것)
@@ -302,7 +302,7 @@ Sysmon·Prefetch 레코드마다 `Hashes`·`FileVersion`·`Company`·`LogonGuid`
 ## 6. 다음 작업
 
 9번은 2026-09-03 에 끝나 `work.md` 에서 내렸다. 지금도 참인 제약은
-`docs/limitations.md` 의 "05단계 레코드 배분 (**구현됨**)" 절이다.
+`docs/limitations.md` 3-2이다.
 
 - **9-0** 예산 공식 — 끝났다 (2026-09-03)
 - **9-1** 블랙리스트 다이어트 — 다음

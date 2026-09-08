@@ -29,4 +29,4 @@
 **새 표기 부류를 만나면 여기에 레코드를 더하고
 `benchmark/validator_cases.json` 에 사례를 답니다.** 사례 없이 비교기만
 고치면 감시가 100% 통과를 보고하면서 정상 문장을 계속 기각합니다 —
-`docs/limitations.md` "검증기가 경로 표기 차이를 환각으로 센다" 참고.
+`docs/limitations-log.md` "06단계가 표기 오류를 환각으로 셌다" 참고.

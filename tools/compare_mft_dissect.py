@@ -5,7 +5,7 @@ MFTECmd(외부 도구)나 우리 참조 구현을 씁니다. 이쪽은 이미 �
 ``dissect.ntfs`` 를 씁니다.
 
 **왜 하나 더 만드나** — MFTECmd 는 따로 받아야 해서 오래 미실시로
-남아 있었고(``docs/limitations.md`` "외부 도구 대조가 부분적이다"), 그
+남아 있었고(``docs/limitations.md`` 2-12), 그
 사이 ``$MFT`` 는 **산출량이 두 번째로 많은데 검증이 가장 약한** 파서로
 남았습니다. ``dissect.ntfs`` 는 ``dissect.target`` 을 깔면 함께 오므로
 (``requirements.txt`` 에 이미 있습니다) **받을 것이 없습니다.**
@@ -30,7 +30,7 @@ MFTECmd(외부 도구)나 우리 참조 구현을 씁니다. 이쪽은 이미 �
 있으면 종료 코드 1 입니다.
 
 덤으로 **부모 슬롯 재사용으로 경로가 어긋난 레코드**를 셉니다
-(``docs/limitations.md`` "``$MFT`` 만으로는 알 수 없는 것"). 삭제
+(``docs/limitations.md`` 2-10). 삭제
 레코드의 부모 참조가 가리키는 슬롯이 그 사이 다른 파일에 재할당되면
 경로 중간에 **파일이 디렉터리 자리로** 들어갑니다. 불일치가 아니라
 알려진 한계라 종료 코드에 영향을 주지 않지만, 이미지마다 비율이 다르고
@@ -208,7 +208,7 @@ def _render(report: Report, show: int) -> None:
             f"부모 슬롯 재사용으로 경로가 어긋난 것: "
             f"{len(report.stale_parent):,} / {report.deleted_total:,}건 ({ratio:.0f}%)"
         )
-        print("  알려진 한계입니다 (limitations.md \"$MFT만으로는 알 수 없는 것\"). 판정에 넣지 않습니다.")
+        print("  알려진 한계입니다 (limitations.md 2-10). 판정에 넣지 않습니다.")
         for path in report.stale_parent[:show]:
             print(f"      {path}")
         print()

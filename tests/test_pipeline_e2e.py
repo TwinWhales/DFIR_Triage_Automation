@@ -232,7 +232,7 @@ def test_parse_skips_artifacts_without_a_registered_parser(tmp_path):
     # 올라 있어 항상 excluded 로 전달되며, 파서는 없다. 구현하면 이
     # 테스트가 깨지는데, 그때 함께 볼 것은 mappings/_artifacts.yaml 이다 —
     # 카탈로그와 파서가 어긋난 채로 두면 보고서가 "분석했다"고 말하면서
-    # 실제로는 아무것도 읽지 않는다(docs/limitations.md 4-1).
+    # 실제로는 아무것도 읽지 않는다(docs/limitations-log.md 4-1).
     #
     # registry 와 prefetch 가 차례로 이 자리에 있었다. 파서가 생기면서
     # 옮겼고, 같은 커밋에서 카탈로그에도 등재했다.
@@ -261,7 +261,7 @@ def test_every_supported_artifact_in_the_catalog_has_a_parser(tmp_path):
 
     반대 방향(파서가 있는데 카탈로그에 없음)은 더 나쁘다. 그 아티팩트는
     **선별될 수도 제외될 수도 없어** 보고서에 아예 나타나지 않는다
-    (docs/limitations.md 4-1-1).
+    (docs/limitations.md 4-5).
     """
     from src.stage03_select import mapping_loader
     from src.stage04_parse import parsers

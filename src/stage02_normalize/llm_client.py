@@ -66,7 +66,7 @@ def constrained_schema() -> dict[str, Any]:
     동결 스키마의 ``techniques[].id``는 ``^T\\d{4}(\\.\\d{3})?$`` 패턴이라
     ``T1200.001``처럼 형식은 맞고 실재하지 않는 ID를 통과시킨다. 그것을
     걸러 온 것은 ``attack.is_known``이었고, 걸러 봐야 ``temperature 0``에서는
-    재시도가 같은 답을 받아 왔다(``limitations.md`` 2026-08-24 절 ⑤ —
+    재시도가 같은 답을 받아 왔다(``limitations.md`` 3-9 —
     K-001에서 다섯 번 연속).
 
     패턴을 enum으로 바꾸면 그 ID를 만들 토큰 경로 자체가 사라진다.

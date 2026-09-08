@@ -181,7 +181,7 @@ def test_alternate_usnjrnl_names_are_recognised(tmp_path):
 
 
 def test_an_empty_candidate_does_not_shadow_the_real_file(tmp_path):
-    """실측 회귀 (docs/limitations.md 4-0).
+    """실측 회귀 (docs/limitations-log.md 4-0).
 
     FTK Imager 추출본은 ``$Extend/$UsnJrnl`` 에 이름 없는 ``$DATA``
     (0바이트)를 쓰고 실제 저널을 ``$J`` 로 따로 내놓는다. 0바이트를 유효한

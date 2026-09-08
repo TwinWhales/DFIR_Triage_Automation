@@ -206,7 +206,7 @@ def write_manifest(
     **``skipped``는 읽지 못한 아티팩트다.** 매니페스트는 이 단계가 자기가
     한 일을 적는 곳이므로 "안 한 일"도 여기 적는다. 예전에는 이것이
     ``errors.jsonl``에만 남아 07단계가 볼 수 없었고, 그 결과 보고서가
-    **읽지 못한 아티팩트를 언급조차 하지 않았다**(docs/limitations.md 4-1).
+    **읽지 못한 아티팩트를 언급조차 하지 않았다**(docs/limitations-log.md 4-1).
 
     ``windows``는 증거가 어느 Windows인가다(``osinfo``). 판정에 실패해도
     키는 남는다 — ``{"determined": false, "reason": ...}``. "키가 없다"와
@@ -581,7 +581,7 @@ def main(argv: "list[str] | None" = None) -> int:
         `errors.jsonl` 이 아예 안 만들어졌습니다** — 실측에서 프리패치
         192건이 전부 `UnknownLayout` 이었는데 `tools/live_check.py` 가
         "재시도·실패 0건, 모든 단계가 첫 시도에 통과"로 결산했습니다
-        (`docs/limitations.md` 2026-09-01 절). 같은 리포트가 위쪽에서는
+        (`docs/limitations-log.md` 2026-09-01 절). 같은 리포트가 위쪽에서는
         "파싱 오류 192건"을 찍고 있었습니다.
 
         ``note_skip`` 이 두 곳에 남기는 것과 같은 이유입니다 —

@@ -60,7 +60,7 @@ flags:
       **실물로 확인한 것은 1102 뿐이다** (`snapshotA` 의 `Security.evtx`
       16,647건 중 1건, 2026-09-07). 104 는 같은 수집의 `System.evtx`
       1,683건에 0건이라 **명세를 옮긴 값이다** —
-      `docs/limitations.md` 의 "매핑 — 검증되지 않은 채 채운 항목".
+      `docs/limitations.md` 3-7.
 
       **이 플래그는 시간창 밖이어도 1순위다**(아래 `window_independent`).
       로그를 언제 지웠는지는 공격자가 고르는 것이라, 사고 시간창 안에서
@@ -682,7 +682,7 @@ flags:
       장치와 드라이버 상태에 따라 달라서 둘 다 본다.
 
       **이벤트 ID는 공개 자료 기준 추정치다.** 실제 증거로 대조하지 않았다 —
-      docs/limitations.md "매핑 — 검증되지 않은 채 채운 항목".
+      docs/limitations.md 3-7.
     rule:
       when:
         - artifact: evtx:DriverFrameworks

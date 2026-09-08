@@ -64,7 +64,7 @@
 #               **이 값이 커버리지의 상한이다** — LIMIT 과 함께 올려야 는다
 #   TIMEOUT     한 번 호출의 상한(초). 60GB 급에서 120초는 부족하다는 실측이 있다
 #   TEMPERATURE 0 이면 재시도가 같은 답을 반복한다. 실측에서 존재하지 않는
-#               하위기법을 다섯 번 연속 냈다(docs/limitations.md 5장 ⑤)
+#               하위기법을 다섯 번 연속 냈다(docs/limitations.md 3-9)
 #   LIMIT       05단계가 모델에 보낼 레코드 수의 **상한**. 토큰 예산이
 #               더 낮으면 그쪽이 이긴다
 #   OLLAMA_HOST 기본 http://localhost:11434

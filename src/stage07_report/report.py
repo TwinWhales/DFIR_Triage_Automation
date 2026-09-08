@@ -450,7 +450,7 @@ def _limits(
 
     3번이 없으면 보고서가 **읽지 못한 아티팩트를 언급조차 하지 않습니다.**
     "봤는데 없었다"와 "못 봤다"를 구분하는 것이 이 도구의 존재 이유이므로,
-    그 구멍은 기능 결손이 아니라 논지의 구멍입니다(docs/limitations.md 4-1).
+    그 구멍은 기능 결손이 아니라 논지의 구멍입니다(docs/limitations-log.md 4-1).
 
     마지막으로 **차집합으로 검산합니다.** ``selected``에 있는데 읽지도
     스킵되지도 않은 아티팩트가 남으면 04단계가 기록을 빠뜨린 것이므로,
@@ -466,7 +466,7 @@ def _limits(
             # 본 버전은 Tier 2 루프백이 없다. 조건을 **평가한 적이 없으므로**
             # "조건 미충족"이라고 쓰면 사실과 다르다 — 평가했는데 안 걸린
             # 것처럼 읽힌다. 실제로 $MFT가 deleted 69건을 냈는데도 "미충족"
-            # 으로 적힌 사례가 있었다(docs/limitations.md 3).
+            # 으로 적힌 사례가 있었다(docs/limitations.md 3-1).
             "reason": f"Tier 2 루프백 미구현으로 미평가 (조건: {entry['trigger']})",
         }
         for entry in selection.get("deferred", [])
@@ -575,7 +575,7 @@ def main(argv: "list[str] | None" = None) -> int:
 
         # 04단계가 무엇을 읽고 무엇을 건너뛰었는지. 이것이 없으면 보고서의
         # "분석 범위"가 요청 목록만 보고 쓰이며, 읽지 못한 아티팩트가
-        # 통째로 사라진다(docs/limitations.md 4-1).
+        # 통째로 사라진다(docs/limitations-log.md 4-1).
         manifest_path = Path(args.parsed) / "_manifest.json"
         if manifest_path.is_file():
             manifest = io.read_json(manifest_path)

@@ -186,7 +186,7 @@ Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
   목록이 03 의 유일한 입력이라 그 축의 아티팩트는 선별되지 않는다.
   **이것은 할 일이 아니라 닫힌 판단이다** — 02 에 가드를 두면 검사기가 아니라
   분류기를 다시 만드는 것이라, 완화를 뒤(`benchmark/rejections.yaml`)에 맡겼다. 지금도
-  참인 내용은 `docs/limitations.md` 의 "02단계가 축을 놓치면" 절.
+  참인 내용은 `docs/limitations.md` 3-6.
   **가드가 하나 생겼지만 이 판단을 뒤집지는 않는다**(2026-09-07) —
   `grounding.MECHANISM_CUES` 에 적힌 기법에 한해 "이름이 도구를 지목하는데
   서술에 그 도구가 없는가"만 본다. 어느 기법이 맞는지는 여전히 판정하지
@@ -196,14 +196,14 @@ Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
   닫혔다). 하지만 **레코드에는 있는데 claims 에는 없는** 것을 말한 문장은
   그대로 통과하고, `--mode assemble` 에서 claims 는 파이썬이 원본에서
   조립하므로 `value_match`는 여전히 항등식이다.
-  **환각률 0%를 품질로 인용하지 않는다** (`docs/limitations.md` "환각률 0%는 품질을 뜻하지 않습니다").
+  **환각률 0%를 품질로 인용하지 않는다** (`docs/limitations.md` 4-4).
 - **사람이 만든 정답 데이터가 없어 수치가 자기채점**이다 (팀원 트랙: 정답 벤치마크 작성).
 - **키오스크 축이 아직 미검증이다.** `AssignedAccess` 3종·`DriverFrameworks`·
   `RDPConnection` 다섯 채널이 손에 있는 어느 증거에도 없다 — **KAPE 수집도
   같은 다섯이 비어 있다**(2026-09-04 확인). 파일 경로 문자열과 `event_id`
   추정값을 실물로 맞춰 본 적이 없다. `unexpected_parent_process`가
   `explorer.exe`를 이상으로 보는 가정도 Assigned Access 를 켠 스냅샷이 있어야
-  잰다 (`docs/limitations.md` "Assigned Access 축 미검증").
+  잰다 (`docs/limitations.md` 2-7).
 
   다만 `RDPSession`·`KernelPnP`는 이 KAPE 수집에 **있다**. 기법 매핑이
   요청하기만 하면 이 둘은 지금 실물로 잴 수 있다.

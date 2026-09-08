@@ -385,7 +385,7 @@ def test_a_corrupt_region_does_not_swallow_the_rest():
 
 
 def test_one_bad_region_counts_as_one_not_once_per_step(caplog):
-    """**집계 단위 회귀 (docs/limitations.md 4-0-1).**
+    """**집계 단위 회귀 (docs/limitations-log.md 4-0-1).**
 
     파서는 레코드가 아닌 바이트를 만나면 8바이트씩 걸으며 재동기화한다.
     걸음마다 세면 구간 하나가 수만 건으로 부풀어, 매니페스트를 읽는
@@ -523,7 +523,7 @@ def test_an_empty_stream_is_an_error_not_an_empty_result():
     경우가 구별되지 않는다. 실제로 밟았다 — FTK Imager 추출본이
     ``$Extend/$UsnJrnl`` 에 이름 없는 ``$DATA``(0바이트)를 쓰고 실제
     저널은 ``$J`` 로 따로 내놓는데, 파이프라인이 30만 건짜리 저널을
-    옆에 두고 "레코드 0건"을 보고했다. (docs/limitations.md 4-0)
+    옆에 두고 "레코드 0건"을 보고했다. (docs/limitations-log.md 4-0)
     """
     with pytest.raises(ValueError, match="비어 있습니다"):
         parse(b"")
