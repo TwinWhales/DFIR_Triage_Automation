@@ -160,6 +160,24 @@ def test_duration_and_count_compare_numeric_values():
     assert result["passed"][0]["checks"] == 2
 
 
+def test_count_does_not_borrow_the_timestamp_tolerance():
+    """**개수에 초 단위 허용오차를 쓰지 않는다.**
+
+    기본 허용오차 1.0초를 개수 비교에 그대로 적용하면 자식이 7개인데 "6개"라
+    주장해도 통과한다(2026-09-08 확인). 이 브랜치의 검증선이 assertion 이므로
+    여기서 새는 것은 곧 환각률이 새는 것이다. 개수는 맞거나 틀리거나다.
+    """
+    records = {"SYSMON#1": {"ref": "SYSMON#1", "incident_context": {"child_count": 7}}}
+    doc = _doc({
+        "predicate": "count",
+        "subject": {"ref": "SYSMON#1", "field": "incident_context.child_count"},
+        "object": 6,
+    }, ["SYSMON#1"])
+
+    result = verify.verify(doc, records)
+    assert result["rejected"][0]["reason"] == "assertion_contradicted"
+
+
 def test_stage06_invalidates_supported_story_sentence_when_its_finding_is_rejected():
     records = {"AMCACHE#1": {"ref": "AMCACHE#1", "canonical": {"subject_path": r"C:\Program Files\x.exe"}}}
     assertion = {

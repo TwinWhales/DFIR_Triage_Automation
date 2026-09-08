@@ -388,11 +388,34 @@ prompt_keep_path_groups:
       attack: T1555
       signal: sensitive_credential_store_referenced
       must_review: true
+      representative_images: ['msedge.exe']   # 대표 선택 우선순위 (선언 순서)
       contains:
         - '\login data'
         - '\logins.json'
         - '\cookies'
+
+attention_signals:
+  credential_export_option_observed:
+    must_review: true
+    all_contains: [netsh, wlan, key=clear]
+    representative_images: ['netsh.exe', 'cmd.exe']
+  epoch_timestamp_observed:
+    must_review: true
+    match_fields: [timestamp]               # 이 필드만 본다
+    any_contains: ['1970-']
 ```
+
+**`representative_images` 는 파이썬에 이름을 적지 않기 위한 자리입니다.**
+같은 시그널이 여러 레코드에 걸리면 그중 하나만 `must_review` 대표가 되는데,
+그 우선순위를 코드에 적으면 표본에서만 맞는 값이 남습니다 — 실제로
+`z7hriire.exe`(SVCStealer 가 그 실행에서 만든 무작위 이름)가 `attention.py`
+에 박혀 있었습니다. 선언 순서가 우선순위이고, 목록에 없는 실행 파일은 전부
+동순위이며, 동순위면 **먼저 관측된 것**이 대표입니다.
+
+**`match_fields` 는 어휘가 볼 값을 좁힙니다.** 안 적으면 레코드의 모든
+문자열이 대상이 되어, `1970-` 같은 어휘가 `C:\photos\1970-summer.jpg` 같은
+정상 경로에 걸려 보장 레인 한 자리를 먹습니다(2026-09-08 확인). 시각·명령행
+처럼 볼 자리가 정해진 어휘는 반드시 좁혀 적습니다.
 
 **플래그가 아닙니다.** 05단계는 `fields` 안의 긴 목록을 상한까지 자르는데
 (`allocation.MAX_LIST_ITEMS`), 그 자리에 **먼저 넣을** 항목을 여기 어휘로

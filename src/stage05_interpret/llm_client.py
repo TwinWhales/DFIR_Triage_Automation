@@ -640,7 +640,6 @@ class InterpretClient:
         picked: list[dict[str, Any]],
         relation_catalog: list[dict[str, Any]] | None = None,
         feedback: str | None = None,
-        repair_missing_review: bool = False,
     ) -> list[dict[str, Any]]:
         """고른 항목들 중 **서로 이어지는 것**을 묶어 달라고 묻는다.
 
@@ -702,49 +701,30 @@ class InterpretClient:
             }
             if not story_refs <= allowed_refs:
                 raise MalformedOutput(f"incident_story가 Map에 없는 ref를 인용함: {sorted(story_refs - allowed_refs)}")
-            missing_review: list[str] = []
-            for item in picked:
-                ref = str(item.get("ref") or "")
-                if not ref or not item.get("attention_signals"):
-                    continue
-                relevant_text = "\n".join(
-                    str(sentence.get("text") or "") for sentence in sentences
-                    if isinstance(sentence, dict) and ref in (sentence.get("refs") or [])
-                ).casefold()
-                requirements = item.get("attention_requirements") or {}
-                covered = bool(relevant_text)
-                for signal in item.get("attention_signals") or []:
-                    requirement = requirements.get(signal) or {}
-                    all_terms = [str(term).casefold() for term in requirement.get("all", [])]
-                    any_terms = [str(term).casefold() for term in requirement.get("any", [])]
-                    covered = covered and all(term in relevant_text for term in all_terms)
-                    covered = covered and (not any_terms or any(term in relevant_text for term in any_terms))
-                if not covered:
-                    missing_review.append(ref)
-            missing_review = sorted(set(missing_review))
+            # **인용했는가만 본다.** 시그널 어휘가 문장에 문자 그대로
+            # 있는지까지 요구하면, "Wi-Fi 자격증명을 평문으로 내보내는 명령이
+            # 실행됐다" 처럼 옳게 쓴 문장이 `key=clear` 가 없다는 이유로
+            # 기각된다. 그것은 의미 검사가 아니라 전사(轉寫) 강요이고, 모델에게
+            # 무엇을 쓸지 받아쓰게 하는 것이다. 우리가 보장할 것은 "그 증거가
+            # 서사에서 다뤄졌는가"까지이고, 잘 다뤘는지는 Critic 이 판정한다.
+            cited = {
+                ref for sentence in sentences if isinstance(sentence, dict)
+                for ref in (sentence.get("refs") or [])
+            }
+            missing_review = sorted({
+                str(item.get("ref"))
+                for item in picked
+                if item.get("ref") and item.get("attention_signals")
+                and str(item.get("ref")) not in cited
+            })
+            # 못 채우면 기각하고 재시도한다. **파이썬이 대신 쓰지 않는다** —
+            # 서사를 만드는 것이 sLLM 의 일이고, 대신 써 주면 그 문장이
+            # Critic 심사와 story_review 를 거쳐 모델 판단으로 보이게 된다.
             if missing_review:
-                if not repair_missing_review:
-                    raise MalformedOutput(
-                        "incident_story가 must_review 증거를 인용하지 않음: "
-                        + ", ".join(missing_review)
-                    )
-                picked_by_ref = {str(item.get("ref")): item for item in picked}
-                for ref in missing_review:
-                    item = picked_by_ref[ref]
-                    contexts = [
-                        value
-                        for values in (item.get("attention_context") or {}).values()
-                        for value in values
-                    ][:2]
-                    text = str(item.get("reason") or "필수 검토 관측")
-                    if contexts:
-                        text += " 원본 관측값: " + " | ".join(contexts)
-                    sentences.append({
-                        "id": f"N{len(sentences) + 1}",
-                        "text": text,
-                        "kind": "observed_fact",
-                        "refs": [ref],
-                    })
+                raise MalformedOutput(
+                    "incident_story가 must_review 증거를 인용하지 않음: "
+                    + ", ".join(missing_review)
+                )
         self.last_incident_story = candidate_story
         return [item for item in found if isinstance(item, dict)]
 
@@ -836,16 +816,10 @@ class InterpretClient:
                 "attention_signals": list(source_record.get("attention_signals") or []),
                 "attention_context": dict(source_record.get("attention_context") or {}),
                 "attention_requirements": dict(source_record.get("attention_requirements") or {}),
-                "assertions": (
-                    [{
-                        "predicate": "list_contains",
-                        "subject": {"ref": ref, "field": "fields.loaded_files"},
-                        "object": token,
-                    } for token in ((source_record.get("attention_evidence") or {}).get(
-                        "sensitive_credential_store_referenced", []
-                    ))[:2]]
-                    if signal_id.endswith(":sensitive_credential_store_referenced") else []
-                ),
+                # **assertion 을 파이썬이 지어 넣지 않는다.** 특정 시그널
+                # 이름과 특정 아티팩트 필드를 여기 적으면, 모델이 만든 적 없는
+                # 검산식이 모델 출력인 것처럼 findings 에 실린다.
+                "assertions": [],
             })
             selected_refs.add(ref)
         return selected

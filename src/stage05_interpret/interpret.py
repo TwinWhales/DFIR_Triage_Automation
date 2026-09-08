@@ -734,7 +734,6 @@ def _connect(
         try:
             found = client.propose_connections(
                 scenario, picked, relation_catalog, feedback,
-                repair_missing_review=(attempt == max_attempts),
             )
             if queries is not None:
                 queries.record(
@@ -1476,6 +1475,17 @@ def main(
             f"예산 {budget_chars:,}자). "
             f"--num-ctx {args.num_ctx} 에서 "
             f"출력 {args.reserve_output_tokens}토큰을 뺀 값이다"
+        )
+
+    if budget.over_budget:
+        # 보장 레인은 자릿수 상한을 받지 않아 예산을 넘길 수 있다. 넘겼다는
+        # 사실까지 말하지 않으면 프롬프트가 창을 넘어 앞이 잘려도 조용하다.
+        print(
+            f"  토큰 예산 초과: {budget.used_chars:,}자 "
+            f"(예산 {budget_chars:,}자). must_review 레코드는 자릿수 상한을 "
+            f"받지 않습니다 — Map 조각으로 나뉘지만, 한 레코드가 예산보다 크면 "
+            f"그 조각은 창을 넘습니다.",
+            file=sys.stderr,
         )
 
     if queries.count:

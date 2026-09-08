@@ -21,6 +21,8 @@ class PathGroup:
     signal: str | None = None
     must_review: bool = False
     attack: str | None = None
+    #: 대표 레코드 선택 우선순위. 선언 순서가 곧 우선순위다.
+    representative_images: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,11 @@ class SignalRule:
     all_contains: tuple[str, ...] = ()
     any_contains: tuple[str, ...] = ()
     must_review: bool = True
+    #: 대표 레코드 선택 우선순위. 선언 순서가 곧 우선순위다.
+    representative_images: tuple[str, ...] = ()
+    #: 비면 레코드의 모든 문자열을 본다. 적으면 그 필드(점 표기)만 본다 —
+    #: 좁히지 않으면 시각 어휘가 경로에 걸리는 식의 오적중이 생긴다.
+    match_fields: tuple[str, ...] = ()
 
     def matches(self, text: str) -> bool:
         return bool(
@@ -79,15 +86,20 @@ def load(directory: str | None = None) -> AttentionPolicy:
         signal = spec.get("signal")
         if signal is not None and (not isinstance(signal, str) or not signal):
             raise PolicyError(f"{path}: group {name}.signal must be a string")
-        groups.append(PathGroup(str(name), _strings(spec.get("contains"), f"{name}.contains"), signal,
-                                bool(spec.get("must_review", False)), spec.get("attack")))
+        groups.append(PathGroup(
+            str(name), _strings(spec.get("contains"), f"{name}.contains"), signal,
+            bool(spec.get("must_review", False)), spec.get("attack"),
+            _strings(spec.get("representative_images"), f"{name}.representative_images"),
+        ))
     rules_raw = data.get("attention_signals") or {}
     if not isinstance(rules_raw, dict):
         raise PolicyError(f"{path}: attention_signals must be a mapping")
     rules = tuple(
         SignalRule(str(name), _strings(spec.get("all_contains"), f"{name}.all_contains"),
                    _strings(spec.get("any_contains"), f"{name}.any_contains"),
-                   bool(spec.get("must_review", True)))
+                   bool(spec.get("must_review", True)),
+                   _strings(spec.get("representative_images"), f"{name}.representative_images"),
+                   _strings(spec.get("match_fields"), f"{name}.match_fields"))
         for name, spec in rules_raw.items()
         if isinstance(spec, dict)
     )

@@ -992,7 +992,14 @@ def test_reduce_rejects_story_that_drops_a_must_review_ref():
         client.propose_connections({"techniques": []}, picked, [])
 
 
-def test_reduce_requires_signal_terms_not_just_the_same_ref():
+def test_reduce_accepts_a_paraphrase_that_cites_the_must_review_ref():
+    """**어휘 전사를 요구하지 않는다.**
+
+    시그널 어휘(`key=clear`)가 문장에 문자 그대로 있는지까지 보면, 뜻을 옳게
+    옮긴 문장이 단어가 다르다는 이유로 기각된다. 그것은 의미 검사가 아니라
+    받아쓰기 강요다. 여기서 보장할 것은 그 증거가 서사에서 다뤄졌는가까지고,
+    잘 다뤘는지는 Critic 이 판정한다.
+    """
     picked = [{
         **_pick("SYSMON#1"),
         "attention_signals": ["credential_export_option_observed"],
@@ -1005,15 +1012,17 @@ def test_reduce_requires_signal_terms_not_just_the_same_ref():
         "incident_story": {
             "summary": "요약", "critical_threat": "위협",
             "sentences": [{
-                "id": "N1", "text": "netsh 파일의 시간이 보였다",
+                "id": "N1",
+                "text": "무선 프로파일을 평문으로 내보내는 명령이 실행됐다",
                 "kind": "observed_fact", "refs": ["SYSMON#1"],
             }],
         },
     }, ensure_ascii=False)
     client = InterpretClient(FakeBackend(response))
 
-    with pytest.raises(MalformedOutput, match="SYSMON#1"):
-        client.propose_connections({"techniques": []}, picked, [])
+    client.propose_connections({"techniques": []}, picked, [])
+
+    assert client.last_incident_story["sentences"][0]["refs"] == ["SYSMON#1"]
 
 
 def test_reduce_completes_catalogued_relation_endpoints_without_inference():
@@ -1042,7 +1051,12 @@ def test_reduce_completes_catalogued_relation_endpoints_without_inference():
     assert connections[0]["refs"] == ["SYSMON#1", "MFT#1", "SYSMON#2"]
 
 
-def test_final_reduce_attempt_preserves_missing_review_as_observed_fact():
+def test_python_never_ghostwrites_a_missing_review_sentence():
+    """서사를 만드는 것은 sLLM 의 일이다.
+
+    못 채우면 기각하고 재시도한다. 파이썬이 대신 문장을 써 넣으면 그것이
+    Critic 심사와 story_review 를 거쳐 **모델이 판단한 것처럼 보인다.**
+    """
     picked = [
         {
             **_pick("SYSMON#1"),
@@ -1064,13 +1078,10 @@ def test_final_reduce_attempt_preserves_missing_review_as_observed_fact():
     }, ensure_ascii=False)
     client = InterpretClient(FakeBackend(response))
 
-    client.propose_connections(
-        {"techniques": []}, picked, [], repair_missing_review=True
-    )
+    with pytest.raises(MalformedOutput, match="SYSMON#1"):
+        client.propose_connections({"techniques": []}, picked, [])
 
-    repaired = client.last_incident_story["sentences"][1]
-    assert repaired["refs"] == ["SYSMON#1"]
-    assert "key=clear" in repaired["text"]
+    assert client.last_incident_story is None
 
 
 def test_one_pick_needs_no_reduce_query(monkeypatch, tmp_path):

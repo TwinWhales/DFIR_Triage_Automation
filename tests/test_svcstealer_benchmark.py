@@ -5,13 +5,11 @@ from src.stage05_interpret import attention
 from src.stage06_verify import verify
 
 
+#: SVCStealer 실측(2026-09-07)의 정답 데이터. **픽스처를 픽스처로 검사하지
+#: 않는다** — `len(direct_children) == 7` 같은 단언은 프로덕션 코드를 한 줄도
+#: 건드리지 않아 어떤 회귀에도 실패하지 못한다. 통과 수만 늘려 수치를 흐린다.
+#: 아래 둘처럼 이 값으로 **코드를 돌려 본 것**만 테스트다.
 EXPECTED = json.loads((Path(__file__).parent / "data" / "svcstealer_expected.json").read_text(encoding="utf-8"))
-
-
-def test_expected_fixture_keeps_the_measured_ground_truth():
-    assert len(EXPECTED["direct_children"]) == 7
-    assert EXPECTED["root_lifetime_seconds"] == 0.444739
-    assert EXPECTED["root_sha256"].startswith("3a297d")
 
 
 def test_required_observations_are_implemented_as_attention_not_verdicts():

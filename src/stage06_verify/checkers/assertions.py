@@ -133,9 +133,15 @@ def check(finding: dict[str, Any], ctx: CheckContext) -> CheckResult:
             elif predicate == "within":
                 tolerance = float(assertion.get("tolerance_seconds", ctx.tolerance_seconds))
                 valid = abs((_time(subject) - _time(other)).total_seconds()) <= tolerance
-            elif predicate in {"duration", "count"}:
+            elif predicate == "duration":
+                # 초 단위 값이므로 시각 허용오차를 그대로 쓴다.
                 tolerance = float(assertion.get("tolerance_seconds", ctx.tolerance_seconds))
                 valid = abs(_number(subject) - _number(other)) <= tolerance
+            elif predicate == "count":
+                # **개수에 초 단위 허용오차를 쓰지 않는다.** 기본값 1.0 초를
+                # 그대로 적용하면 자식이 7개인데 "6개"라 주장해도 통과한다
+                # (2026-09-08 확인). 개수는 맞거나 틀리거나 둘 중 하나다.
+                valid = _number(subject) == _number(other)
             else:
                 valid = False
         except (KeyError, comparators.FieldMissing) as error:

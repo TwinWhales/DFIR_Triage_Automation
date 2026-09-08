@@ -242,6 +242,15 @@ class Budget:
         return self.enforced and self.effective_limit < self.requested_limit
 
     @property
+    def over_budget(self) -> bool:
+        """줄일 만큼 줄이고도 예산을 넘었는가.
+
+        보장 레인(``must_review``)은 자릿수 상한을 받지 않으므로 이 값이
+        참일 수 있습니다. 조용히 넘기지 않기 위해 재고 남깁니다.
+        """
+        return self.enforced and self.used_chars > (self.char_budget or 0)
+
+    @property
     def estimated_tokens(self) -> int:
         return int(self.used_chars / CHARS_PER_TOKEN)
 
@@ -838,8 +847,12 @@ def allocate_records(
     seats, chosen, used_chars = pick(effective_limit)
     natural_records = len(chosen)
 
-    guaranteed_chars = sum(record_chars(record, max_list_items) for record in guaranteed.values())
-    if char_budget is not None and used_chars > char_budget and guaranteed_chars <= char_budget:
+    # 보장 레인만으로 예산을 넘더라도 **줄이는 것을 건너뛰지 않는다.**
+    # 건너뛰면 일반 자리가 상한 그대로 남아 초과폭이 더 커지고, 예산을 넘긴
+    # 사실이 아무 데도 안 남는다. ``_fit_limit`` 은 하나도 안 들어오면 0을
+    # 주고, 그때 남는 것은 보장 레인뿐이다 — 초과분은 뒤에서 Map 조각으로
+    # 나뉘고, 남은 초과는 ``Budget.over_budget`` 으로 드러난다.
+    if char_budget is not None and used_chars > char_budget:
         effective_limit = _fit_limit(pick, effective_limit, char_budget)
         seats, chosen, used_chars = pick(effective_limit)
 
