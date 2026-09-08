@@ -14,6 +14,32 @@
 기각된 {{ stats.rejected }}개 문장은 근거 검증을 통과하지 못해 본 보고서에서 제외되었습니다.
 {% endif %}
 
+{% if story.sentences or story.dropped or story.unreviewed %}
+## 사건 개요 서사 (Incident Narrative)
+
+{% if story.sentences %}
+{% for item in story.sentences %}
+{{ loop.index }}. {{ item.badge }} [{{ item.kind_label }}] {{ item.text }}
+{% if item.evidence %}
+   - 근거: {{ item.evidence | join(' / ') }}
+{% endif %}
+{% if item.reason %}
+   - ⚠️ 분석가 확인 권장: {{ item.reason }}
+{% endif %}
+{% endfor %}
+{% else %}
+본문에 실을 수 있는 서사 문장이 없습니다.
+{% endif %}
+{% if story.dropped %}
+
+서사 {{ story.dropped }}문장은 인용 근거가 기각되었거나 부족하여 제외되었습니다.
+{% endif %}
+{% if story.unreviewed %}
+
+서사 {{ story.unreviewed }}문장은 06단계 검토 기록이 없어 제외되었습니다 (05단계가 story_critic 을 내지 않음).
+{% endif %}
+
+{% endif %}
 ## 확인된 사실 (🟢 Passed)
 {% if passed %}
 {% for finding in passed %}

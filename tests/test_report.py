@@ -548,3 +548,92 @@ def test_the_report_pairs_each_technique_with_its_evidence_quote():
     rendered = report_mod.render(context)
     for technique in scenario["techniques"]:
         assert technique["evidence_text"] in rendered
+
+
+# ============================================== 서사는 판정된 문장만 싣는가
+
+
+def _with_story(docs, sentences, review):
+    docs["findings"]["incident_story"] = {
+        "summary": "요약",
+        "critical_threat": "위협",
+        "sentences": sentences,
+    }
+    docs["verified"]["story_review"] = review
+    return docs
+
+
+def test_the_narrative_carries_only_sentences_stage_06_upheld(docs):
+    """기각·부족 판정을 받은 서사 문장은 본문에 실리지 않는다.
+
+    소견은 전부 대조하면서 산문만 검증을 우회하면, 보고서에서 가장 먼저
+    읽히는 자리가 검증되지 않은 문장이 된다.
+    """
+    docs = _with_story(
+        docs,
+        [
+            {"id": "N1", "text": "웹셸이 업로드됐다", "kind": "observed_fact", "refs": ["MFT#12345"]},
+            {"id": "N2", "text": "공격자가 관리자를 탈취했다", "kind": "analytical_assessment", "refs": []},
+        ],
+        [
+            {"sentence_id": "N1", "verdict": "supported", "reason": ""},
+            {"sentence_id": "N2", "verdict": "insufficient", "reason": "근거 없음"},
+        ],
+    )
+    context = _context(docs)
+    assert [item["id"] for item in context["story"]["sentences"]] == ["N1"]
+    assert context["story"]["dropped"] == 1
+
+    text = render(context)
+    assert "웹셸이 업로드됐다" in text
+    assert "공격자가 관리자를 탈취했다" not in text
+    assert "서사 1문장은 인용 근거가 기각되었거나 부족하여 제외" in text
+
+
+def test_a_warning_sentence_survives_with_its_reason(docs):
+    """노란불 문장은 버리지 않고 사유와 함께 남긴다.
+
+    표기 차이 하나로 서사가 통째로 끊기던 자리다. 남기되 분석가가 볼
+    것을 함께 적지 않으면 초록불과 구별되지 않는다.
+    """
+    docs = _with_story(
+        docs,
+        [{"id": "N1", "text": "OneDrive 가 범위 밖에서 실행됐다", "kind": "observed_fact", "refs": ["MFT#12345"]}],
+        [
+            {
+                "sentence_id": "N1",
+                "verdict": "supported_with_warning",
+                "reason": "핵심 근거는 보존하되 수동 검증이 필요함",
+            }
+        ],
+    )
+    text = render(_context(docs))
+    assert "OneDrive 가 범위 밖에서 실행됐다" in text
+    assert "분석가 확인 권장: 핵심 근거는 보존하되 수동 검증이 필요함" in text
+
+
+def test_an_unreviewed_narrative_is_counted_not_printed(docs):
+    """06단계가 보지 않은 서사는 개수만 밝히고 본문에 넣지 않는다.
+
+    05단계가 ``story_critic`` 을 내지 않으면 ``story_review`` 자체가 없다.
+    그때 서사를 그대로 인쇄하면 검증을 우회한 산문이 되고, 아무 말도 하지
+    않으면 05단계 설정이 빠진 것을 아무도 모른다.
+    """
+    docs = _with_story(
+        docs,
+        [{"id": "N1", "text": "검토되지 않은 문장", "kind": "unknown", "refs": []}],
+        [],
+    )
+    docs["verified"].pop("story_review", None)
+    context = _context(docs)
+    assert context["story"] == {"sentences": [], "dropped": 0, "unreviewed": 1}
+
+    text = render(context)
+    assert "검토되지 않은 문장" not in text
+    assert "06단계 검토 기록이 없어 제외" in text
+
+
+def test_no_narrative_means_no_section(docs):
+    """05단계가 서사를 내지 않으면 섹션 자체가 없다."""
+    text = render(_context(docs))
+    assert "사건 개요 서사" not in text

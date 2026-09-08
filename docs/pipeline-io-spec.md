@@ -512,6 +512,15 @@ sLLM 해석 결과. 모든 문장에 `refs` 필수입니다.
 확인된 사실, `unverifiable`은 근거와 수동 검증 사유를 보존한 Warning으로
 표시합니다. `rejected`는 본문과 타임라인에서 제외합니다.
 
+서사는 `05_findings.json`의 `incident_story.sentences`를 원문 그대로 싣되,
+`06_verified.json`의 `story_review`가 `supported` 또는
+`supported_with_warning`으로 판정한 문장만 남깁니다. **판정 기록이 없는
+문장은 싣지 않습니다** — `story_review`는 05단계가 `story_critic`을 냈을
+때만 만들어지므로, 그것이 없는데 서사를 인쇄하면 소견은 전부 대조하면서
+산문만 검증을 우회합니다. 빠진 문장은 사유별(기각·부족 / 미검토)로 개수를
+밝힙니다. `incident_story.summary`와 `critical_threat`은 어느 단계도
+대조하지 않으므로 보고서에 싣지 않습니다.
+
 ```markdown
 # 침해사고 분석 보고서 — C-001
 
@@ -519,6 +528,16 @@ sLLM 해석 결과. 모든 문장에 `refs` 필수입니다.
 - 대상 호스트: WEB01 (Windows Server 2019)
 - 분석 기간: 2026-07-18 ~ 2026-07-22
 - 식별 기법: T1505.003 (Web Shell), T1136.001 (Create Account)
+
+## 사건 개요 서사 (Incident Narrative)
+
+1. 🟢 [관측] 2026-07-20 03:14 웹루트에 shell.aspx가 생성됐다.
+   - 근거: $MFT 레코드 12345 (오프셋 0x1E000)
+2. 🟡 [관측] 직후 w3wp.exe가 cmd.exe를 띄웠다.
+   - 근거: evtx:Security 레코드 40912 (오프셋 0x2A1000)
+   - ⚠️ 분석가 확인 권장: 인용 finding의 핵심 근거는 보존하되 수동 검증이 필요함
+
+서사 1문장은 인용 근거가 기각되었거나 부족하여 제외되었습니다.
 
 ## 확인된 사실 (🟢 Passed)
 
