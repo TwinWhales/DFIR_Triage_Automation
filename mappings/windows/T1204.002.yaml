@@ -36,7 +36,9 @@ artifacts:
     tier: 1
     priority: 1
     scope_template:
-      event_ids: [1]
+      # Event 5 is required to close the lifetime of Event 1 processes.  It is
+      # context for the sLLM, not a maliciousness rule.
+      event_ids: [1, 5]
     rationale: 프로세스 생성 시각·명령행·부모 프로세스·해시
 
   - name: $MFT

@@ -3107,4 +3107,14 @@ Wazuh JSON 알럿 파일 하나를 받아 `01_input.json`을 만들고 02단계�
 
 ### ③ 라이브 호스트 직접 수집(`\\.\C:`) 미지원
 파이프라인의 증거 접근 계층(`src/stage04_parse/evidence.py`)은 마운트된 디렉터리나 이미지 파일 경로만 입력으로 받습니다. Wazuh 알럿이 발생한 라이브 시스템에서 파이프라인이 볼륨 장치를 직접 열어 실시간 트리아지를 수행할 수 없으므로, KAPE 등으로 추출된 볼륨 덤프 폴더(`--evidence`)가 반드시 선행되어야 합니다.
+## SVCStealer 인지·검증 개편 후 잔여 한계 (2026-09-07)
+
+- 현재 프로세스 문맥은 시작/종료와 직접 자식을 직렬화하지만, MFT·Prefetch·Amcache를
+  normalized path로 합친 완전한 `corroboration` 패킷은 아직 구현되지 않았다.
+- typed assertion은 `equals`, `contains`, 경로 안/밖·동일, 시간 선후를 지원한다.
+  `spawned`, `within`, `same_hash`, `duration`, `count`, `list_contains`는 후속 범위다.
+- 필수 시그널 disposition은 각 Map 호출에서 누락을 거부하지만, 아직 최종 findings에
+  별도 감사 필드로 보존되지는 않는다.
+- 1회 증거 확장 루프, 사건 패킷 전용 Reduce, 보고서 Facts/Inferences/Unknowns 분리와
+  세부 지표 8종은 후속 구현이 필요하다.
 

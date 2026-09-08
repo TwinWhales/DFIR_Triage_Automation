@@ -1,0 +1,45 @@
+version: 1
+
+# One ordered vocabulary drives both long-list preservation and attention.
+# Entries describe observed strings only; they do not classify maliciousness.
+prompt_keep_path_groups:
+  max_items: 12
+  groups:
+    credential_stores:
+      attack: T1555
+      signal: sensitive_credential_store_referenced
+      must_review: true
+      contains:
+        - '\login data'
+        - '\logins.json'
+        - '\key4.db'
+        - '\cookies'
+        - '\cookies.sqlite'
+        - '\recentservers.xml'
+        - '\winscp.ini'
+    investigation_paths:
+      must_review: false
+      contains:
+        - '\appdata\local\temp\'
+        - '\appdata\roaming\'
+        - '\windows\temp\'
+        - '\users\'
+        - '\$recycle.bin\'
+        - '\perflogs\'
+        - '\programdata\'
+        - '\downloads\'
+
+attention_signals:
+  credential_export_option_observed:
+    must_review: true
+    all_contains: [netsh, wlan, key=clear]
+  browser_sandbox_disabled:
+    must_review: true
+    all_contains: ['--no-sandbox']
+  silent_install_option_observed:
+    must_review: true
+    any_contains: ['/verysilent', '/silent']
+  epoch_timestamp_observed:
+    must_review: true
+    any_contains: ['1970-']
+

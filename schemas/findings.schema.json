@@ -9,6 +9,10 @@
   "$defs": {
     "ref": { "type": "string", "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF|SYSMON|EVTX-DRV|EVTX-PNP|EVTX-AAOP|EVTX-AAADM|EVTX-AABRK|EVTX-RDPCM|EVTX-RDPLSM|EVTX-APP|EVTX-DEF|EVTX-PS|SRUM-NET|SRUM-APP|SRUM-CONN|SQLITE-SR|SQLITE-WPN)#(0|[1-9]\\d*)$" },
     "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
+    ,"endpoint": {
+      "type": "object", "required": ["ref", "field"], "additionalProperties": false,
+      "properties": { "ref": { "$ref": "#/$defs/ref" }, "field": { "type": "string", "minLength": 1 } }
+    }
   },
   "properties": {
     "case_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
@@ -50,6 +54,18 @@
                   "type": ["string", "number", "boolean"],
                   "description": "타입을 좁히지 않는다. 크기를 4821로 쓰든 \"4821\"로 쓰든 사실 자체는 맞으므로, 표기 차이를 스키마 위반으로 잡으면 환각률이 표기 문제로 부풀려진다. 타입 정규화는 comparators.py가 맡는다."
                 }
+              }
+            }
+          },
+          "assertions": {
+            "type": "array",
+            "description": "문장 의미를 검증하는 선택적 관계 assertion. 기존 claims와 병행한다.",
+            "items": {
+              "type": "object", "required": ["predicate", "subject", "object"], "additionalProperties": false,
+              "properties": {
+                "predicate": { "enum": ["equals", "contains", "list_contains", "under_path", "outside_path", "same_path", "before", "after"] },
+                "subject": { "$ref": "#/$defs/endpoint" },
+                "object": { "oneOf": [{ "$ref": "#/$defs/endpoint" }, { "type": ["string", "number", "boolean"] }] }
               }
             }
           },

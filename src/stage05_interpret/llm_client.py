@@ -217,12 +217,30 @@ def selection_schema(
             "reason": {"type": "string"},
             "severity": {"enum": list(SEVERITIES)},
             "evidence_fields": evidence,
+            "assertions": {
+                "type": "array",
+                "maxItems": 2,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "predicate": {"enum": ["equals", "contains", "list_contains", "under_path", "outside_path", "same_path", "before", "after"]},
+                        "subject": {
+                            "type": "object",
+                            "properties": {"ref": {"const": ref}, "field": {"enum": names}},
+                            "required": ["ref", "field"], "additionalProperties": False,
+                        },
+                        "object": {"type": ["string", "number", "boolean"]},
+                    },
+                    "required": ["predicate", "subject", "object"],
+                    "additionalProperties": False,
+                },
+            },
         }
         branches.append(
             {
                 "type": "object",
                 "properties": properties,
-                "required": list(properties),
+                "required": ["ref", "technique", "reason", "severity", "evidence_fields"],
                 "additionalProperties": False,
             }
         )
@@ -237,11 +255,45 @@ def selection_schema(
         item = branches[0] if len(branches) == 1 else {"oneOf": branches}
         picks = {"type": "array", "items": item, "maxItems": len(branches)}
 
-    return {
+    signal_ids = [
+        f"{record['ref']}:{signal}"
+        for record in records
+        for signal in (record.get("attention_signals") or [])
+        if record.get("ref")
+    ]
+    def disposition_value(record: dict[str, Any]) -> dict[str, Any]:
+        names = record_field_names(record, allowed_fields)
+        return {
+            "type": "object",
+            "properties": {
+                "disposition": {"enum": ["selected", "dismissed", "uncertain"]},
+                "reason": {"type": "string"},
+                "evidence_fields": {"type": "array", "items": {"enum": names}, "minItems": 1, "maxItems": min(4, len(names))},
+            },
+            "required": ["disposition", "reason", "evidence_fields"],
+            "additionalProperties": False,
+        }
+    signal_records = {
+        f"{record['ref']}:{signal}": record
+        for record in records
+        for signal in (record.get("attention_signals") or [])
+        if record.get("ref")
+    }
+    dispositions: dict[str, Any] = {
+        "type": "object",
+        "properties": {signal_id: disposition_value(signal_records[signal_id]) for signal_id in signal_ids},
+        "required": signal_ids,
+        "additionalProperties": False,
+    }
+    result = {
         "type": "object",
         "properties": {SELECTION_BODY_FIELD: picks},
         "required": [SELECTION_BODY_FIELD],
     }
+    if signal_ids:
+        result["properties"]["signal_dispositions"] = dispositions
+        result["required"].append("signal_dispositions")
+    return result
 
 
 #: Reduce 질의에서 모델이 낼 필드.
@@ -509,12 +561,61 @@ class InterpretClient:
             + len(self.select_user_prompt(scenario, records, feedback))
         )
         parsed = extract_json(raw)
+        expected_signals = {
+            f"{record['ref']}:{signal}"
+            for record in records
+            for signal in (record.get("attention_signals") or [])
+            if record.get("ref")
+        }
+        dispositions = parsed.get("signal_dispositions", {})
+        if not isinstance(dispositions, dict):
+            raise MalformedOutput("signal_dispositions 가 객체가 아님")
+        received_signals = set(dispositions)
+        if received_signals != expected_signals:
+            missing = sorted(expected_signals - received_signals)
+            extra = sorted(received_signals - expected_signals)
+            raise MalformedOutput(f"signal disposition 불일치: missing={missing}, extra={extra}")
+        self.last_signal_dispositions = dispositions
         picked = parsed.get(SELECTION_BODY_FIELD)
         if not isinstance(picked, list):
             raise MalformedOutput(
                 f"{SELECTION_BODY_FIELD} 가 목록이 아님: {type(picked).__name__}"
             )
-        return [item for item in picked if isinstance(item, dict)]
+        selected = [item for item in picked if isinstance(item, dict)]
+        selected_refs = {item.get("ref") for item in selected}
+        signal_records = {
+            f"{record['ref']}:{signal}": record
+            for record in records
+            for signal in (record.get("attention_signals") or [])
+            if record.get("ref")
+        }
+        # A model-selected mandatory signal must become a finding even when the
+        # model omitted the same ref from suspicious_records.  The reason and
+        # evidence fields still come from the model; Python only preserves its
+        # explicit disposition.
+        for signal_id, disposition in dispositions.items():
+            ref = signal_id.split(":", 1)[0]
+            if disposition.get("disposition") != "selected" or ref in selected_refs:
+                continue
+            selected.append({
+                "ref": ref,
+                "technique": None,
+                "reason": disposition.get("reason") or signal_id,
+                "severity": "info",
+                "evidence_fields": disposition.get("evidence_fields") or [],
+                "assertions": (
+                    [{
+                        "predicate": "list_contains",
+                        "subject": {"ref": ref, "field": "fields.loaded_files"},
+                        "object": token,
+                    } for token in ((signal_records.get(signal_id, {}).get("attention_evidence") or {}).get(
+                        "sensitive_credential_store_referenced", []
+                    ))[:2]]
+                    if signal_id.endswith(":sensitive_credential_store_referenced") else []
+                ),
+            })
+            selected_refs.add(ref)
+        return selected
 
     def _trim_notice(self) -> str:
         """목록이 잘렸다는 사실을 모델에게 말한다.

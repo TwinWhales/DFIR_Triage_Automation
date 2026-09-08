@@ -176,7 +176,7 @@ def verify(
             rejected.append(
                 {"id": finding["id"], "reason": rejection.reason, "detail": rejection.detail}
             )
-        elif not finding.get("claims"):
+        elif not finding.get("claims") and not finding.get("assertions"):
             unverifiable.append({"id": finding["id"], "reason": UNVERIFIABLE_REASON})
         elif downgrade is not None:
             unverifiable.append({"id": finding["id"], "reason": downgrade.reason})
