@@ -249,9 +249,16 @@ def _ref_patterns() -> "list[tuple[str, str]]":
 
 
 def test_the_schemas_that_constrain_refs_are_the_ones_we_expect():
-    """새 스키마가 ref 를 제약하기 시작하면 아래 대조 대상에 자동으로 든다."""
+    """새 스키마가 ref 를 제약하기 시작하면 아래 대조 대상에 자동으로 든다.
+
+    ``campaign`` 이 셋째로 들어왔다. 08단계도 ``observations[].ref`` 로 노드의
+    레코드를 가리키므로 같은 제약을 받는다. **모양만 보는 느슨한 패턴을 쓰지
+    않는다** — 접두어를 적는 자리가 하나 더 느는 것이 걱정이지만,
+    ``_ref_patterns()`` 가 ``schemas/*.json`` 을 훑으므로 새 스키마는 아래 두
+    대조에 자동으로 들어온다. 빠뜨릴 자리가 아니라 지켜지는 자리다.
+    """
     names = [name for name, _ in _ref_patterns()]
-    assert names == ["findings.schema.json", "parsed_record.schema.json"]
+    assert names == ["campaign.schema.json", "findings.schema.json", "parsed_record.schema.json"]
 
 
 @pytest.mark.parametrize("name,pattern", _ref_patterns())

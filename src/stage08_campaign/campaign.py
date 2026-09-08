@@ -1,0 +1,312 @@
+"""08단계 — 노드 여럿을 한 사건으로 읽는다.
+
+``campaign.json`` 이 적은 노드마다 이미 끝난 01~07 산출물을 열고, 노드
+**사이**를 결정론으로 잇는다. 설계는 `docs/proposals/multi-node-campaign.md`.
+
+**LLM을 부르지 않는다.** 07과 같은 이유다 — 마지막에 모델이 문장을 다시
+쓰면 앞의 모든 검증이 무의미해진다. 08은 Jinja2 템플릿이다.
+
+**노드 하나가 없거나 덜 끝났어도 멈추지 않는다.** 대신 그 노드가 왜 빠졌는지
+결과와 보고서 첫 화면에 싣는다. 조용히 적은 노드짜리 캠페인이 되면, 읽는
+사람은 "그 단말에는 흔적이 없었다"로 읽는다.
+
+사용법::
+
+    python -m src.stage08_campaign.campaign \\
+        --in campaigns/KIOSK-0910/campaign.json \\
+        --cases cases/ \\
+        --out campaigns/KIOSK-0910/
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+from ..common import errors as errlog
+from ..common import io, schema
+from . import correlate
+
+__all__ = ["STAGE", "load_campaign", "read_node", "build", "render", "main"]
+
+STAGE = "08_campaign"
+TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+
+class CampaignError(ValueError):
+    """``campaign.json`` 자체가 쓸 수 없는 경우. 노드 결측과는 다르다."""
+
+
+def load_campaign(path: str | Path) -> dict[str, Any]:
+    """``campaign.json`` 을 읽고 최소 형태만 본다.
+
+    스키마를 따로 두지 않는 이유는 이것이 **사람이 쓰는 입력**이기 때문이다.
+    01단계 입력과 같은 자리이고, 틀렸을 때 스키마 위반 메시지보다 무엇을
+    고쳐야 하는지 말해 주는 편이 낫다.
+    """
+    document = io.read_json(path)
+    campaign_id = document.get("campaign_id")
+    if not isinstance(campaign_id, str) or not campaign_id:
+        raise CampaignError("campaign_id 가 없습니다")
+
+    nodes = document.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        raise CampaignError("nodes 가 비었습니다 — 노드를 하나 이상 적습니다")
+
+    seen: set[str] = set()
+    for entry in nodes:
+        if not isinstance(entry, dict):
+            raise CampaignError(f"nodes 항목이 객체가 아닙니다: {entry!r}")
+        name, case_id = entry.get("node"), entry.get("case_id")
+        if not isinstance(name, str) or not name:
+            raise CampaignError(f"node 이름이 없습니다: {entry!r}")
+        if not isinstance(case_id, str) or not case_id:
+            raise CampaignError(f"{name}: case_id 가 없습니다")
+        if name in seen:
+            # 이름이 겹치면 관측이 어느 노드 것인지 알 수 없다. ref 가 노드
+            # 안에서만 유일한 것과 같은 이유로 여기서 막는다.
+            raise CampaignError(f"node 이름이 겹칩니다: {name}")
+        seen.add(name)
+    return document
+
+
+def _verdicts(case_dir: Path) -> "tuple[dict[str, str], str | None]":
+    """``ref → passed|warning|rejected``. 읽지 못하면 사유를 함께 낸다.
+
+    06단계는 소견 단위로 판정하고 08단계는 레코드 단위로 이으므로, 소견의
+    판정을 그 소견이 인용한 ``ref`` 로 내린다. 한 ref 가 여러 소견에 인용됐고
+    판정이 갈리면 **좋은 쪽**을 남긴다 — 통과한 소견이 그 레코드를 근거로
+    삼았다는 사실이 기각된 소견 때문에 사라지면 안 된다.
+    """
+    verified_path = case_dir / "06_verified.json"
+    findings_path = case_dir / "05_findings.json"
+    if not verified_path.is_file():
+        return {}, "06_verified.json 없음"
+    if not findings_path.is_file():
+        return {}, "05_findings.json 없음"
+
+    verified = io.read_json(verified_path)
+    findings = io.read_json(findings_path)
+    refs_by_id = {
+        item["id"]: item.get("refs") or []
+        for item in findings.get("findings", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+
+    rank = {"passed": 0, "warning": 1, "rejected": 2}
+    result: dict[str, str] = {}
+    for key, verdict in (("passed", "passed"), ("unverifiable", "warning"), ("rejected", "rejected")):
+        for item in verified.get(key, []):
+            if not isinstance(item, dict):
+                continue
+            for ref in refs_by_id.get(item.get("id"), []):
+                current = result.get(ref)
+                if current is None or rank[verdict] < rank[current]:
+                    result[ref] = verdict
+    return result, None
+
+
+def read_node(entry: dict[str, Any], cases_dir: Path) -> dict[str, Any]:
+    """노드 하나를 연다. 못 열어도 예외를 던지지 않고 사유를 담아 돌려준다."""
+    node = {
+        "node": entry["node"],
+        "case_id": entry["case_id"],
+        "status": "ok",
+        "_records": [],
+        "_verdicts": {},
+    }
+    if entry.get("role"):
+        node["role"] = str(entry["role"])
+
+    case_dir = cases_dir / entry["case_id"]
+    if not case_dir.is_dir():
+        node["status"] = "missing"
+        node["reason"] = f"케이스 디렉터리가 없습니다: {case_dir}"
+        return node
+
+    parsed_dir = case_dir / "04_parsed"
+    if not parsed_dir.is_dir():
+        node["status"] = "incomplete"
+        node["reason"] = "04_parsed 없음 — 04단계를 먼저 실행합니다"
+        return node
+
+    try:
+        records = io.read_parsed_records(parsed_dir)
+    except Exception as exc:  # noqa: BLE001 — 사유를 싣고 계속 간다
+        node["status"] = "incomplete"
+        node["reason"] = f"04_parsed 를 읽지 못했습니다: {exc}"
+        return node
+
+    verdicts, problem = _verdicts(case_dir)
+    if problem is not None:
+        node["status"] = "incomplete"
+        node["reason"] = problem
+        return node
+
+    scenario_path = case_dir / "02_scenario.json"
+    if scenario_path.is_file():
+        hosts = (io.read_json(scenario_path).get("entities") or {}).get("hosts") or []
+        if hosts:
+            node["host"] = str(hosts[0])
+
+    node["_records"] = list(records.values())
+    node["_verdicts"] = verdicts
+    node["records"] = len(records)
+    return node
+
+
+def build(campaign: dict[str, Any], nodes: list[dict[str, Any]], *, generator: str = "campaign.py") -> dict[str, Any]:
+    """08 문서를 만든다. 파일을 읽지도 쓰지도 않는다."""
+    usable = [node for node in nodes if node["status"] == "ok"]
+    per_node = {
+        node["node"]: correlate.observations_of(node["node"], node["_records"], node["_verdicts"])
+        for node in usable
+    }
+    result = correlate.build_links(per_node, len(usable))
+
+    links = result["links"]
+    public_nodes = [
+        {key: value for key, value in node.items() if not key.startswith("_")} for node in nodes
+    ]
+    return io.new_document(
+        campaign["campaign_id"],
+        STAGE,
+        generator,
+        nodes=public_nodes,
+        links=links,
+        context_links=result["context_links"],
+        stats={
+            "nodes_total": len(nodes),
+            "nodes_ok": len(usable),
+            "links": len(links),
+            "links_passed": sum(1 for link in links if link["grade"] == "passed"),
+            "links_warning": sum(1 for link in links if link["grade"] == "warning"),
+            "context_links": len(result["context_links"]),
+            "ubiquitous_values": result["ubiquitous_values"],
+        },
+    )
+
+
+AXIS_LABELS = {
+    "hash": "해시",
+    "network": "네트워크",
+    "filename": "파일명",
+    "path": "경로",
+    "account": "계정",
+}
+
+
+def build_context(document: dict[str, Any]) -> dict[str, Any]:
+    """템플릿에 넘길 값. 판정에 쓰이는 값은 여기서 만들지 않는다."""
+    def decorate(link: dict[str, Any]) -> dict[str, Any]:
+        observations = link["observations"]
+        return {
+            **link,
+            "axis_label": AXIS_LABELS.get(link["axis"], link["axis"]),
+            "badge": "\U0001F7E2" if link.get("grade") == "passed" else "\U0001F7E1",
+            "hops": " → ".join(item["node"] for item in observations),
+            "at": observations[0].get("at", "미상"),
+        }
+
+    skipped = [node for node in document["nodes"] if node["status"] != "ok"]
+    return {
+        "campaign_id": document["case_id"],
+        "generated_at": document["generated_at"],
+        "nodes": document["nodes"],
+        "skipped": skipped,
+        "links": [decorate(link) for link in document["links"]],
+        "context_links": [decorate(link) for link in document["context_links"]],
+        "stats": document["stats"],
+        "mermaid": _mermaid(document["links"]),
+    }
+
+
+def _mermaid(links: list[dict[str, Any]]) -> list[str]:
+    """노드 사이의 이동을 간선으로. **링크가 말하는 것 이상을 그리지 않는다.**
+
+    화살표는 시간 순서일 뿐 인과가 아니다. 같은 노드 쌍을 여러 축이 이으면
+    간선 하나에 축 이름을 모아 붙인다 — 간선을 겹쳐 그리면 그림이 사실보다
+    촘촘해 보인다.
+    """
+    edges: dict[tuple[str, str], set[str]] = {}
+    for link in links:
+        observations = link["observations"]
+        for left, right in zip(observations, observations[1:]):
+            if left["node"] == right["node"]:
+                continue
+            edges.setdefault((left["node"], right["node"]), set()).add(
+                AXIS_LABELS.get(link["axis"], link["axis"])
+            )
+    lines = ["graph LR"]
+    for (left, right), axes in sorted(edges.items()):
+        lines.append(f"  {left}[{left}] -->|{'·'.join(sorted(axes))}| {right}[{right}]")
+    return lines
+
+
+def render(context: dict[str, Any]) -> str:
+    env = Environment(
+        loader=FileSystemLoader(str(TEMPLATE_DIR)),
+        undefined=StrictUndefined,
+        trim_blocks=True,
+        lstrip_blocks=True,
+        keep_trailing_newline=True,
+    )
+    return env.get_template("campaign.md.j2").render(**context)
+
+
+def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="python -m src.stage08_campaign.campaign",
+        description="노드 여럿의 01~07 산출물을 한 사건으로 잇는다.",
+    )
+    parser.add_argument("--in", dest="in_path", required=True, help="campaign.json 경로")
+    parser.add_argument("--cases", default="cases", help="노드 케이스가 있는 디렉터리. 기본 %(default)s")
+    parser.add_argument("--out", required=True, help="산출물을 쓸 디렉터리")
+    parser.add_argument("--errors", help="errors.jsonl 경로. 기본은 --out 아래")
+    return parser.parse_args(argv)
+
+
+def main(argv: "list[str] | None" = None) -> int:
+    io.configure_console()
+    args = _parse_args(argv)
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log = errlog.ErrorLog(Path(args.errors) if args.errors else out_dir / "errors.jsonl")
+
+    try:
+        campaign = load_campaign(args.in_path)
+    except (CampaignError, FileNotFoundError, ValueError) as exc:
+        print(f"[{STAGE}] {exc}", file=sys.stderr)
+        return 2  # 사람이 쓴 입력의 오류다. errors.jsonl 은 파이프라인 실패만 담는다.
+
+    nodes = [read_node(entry, Path(args.cases)) for entry in campaign["nodes"]]
+    document = build(campaign, nodes)
+
+    try:
+        schema.validate(document, "campaign")
+    except schema.SchemaViolation as violation:
+        log.abort(STAGE, "schema_violation", violation.as_detail())
+
+    json_path = io.write_json(out_dir / "08_campaign.json", document)
+    md_path = out_dir / "08_campaign.md"
+    md_path.write_text(render(build_context(document)), encoding="utf-8")
+
+    stats = document["stats"]
+    print(
+        f"{json_path}: 노드 {stats['nodes_ok']}/{stats['nodes_total']} / "
+        f"링크 {stats['links']}건 (통과 {stats['links_passed']} / 주의 {stats['links_warning']}) / "
+        f"참고 {stats['context_links']}건"
+    )
+    skipped = [node for node in document["nodes"] if node["status"] != "ok"]
+    for node in skipped:
+        print(f"  빠진 노드 {node['node']}: {node.get('reason', '사유 미상')}", file=sys.stderr)
+    print(f"{md_path}")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

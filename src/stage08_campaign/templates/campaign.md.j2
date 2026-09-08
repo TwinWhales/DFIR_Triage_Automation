@@ -1,0 +1,88 @@
+# 캠페인 통합 보고서 — {{ campaign_id }}
+
+## 개요
+
+- 분석한 노드: {{ stats.nodes_ok }} / {{ stats.nodes_total }}
+- 노드 간 연결: {{ stats.links }}건 (🟢 통과 {{ stats.links_passed }} / 🟡 주의 {{ stats.links_warning }})
+- 참고 연결: {{ stats.context_links }}건 (어느 소견도 인용하지 않은 레코드)
+{% if skipped %}
+
+> ⚠️ **아래 노드는 이 캠페인에서 빠졌습니다.** 흔적이 없었던 것이 아니라 보지 못한 것입니다.
+{% for node in skipped %}
+> - `{{ node.node }}` ({{ node.case_id }}) — {{ node.reason }}
+{% endfor %}
+{% endif %}
+
+> 이 보고서의 연결은 **"같은 값이 두 노드에 있었다"**까지만 말합니다. 인과도 방향도
+> 주장하지 않습니다 — 화살표는 시각 순서이며, 노드마다 시계가 어긋날 수 있습니다.
+
+## 노드
+
+| 노드 | 케이스 | 역할 | 상태 | 호스트 | 레코드 |
+|---|---|---|---|---|---|
+{% for node in nodes %}
+| {{ node.node }} | {{ node.case_id }} | {{ node.role | default('미상', true) }} | {{ node.status }} | {{ node.host | default('미상', true) }} | {{ node.records | default(0, true) }} |
+{% endfor %}
+
+## 공격 체인
+
+{% if links %}
+```mermaid
+{% for line in mermaid %}
+{{ line }}
+{% endfor %}
+```
+
+| 시각 | 이동 | 판정 | 축 | 값 | 근거 |
+|---|---|---|---|---|---|
+{% for link in links %}
+| {{ link.at }} | {{ link.hops }} | {{ link.badge }} | {{ link.axis_label }} | `{{ link.value }}` | {% for item in link.observations %}{{ item.node }}:{{ item.ref }}{% if not loop.last %} / {% endif %}{% endfor %} |
+{% endfor %}
+{% else %}
+{% if stats.nodes_ok < 2 %}
+분석할 수 있는 노드가 {{ stats.nodes_ok }}개뿐입니다. **연결을 찾지 못한 것이 아니라 비교할 상대가 없습니다.**
+{% else %}
+노드 {{ stats.nodes_ok }}개 사이에서 공유된 값을 찾지 못했습니다.
+{% endif %}
+{% endif %}
+
+## 주의 필요 연결 (🟡)
+
+{% if stats.links_warning %}
+아래 연결은 양끝 중 하나가 06단계에서 주의(Warning) 판정을 받은 소견에 실려 있습니다.
+분석가가 원본 레코드를 직접 확인하십시오.
+
+{% for link in links %}
+{% if link.grade == 'warning' %}
+- [{{ link.axis_label }}] `{{ link.value }}` — {{ link.hops }}{% for item in link.observations %} / {{ item.node }}:{{ item.ref }}{% endfor %}
+
+{% endif %}
+{% endfor %}
+{% else %}
+없습니다.
+{% endif %}
+
+## 참고 — 소견이 인용하지 않은 연결 (⚪)
+
+{% if context_links %}
+값은 여러 노드에 있으나 **어느 소견도 이 레코드를 인용하지 않았습니다.** 05단계가
+고르지 않은 것이므로 검증을 거치지 않았고, 그래서 위 체인에 넣지 않았습니다.
+
+| 이동 | 축 | 값 | 근거 |
+|---|---|---|---|
+{% for link in context_links %}
+| {{ link.hops }} | {{ link.axis_label }} | `{{ link.value }}` | {% for item in link.observations %}{{ item.node }}:{{ item.ref }}{% if not loop.last %} / {% endif %}{% endfor %} |
+{% endfor %}
+{% else %}
+없습니다.
+{% endif %}
+
+## 이 보고서가 말하지 않는 것
+
+- **인과를 말하지 않습니다.** 연결은 값이 같다는 사실이며, "A가 B를 감염시켰다"는 사람이 판단합니다.
+- **정상 공통값을 가리지 못합니다.** 모든 노드에 나타난 값 {{ stats.ubiquitous_values | default(0, true) }}건은 배경으로 보고 위 표에서 내렸습니다. 그 판정 자체가 베이스라인 없이 이뤄지므로, 배포 이미지가 같아서 공통인 값은 여전히 섞일 수 있습니다.
+- **수집되지 않은 단말은 여기 없습니다.** 이 캠페인은 위 "노드" 표가 전부라는 가정 위에 섭니다.
+
+---
+
+생성: {{ generated_at }}

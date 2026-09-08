@@ -56,6 +56,10 @@ PYTHON=.venv/Scripts/python.exe bash run_pipeline.sh C-001 /mnt/evidence/WEB01 \
 # 안 가른 것이 맨 위에 온다. 가른 기록은 benchmark/rejections.yaml 이다.
 .venv/Scripts/python.exe benchmark/collect.py --rejections
 
+# 캠페인 — 노드들이 07까지 끝난 뒤에 따로 돈다 (LLM 안 부른다)
+.venv/Scripts/python.exe -m src.stage08_campaign.campaign \
+  --in campaigns/<사건>/campaign.json --cases cases/ --out campaigns/<사건>/
+
 # 04 산출물 요약 — 매니페스트·ref 유일성까지 대조한다 (어긋나면 1)
 .venv/Scripts/python.exe tools/inspect_jsonl.py --parsed cases/<케이스>/04_parsed
 
