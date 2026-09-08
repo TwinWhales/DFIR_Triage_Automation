@@ -93,7 +93,7 @@ Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
 | 알고 싶은 것 | 권위 있는 문서 |
 |---|---|
 | **다음에 무엇을 할 차례인가** | `work.md` |
-| 왜 이렇게 설계했나, 팀 분담, 비목표 | `work-guide.md` |
+| 왜 이렇게 설계했나 (설계 철학 및 아키텍처) | `README.md` |
 | 데이터 형식 — 필드·타입·제약 | `schemas/*.json` + `schemas/README.md` |
 | **수치가 어디서 나오나**, 픽스처와 골든의 차이 | `benchmark/README.md` |
 | 단계별 입출력 계약 | `docs/pipeline-io-spec.md` |
