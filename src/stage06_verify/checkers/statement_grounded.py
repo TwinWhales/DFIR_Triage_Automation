@@ -98,7 +98,7 @@ from typing import Any
 from ...common.io import normalize_path
 from . import CheckContext, CheckResult, Downgrade, cited_refs
 
-__all__ = ["check", "statement_tokens", "ungrounded", "REASON", "MAX_LISTED"]
+__all__ = ["check", "statement_tokens", "ungrounded", "REASON", "MAX_LISTED", "MIN_COMPACT"]
 
 #: 강등 사유의 머리말. 보고서와 테스트가 이 문구로 "claims 빈 문장" 쪽과
 #: 구별한다.
@@ -140,6 +140,26 @@ _TECHNIQUE = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
 #: 토큰 끝에 붙은 조사·문장부호를 떼는 데 쓴다. 한국어 문장은 경로와
 #: 파일명에 조사가 그대로 붙는다 — ``wwwroot에``, ``shell.aspx가``.
 _TRAILING = re.compile(r"[^A-Za-z0-9_$.\-)\]}]+$")
+
+
+#: 파일명 토큰을 증거와 맞출 때 **점만** 지우고 한 번 더 본다.
+#:
+#: 제품 이름이 파일명처럼 생긴 것을 잡으려는 것이다. 실측(2026-09-08,
+#: `K-KIOSK-USB-0908-FIX`)에서 침해 체인 전체를 담은 소견이
+#: ``Node.js 애플리케이션`` 이라는 표현 하나로 ``unverifiable`` 이 됐다.
+#: 인용한 레코드에는 ``C:\Program Files\nodejs\node.exe`` 가 있다 —
+#: **글자는 같고 점 하나가 다르다.** 파일을 지어낸 것이 아니라 디렉터리
+#: 이름을 제품 표기로 쓴 것이다.
+#:
+#: **점만 지운다. 확장자 바꿔치기는 그대로 잡힌다** — 증거가
+#: ``report.txt`` 뿐인데 문장이 ``report.exe`` 를 말하면 ``reportexe`` 와
+#: ``reporttxt`` 라 여전히 어긋난다. 넓히는 것은 "같은 글자, 다른 구두점"
+#: 하나뿐이다.
+_COMPACT = re.compile(r"\.")
+
+#: 점을 지운 토큰이 이보다 짧으면 이 완화를 쓰지 않는다. 짧은 토큰은
+#: 아무 데나 들어 있어 대조가 뜻을 잃는다 (``a.b`` → ``ab``).
+MIN_COMPACT = 4
 
 
 def _norm(text: str) -> str:
@@ -281,6 +301,7 @@ def _evidence(finding: dict[str, Any], records: dict[str, dict[str, Any]]) -> "t
 def ungrounded(finding: dict[str, Any], records: "dict[str, dict[str, Any]] | None" = None) -> list[str]:
     """증거가 설명하지 않는 토큰. 문장에 나온 순서 그대로."""
     haystack, numbers = _evidence(finding, records or {})
+    compact = _COMPACT.sub("", haystack)
     missing: list[str] = []
 
     for kind, token in statement_tokens(finding.get("statement", "")):
@@ -288,8 +309,14 @@ def ungrounded(finding: dict[str, Any], records: "dict[str, dict[str, Any]] | No
             value = _as_int(token)
             if value is not None and value in numbers:
                 continue
-        if _norm(token) in haystack:
+        normalized = _norm(token)
+        if normalized in haystack:
             continue
+        if kind == "file":
+            # 같은 글자, 다른 구두점인가 (`_COMPACT` 주석의 실측).
+            folded = _COMPACT.sub("", normalized)
+            if len(folded) >= MIN_COMPACT and folded in compact:
+                continue
         missing.append(token)
 
     return missing
