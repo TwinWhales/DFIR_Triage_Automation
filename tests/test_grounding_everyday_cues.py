@@ -43,6 +43,39 @@ def test_everyday_words_for_a_shell_window_are_accepted(raw):
     assert not _dropped(raw)
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "명령창이 떴습니다",
+        "명령 창이 떴습니다",
+        "명령  창이 떴습니다",
+        "명령\t창이 떴습니다",
+    ],
+)
+def test_one_base_form_covers_every_spacing_variant(raw):
+    """어휘에는 붙여 쓴 기본형 하나만 둔다.
+
+    변형을 손으로 나열하면 목록이 길어지기만 하고 다음 변형은 또 빠진다.
+    원문과 낱말을 같은 방식으로 눌러 비교하므로 ``명령창`` 하나로 족하다.
+    """
+    assert not _dropped(raw)
+
+
+def test_the_cue_table_holds_no_hand_written_spacing_variants():
+    """기본형만 둔다는 규칙 자체를 고정한다 — 다음 사람이 다시 늘리지 않게."""
+    korean_window_cues = [
+        cue for cue in grounding.MECHANISM_CUES["T1059.003"] if cue.endswith("창")
+    ]
+
+    assert korean_window_cues, "창 어휘가 사라졌다"
+    assert all(" " not in cue for cue in korean_window_cues)
+
+
+def test_a_cue_containing_a_space_still_matches():
+    """낱말 쪽도 함께 눌러야 ``command shell`` 같은 것이 살아남는다."""
+    assert not _dropped("the command shell was used")
+
+
 # ── 넓히지 않은 쪽 ─────────────────────────────────────────────────────
 
 
