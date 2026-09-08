@@ -1,0 +1,9 @@
+{
+  "case_id": "CAMP3-pos",
+  "stage": "02_normalize",
+  "entities": {
+    "hosts": [
+      "POS01"
+    ]
+  }
+}

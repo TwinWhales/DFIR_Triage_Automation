@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +19,7 @@ from src.common import io, schema
 from src.stage08_campaign import campaign
 
 HASH = "b" * 64
+FIXTURE = Path(__file__).resolve().parents[1] / "benchmark/fixtures/campaign-3node"
 
 
 def record(ref, artifact="evtx:Sysmon", at=None, **fields):
@@ -123,6 +125,32 @@ def test_a_link_no_finding_cited_goes_to_context_not_the_chain():
 
 
 # ============================================================== 상관 축
+
+
+def test_an_uncited_record_cannot_hide_a_cited_one():
+    """노드 대표는 이른 순이 아니라 **판정이 좋은 순**으로 고른다.
+
+    합성 픽스처 ``campaign-3node`` 에서 실제로 물린 자리다. pos 쪽에 인용된
+    레코드(13:46:05)보다 25초 이른 **인용되지 않은** 레코드(13:45:40)가 같은
+    파일명을 갖고 있었고, 이른 쪽이 대표가 되는 바람에 링크 전체가 참고
+    항목으로 내려갔다. 검증된 근거가 검증 안 된 것 뒤에 가리면 안 된다.
+    """
+    document = build(
+        node("kiosk", [record("SYSMON#1", at="2026-09-10T01:00:00Z", Image="C:/Temp/s.ps1")], {"SYSMON#1": "passed"}),
+        node(
+            "pos",
+            [
+                record("MFT#5", artifact="$MFT", at="2026-09-10T02:00:00Z", Path="D:/tools/s.ps1"),
+                record("SYSMON#9", at="2026-09-10T02:00:25Z", Image="D:/tools/s.ps1"),
+            ],
+            {"SYSMON#9": "passed"},
+        ),
+    )
+    assert document["context_links"] == []
+    assert [link["grade"] for link in document["links"]] == ["passed"]
+    assert [item["ref"] for item in document["links"][0]["observations"]] == ["SYSMON#1", "SYSMON#9"]
+
+
 
 
 def test_a_different_drive_still_links_by_filename():
@@ -298,3 +326,52 @@ def test_the_cli_writes_both_outputs_and_names_the_missing_node(tmp_path):
 
     text = (out / "08_campaign.md").read_text(encoding="utf-8")
     assert "kiosk" in text and "server" in text
+
+
+def test_the_three_node_fixture_recovers_the_whole_chain(tmp_path):
+    """합성 픽스처 관통 — 설계서 7장 6번.
+
+    **실물이 아니다.** POS·관리서버 증거가 없어 배선을 세우고 지키는
+    용도이며, 수치에 쓰면 안 된다(픽스처 README).
+
+    이 하나가 08단계의 성질을 한꺼번에 잰다 — 세 노드를 관통하는 체인,
+    빠진 노드의 사유, 기각된 소견이 링크를 만들지 못하는 것.
+    """
+    out = tmp_path / "camp"
+    assert (
+        campaign.main(
+            [
+                "--in", str(FIXTURE / "campaign.json"),
+                "--cases", str(FIXTURE / "cases"),
+                "--out", str(out),
+            ]
+        )
+        == 0
+    )
+
+    document = io.read_json(out / "08_campaign.json")
+    schema.validate(document, "campaign")
+
+    assert document["stats"]["nodes_total"] == 4
+    assert document["stats"]["nodes_ok"] == 3
+
+    # 키오스크 → POS → 관리서버 로 이어진다
+    hops = {tuple(item["node"] for item in link["observations"]) for link in document["links"]}
+    assert ("kiosk", "pos") in hops
+    assert ("pos", "server") in hops
+
+    axes = {link["axis"] for link in document["links"]}
+    assert axes == {"network", "hash", "filename", "account"}
+
+    # 기각된 소견만 인용한 SYSMON#915 로는 어떤 링크도 서지 않는다
+    cited = {
+        item["ref"]
+        for link in document["links"] + document["context_links"]
+        for item in link["observations"]
+    }
+    assert "SYSMON#915" not in cited
+
+    # 빠진 노드는 사유와 함께 보고서에 실린다
+    text = (out / "08_campaign.md").read_text(encoding="utf-8")
+    assert "backup" in text
+    assert "보지 못한 것입니다" in text

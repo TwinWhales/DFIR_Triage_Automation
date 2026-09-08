@@ -1,0 +1,25 @@
+{
+  "campaign_id": "CAMP3",
+  "nodes": [
+    {
+      "node": "kiosk",
+      "case_id": "CAMP3-kiosk",
+      "role": "endpoint"
+    },
+    {
+      "node": "pos",
+      "case_id": "CAMP3-pos",
+      "role": "endpoint"
+    },
+    {
+      "node": "server",
+      "case_id": "CAMP3-server",
+      "role": "server"
+    },
+    {
+      "node": "backup",
+      "case_id": "CAMP3-backup",
+      "role": "server"
+    }
+  ]
+}

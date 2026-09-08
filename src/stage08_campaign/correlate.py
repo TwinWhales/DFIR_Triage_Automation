@@ -99,16 +99,27 @@ def _keys_of(record: dict[str, Any]) -> dict[str, set[str]]:
     return keys
 
 
+#: 등급 순서. 노드 대표를 고를 때와 링크 등급을 정할 때 같은 표를 쓴다 —
+#: 둘이 갈리면 "대표로 뽑힌 근거"와 "링크에 적힌 등급"이 어긋난다.
+_GRADE_ORDER = {"passed": 0, "warning": 1, "uncited": 2}
+
+
 def observations_of(node: str, records: Iterable[dict[str, Any]], verdicts: dict[str, str]) -> dict:
-    """``(축, 값) → 이 노드의 가장 이른 관측 하나``.
+    """``(축, 값) → 이 노드의 대표 관측 하나``.
 
     **노드마다 하나로 줄이는 것이 여기다.** 같은 해시가 한 노드에서 수백 번
-    나와도 링크는 하나여야 표가 반복으로 덮이지 않습니다. '가장 이른' 것을
-    남기는 이유는 그것이 그 노드에서 처음 나타난 시각이고, 노드 사이의
-    순서를 볼 때 의미가 있는 값이기 때문입니다.
+    나와도 링크는 하나여야 표가 반복으로 덮이지 않습니다.
 
-    ``verdicts`` 는 ``ref → passed|warning`` 입니다. 없는 ref 는 어느 소견도
-    인용하지 않은 것이라 ``uncited`` 가 됩니다.
+    **판정이 좋은 쪽을 먼저 고르고, 같으면 이른 쪽을 고릅니다.** 순서가
+    반대면 검증되지 않은 레코드가 검증된 것을 가립니다 — 합성 픽스처
+    ``campaign-3node`` 에서 실제로 그랬습니다. ``s.ps1`` 이 kiosk 의 통과
+    소견과 pos 의 주의 소견 양쪽에 있었는데, pos 쪽에 25초 더 이른 **인용되지
+    않은** ``$MFT`` 레코드가 있어 링크 전체가 참고 항목으로 내려갔습니다.
+    시각은 체인의 순서를 정할 뿐이고, 링크가 실릴 자리를 정하는 것은
+    근거의 등급입니다.
+
+    ``verdicts`` 는 ``ref → passed|warning|rejected`` 입니다. 없는 ref 는 어느
+    소견도 인용하지 않은 것이라 ``uncited`` 가 됩니다.
     """
     best: dict[tuple[str, str], dict[str, Any]] = {}
     for record in records:
@@ -135,22 +146,24 @@ def observations_of(node: str, records: Iterable[dict[str, Any]], verdicts: dict
             for value in values:
                 key = (axis, value)
                 current = best.get(key)
-                if current is None or _earlier(moment, current.get("_moment")):
+                if current is None or _better(observation, moment, current):
                     best[key] = {**observation, "_moment": moment}
     return best
 
 
-def _earlier(candidate, incumbent) -> bool:
-    """시각이 없는 관측은 있는 것에 밀린다 — 순서를 못 세우기 때문."""
-    if candidate is None:
+def _better(candidate: dict[str, Any], moment, incumbent: dict[str, Any]) -> bool:
+    """판정이 좋은 쪽, 같으면 이른 쪽. 시각 없는 것은 있는 것에 밀린다."""
+    rank = _GRADE_ORDER.get(candidate["verdict"], 2)
+    held = _GRADE_ORDER.get(incumbent["verdict"], 2)
+    if rank != held:
+        return rank < held
+    incumbent_moment = incumbent.get("_moment")
+    if moment is None:
         return False
-    if incumbent is None:
+    if incumbent_moment is None:
         return True
-    return candidate < incumbent
+    return moment < incumbent_moment
 
-
-#: 등급의 낮은 쪽. 양끝 중 하나라도 warning 이면 링크가 warning 이다.
-_GRADE_ORDER = {"passed": 0, "warning": 1, "uncited": 2}
 
 
 def build_links(per_node: dict[str, dict], node_count: int) -> dict[str, Any]:

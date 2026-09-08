@@ -1,0 +1,27 @@
+{
+  "case_id": "CAMP3-server",
+  "stage": "05_interpret",
+  "findings": [
+    {
+      "id": "F1",
+      "refs": [
+        "EVTX-SEC#51090"
+      ],
+      "statement": "키오스크에서 쓰인 계정으로 관리서버에 로그온했다"
+    },
+    {
+      "id": "F2",
+      "refs": [
+        "SYSMON#910"
+      ],
+      "statement": "관리서버에 재부팅 지속성 작업이 등록됐다"
+    },
+    {
+      "id": "F3",
+      "refs": [
+        "SYSMON#915"
+      ],
+      "statement": "rundll32 가 같은 페이로드를 실행했다"
+    }
+  ]
+}

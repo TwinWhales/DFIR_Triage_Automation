@@ -1,0 +1,14 @@
+{
+  "case_id": "CAMP3-kiosk",
+  "stage": "06_verify",
+  "passed": [
+    {
+      "id": "F1"
+    },
+    {
+      "id": "F2"
+    }
+  ],
+  "unverifiable": [],
+  "rejected": []
+}
