@@ -1,7 +1,7 @@
 """07단계 — 결과 보고.
 
-``06_verified.json``의 ``passed`` 항목만 입력으로 받는다. 원본 파싱
-데이터는 다시 주지 않는다.
+``06_verified.json``의 ``passed``는 확인된 사실로, ``unverifiable``은
+주의 필요 소견으로 받는다. ``rejected``는 본문과 타임라인에서 차단한다.
 
 **이 단계는 LLM을 쓰지 않는다.** 스펙은 sLLM으로 적었으나, 검증을 통과한
 문장을 모델이 다시 쓰게 하면 마지막 단계에서 환각이 재유입된다. 앞의
@@ -11,7 +11,7 @@
 문장을 다듬는 LLM 경로가 필요해지면 ``prompts/report_system.txt``를 쓰되,
 **통과한 문장의 재작성이 아니라 요약문 추가**로 한정해야 한다.
 
-미검증 항목과 분석 범위 한계는 템플릿의 고정 섹션이다. 자동 생성에서
+주의 필요 소견과 미확인 범위는 템플릿의 고정 섹션이다. 자동 생성에서
 누락되지 않는 것이 이 도구의 신뢰성 근거다.
 
 사용법::
@@ -43,6 +43,7 @@ STAGE = "07_report"
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 SEVERITY_LABELS = {"high": "높음", "medium": "중간", "low": "낮음", "info": "참고"}
+DETAIL_CLAIM_FIELDS = frozenset({"fields.CommandLine", "fields.ParentCommandLine"})
 
 
 def build_context(
@@ -55,8 +56,9 @@ def build_context(
 ) -> dict[str, Any]:
     """템플릿에 넘길 값을 만든다.
 
-    ``passed``에 없는 finding은 여기서 걸러진다. 템플릿이 실수로 전체
-    목록을 돌더라도 기각된 문장이 실릴 수 없게, 걸러진 결과만 넘긴다.
+    ``passed``와 ``unverifiable``에 없는 finding은 여기서 걸러진다.
+    템플릿이 실수로 전체 목록을 돌더라도 기각된 문장이 실릴 수 없게,
+    걸러진 결과만 넘긴다.
     """
     by_id = {finding["id"]: finding for finding in findings_doc.get("findings", [])}
     passed_ids = [entry["id"] for entry in verified.get("passed", [])]
@@ -74,6 +76,7 @@ def build_context(
                 "severity_label": SEVERITY_LABELS.get(finding.get("severity", ""), "참고"),
                 "statement": finding["statement"],
                 "evidence": [_evidence_line(ref, records) for ref in finding.get("refs", [])],
+                "verified_details": _verified_details(finding),
             }
         )
 
@@ -83,20 +86,39 @@ def build_context(
     # 않았다"이고 뒤는 "증거에 없는 것을 말했다"라, 읽는 사람이 할 일이
     # 다르다. 한 덩어리로 실으면 그 구별이 보고서에서 사라진다.
     reasons = {entry["id"]: entry.get("reason", "") for entry in verified.get("unverifiable", [])}
-    unverifiable = [
-        {"statement": by_id[fid]["statement"], "reason": reasons.get(fid, "")}
-        for fid in unverifiable_ids
-        if fid in by_id
-    ]
+    warnings = []
+    for finding_id in unverifiable_ids:
+        finding = by_id.get(finding_id)
+        if finding is None:
+            continue
+        warnings.append(
+            {
+                "id": finding_id,
+                "title": _title(finding),
+                "severity_label": SEVERITY_LABELS.get(finding.get("severity", ""), "참고"),
+                "statement": finding["statement"],
+                "reason": reasons.get(finding_id, ""),
+                "evidence": [_evidence_line(ref, records) for ref in finding.get("refs", [])],
+                "verified_details": _verified_details(finding),
+            }
+        )
 
     # 통과한 문장이 근거로 삼은 사건만 타임라인에 남긴다. 기각된 문장이
     # 만든 타임라인 항목이 남으면 보고서가 검증을 우회하게 된다.
-    allowed_refs = {ref for finding in passed for ref in by_id[finding["id"]].get("refs", [])}
-    timeline = [
-        entry
-        for entry in findings_doc.get("timeline", [])
-        if entry.get("refs") and set(entry["refs"]) <= allowed_refs
-    ]
+    passed_refs = {ref for finding in passed for ref in by_id[finding["id"]].get("refs", [])}
+    warning_refs = {ref for finding in warnings for ref in by_id[finding["id"]].get("refs", [])}
+    allowed_refs = passed_refs | warning_refs
+    timeline = []
+    for entry in findings_doc.get("timeline", []):
+        refs_in_entry = set(entry.get("refs") or [])
+        if not refs_in_entry or not refs_in_entry <= allowed_refs:
+            continue
+        timeline.append(
+            {
+                **entry,
+                "verification": "Warning" if refs_in_entry & warning_refs else "Passed",
+            }
+        )
 
     scope = _period(selection, scenario)
     return {
@@ -110,7 +132,9 @@ def build_context(
         "technique_evidence": _technique_evidence(scenario),
         "stats": verified.get("stats", {}),
         "passed": passed,
-        "unverifiable": unverifiable,
+        "warnings": warnings,
+        # 외부 호출자의 기존 context 계약도 유지한다.
+        "unverifiable": warnings,
         "timeline": timeline,
         "examined": _examined(manifest),
         "limits": _limits(selection, manifest),
@@ -132,6 +156,24 @@ def _title(finding: dict[str, Any]) -> str:
     if not technique:
         return "근거 확인 사항"
     return f"{technique} {attack.name_of(technique) or ''}".strip()
+
+
+def _verified_details(finding: dict[str, Any]) -> list[str]:
+    """보고서에서 숨기면 의미가 손실되는 검증 완료 명령행을 돌려준다.
+
+    새 문장을 만들지 않고 05가 원본에서 조립해 06이 대조한 claim 값만
+    그대로 싣는다. 줄바꿈은 Markdown 인용 블록을 깨지 않게 공백으로 편다.
+    """
+    details: list[str] = []
+    for claim in finding.get("claims", []):
+        field = claim.get("field")
+        value = claim.get("value")
+        if field not in DETAIL_CLAIM_FIELDS or not isinstance(value, str):
+            continue
+        line = f"{field}: {' '.join(value.splitlines())}"
+        if line not in details:
+            details.append(line)
+    return details
 
 
 def _evidence_line(ref: str, records: dict[str, dict[str, Any]] | None) -> str:
@@ -486,8 +528,8 @@ def main(argv: "list[str] | None" = None) -> int:
     out_path.write_text(render(context), encoding="utf-8", newline="\n")
 
     print(
-        f"{out_path}: 확인된 사항 {len(context['passed'])}건 / "
-        f"미검증 {len(context['unverifiable'])}건 / 범위 한계 {len(context['limits'])}건"
+        f"{out_path}: 확인된 사실 {len(context['passed'])}건 / "
+        f"주의 필요 소견 {len(context['warnings'])}건 / 미확인 범위 {len(context['limits'])}건"
     )
     return 0
 

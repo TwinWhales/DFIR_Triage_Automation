@@ -92,14 +92,26 @@ def _signal_context(record: dict[str, Any], signal: str, policy: Any) -> list[st
         if any(rule.matches(folded) for rule in rules) or any(token in folded for token in tokens):
             if value not in matched:
                 matched.append(value)
+    # 플래그 기반 신호는 이미 04단계가 관용구를 판정했다. Reduce가 플래그
+    # 이름만 보고 처분하지 않도록, 선언된 필드의 원문도 함께 보낸다.
+    if any(rule.flags for rule in rules):
+        for rule in rules:
+            for field in rule.match_fields:
+                for value in _string_values(_field(record, field)):
+                    if value not in matched:
+                        matched.append(value)
     return matched[:4]
 
 
 def _signal_requirement(record: dict[str, Any], signal: str, policy: Any) -> dict[str, list[str]]:
     full = _text(record)
+    record_flags = tuple(str(flag).casefold() for flag in (record.get("flags") or []))
     for rule in policy.signals:
         if rule.name != signal:
             continue
+        matched_flags = [flag for flag in rule.flags if flag in record_flags]
+        if matched_flags:
+            return {"flags": matched_flags}
         blob = _blob(record, rule, full)
         if rule.all_contains and all(token in blob for token in rule.all_contains):
             return {"all": list(rule.all_contains)}
@@ -112,11 +124,12 @@ def _signal_requirement(record: dict[str, Any], signal: str, policy: Any) -> dic
 
 def signal_ids(record: dict[str, Any], *, mappings: str | None = None) -> list[str]:
     full = _text(record)
+    record_flags = tuple(str(flag).casefold() for flag in (record.get("flags") or []))
     signals: list[str] = []
     policy = attention_policy.load(mappings)
     signals.extend(
         rule.name for rule in policy.signals
-        if rule.must_review and rule.matches(_blob(record, rule, full))
+        if rule.must_review and rule.matches(_blob(record, rule, full), record_flags)
     )
     for group in policy.path_groups:
         if group.signal and group.must_review and any(token in full for token in group.contains):

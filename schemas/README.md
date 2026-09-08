@@ -132,6 +132,10 @@ except schema.SchemaViolation as v:
 그 항목은 `detail`을 받지 않습니다. 두 갈래는 머리말로 갈립니다:
 `claims 없음 (종합 판단 문장)` / `증거에 없는 표현: …`.
 
+07단계는 이 항목을 버리지 않고 **Warning**으로 렌더링합니다. 원문, 인용
+레코드, 검증된 명령행 claim과 `reason`을 함께 표시하고, 이를 인용한 서사
+문장은 `supported_with_warning`으로 보존합니다.
+
 ### 5. `case_id`는 경로 안전 문자만 허용
 
 `^[A-Za-z0-9][A-Za-z0-9_-]*$` — 점과 경로 구분자를 막습니다.

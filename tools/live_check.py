@@ -177,7 +177,7 @@ PLAN: list[Plan] = [
         "stage07",
         "07 보고 — 통과분만 싣는다",
         "검증을 통과한 문장만 보고서에 오르는가",
-        "보고서의 '확인된 사항' 건수 == 06의 passed 건수",
+        "보고서의 '확인된 사실' 건수 == 06의 passed 건수",
     ),
     Plan(
         "nomock",
@@ -342,6 +342,13 @@ class Runner:
             raise StepFailed(f"Ollama 응답 없음 ({self.args.host}): {e}") from None
 
         tags = {m.get("name", "") for m in models}
+        # qwen2.5:7b-instruct-q4_K_M 이 없고 qwen2.5:latest 가 있으면 자동 매핑
+        if self.args.model not in tags and "qwen2.5:latest" in tags:
+            print(f"  안내: {self.args.model} 대신 설치된 qwen2.5:latest 로 자동 전환합니다.")
+            self.args.model = "qwen2.5:latest"
+        if self.args.model_interpret and self.args.model_interpret not in tags and "qwen2.5:latest" in tags:
+            self.args.model_interpret = "qwen2.5:latest"
+
         wanted = {self.args.model, self.model_interpret}
         absent = sorted(t for t in wanted if t not in tags)
         if absent:
@@ -814,17 +821,17 @@ class Runner:
         if code != 0:
             raise StepFailed(f"07 실패 (코드 {code})")
 
-        match = re.search(r"확인된 사항 (\d+)건", out)
+        match = re.search(r"확인된 사실 (\d+)건", out)
         if not match:
-            raise StepFailed("07 출력에서 '확인된 사항' 건수를 읽지 못했다")
+            raise StepFailed("07 출력에서 '확인된 사실' 건수를 읽지 못했다")
         reported = int(match.group(1))
         if reported != self.carry["passed"]:
             raise StepFailed(
-                f"보고서의 확인된 사항 {reported}건 != 06의 passed {self.carry['passed']}건 — "
+                f"보고서의 확인된 사실 {reported}건 != 06의 passed {self.carry['passed']}건 — "
                 "검증을 통과하지 않은 문장이 실렸거나 통과분이 빠졌다"
             )
         result.measures["report_bytes"] = (self.case_dir / "07_report.md").stat().st_size
-        return f"확인된 사항 {reported}건 == 06 passed / {self.case_dir / '07_report.md'}"
+        return f"확인된 사실 {reported}건 == 06 passed / {self.case_dir / '07_report.md'}"
 
     def do_nomock(self, result: Result) -> str:
         offenders = []
@@ -1011,7 +1018,7 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
             "예전 동작이다 — 강제 선별이 결과를 얼마나 바꾸는지 재려고 남겨 둔다"
         ),
     )
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="02 정규화 모델. 기본 %(default)s")
+    parser.add_argument("--model", default="qwen2.5:latest", help="02 정규화 모델. 기본 %(default)s")
     parser.add_argument(
         "--model-interpret",
         default=None,

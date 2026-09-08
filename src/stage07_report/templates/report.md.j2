@@ -8,13 +8,13 @@
 - 대상 OS: {{ target_os }}{{ " (증거에서 판정: " ~ windows ~ ")" if windows else "" }}
 - 분석 기간: {{ period_start }} ~ {{ period_end }}
 - 식별 기법: {{ techniques | join(', ') if techniques else '없음' }}
-- 검증 결과: 통과 {{ stats.passed }} / 기각 {{ stats.rejected }} / 미검증 {{ stats.unverifiable }}
+- 검증 결과: 통과 {{ stats.passed }} / 주의 {{ stats.unverifiable }} / 기각 {{ stats.rejected }}
 {% if stats.rejected %}
 
 기각된 {{ stats.rejected }}개 문장은 근거 검증을 통과하지 못해 본 보고서에서 제외되었습니다.
 {% endif %}
 
-## 확인된 사항
+## 확인된 사실 (🟢 Passed)
 {% if passed %}
 {% for finding in passed %}
 
@@ -27,6 +27,9 @@
 > 근거: {{ line }}
 {% endfor %}
 {% endif %}
+{% for line in finding.verified_details %}
+> 검증값: {{ line }}
+{% endfor %}
 {% endfor %}
 {% else %}
 
@@ -36,19 +39,33 @@
 
 ## 타임라인
 
-| 시각 | 사건 | 근거 |
-|---|---|---|
+| 시각 | 판정 | 사건 | 근거 |
+|---|---|---|---|
 {% for entry in timeline %}
-| {{ entry.ts }} | {{ entry.event }} | {{ entry.refs | join(', ') }} |
+| {{ entry.ts }} | {{ entry.verification }} | {{ entry.event }} | {{ entry.refs | join(', ') }} |
 {% endfor %}
 {% endif %}
 
-## 미검증 항목
-{% if unverifiable %}
+## 주의 필요 소견 (🟡 Warning - 분석가 교차 검증 요망)
+{% if warnings %}
 
-다음 서술은 증거 대조를 지나지 않았으며 분석가 검토가 필요합니다.
-{% for finding in unverifiable %}
-- {{ finding.statement }}{% if finding.reason %} — *{{ finding.reason }}*{% endif %}
+다음 소견은 핵심 근거가 있으나 자동 검증만으로 확정할 수 없어 보고서에 경고와 함께 보존합니다.
+{% for finding in warnings %}
+
+### {{ finding.id }} — {{ finding.title }} [{{ finding.severity_label }}]
+
+{{ finding.statement }}
+{% if finding.evidence %}
+
+{% for line in finding.evidence %}
+> 근거: {{ line }}
+{% endfor %}
+{% endif %}
+{% for line in finding.verified_details %}
+> 검증값: {{ line }}
+{% endfor %}
+
+> ⚠️ 분석가 확인 권장: {{ finding.reason or '자동 검증 범위를 벗어난 표현이 포함됨' }}
 
 {% endfor %}
 {% else %}
@@ -56,7 +73,11 @@
 없습니다.
 {% endif %}
 
-## 분석 범위
+## 미확인 사항 (⚪ Unknowns)
+
+자동 분석에서 확인하지 못한 아티팩트와 입력 서술은 아래 분석 범위에 명시합니다.
+
+### 분석 범위
 
 ### 확인한 아티팩트
 {% if examined %}
