@@ -195,3 +195,36 @@ def test_stage06_invalidates_supported_story_sentence_when_its_finding_is_reject
     result = verify.verify(doc, records)
 
     assert result["story_review"][0]["verdict"] == "contradicted"
+
+
+def test_stage06_preserves_a_story_sentence_with_a_warning_verdict():
+    records = {
+        "AMCACHE#1": {
+            "ref": "AMCACHE#1",
+            "artifact": "registry:Amcache",
+            "canonical": {"subject_path": r"C:\Program Files\x.exe"},
+        }
+    }
+    doc = _doc({}, refs=["AMCACHE#1"])
+    # claim 자체는 맞지만 서술의 파일명은 증거에 없어 finding은 경고다.
+    doc["findings"][0].update(
+        statement="unknown.exe가 프로그램 폴더에서 실행됐습니다.",
+        claims=[{
+            "ref": "AMCACHE#1",
+            "field": "canonical.subject_path",
+            "value": r"C:\Program Files\x.exe",
+        }],
+        assertions=[],
+    )
+    doc["incident_story"] = {
+        "summary": "요약", "critical_threat": "수동 확인",
+        "sentences": [{"id": "N1", "text": "실행 흔적", "kind": "observed_fact", "refs": ["AMCACHE#1"]}],
+    }
+    doc["story_critic"] = [
+        {"sentence_id": "N1", "verdict": "supported", "reason": "경로 근거"}
+    ]
+
+    result = verify.verify(doc, records)
+
+    assert result["unverifiable"][0]["id"] == "F1"
+    assert result["story_review"][0]["verdict"] == "supported_with_warning"

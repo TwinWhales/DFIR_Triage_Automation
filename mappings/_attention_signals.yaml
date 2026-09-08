@@ -62,6 +62,33 @@ prompt_keep_path_groups:
         - '\downloads\'
 
 attention_signals:
+  # 04단계가 명령행 관용구로 판정한 고위험 행위군은 종류별 대표 한 건을
+  # 반드시 검토한다. 이것은 악성 판정이 아니라 모델이 해당 관측을 보고
+  # 선택/기각 이유를 남기게 하는 보장 레인이다.
+  lolbin_download_observed:
+    must_review: true
+    flags: [lolbin_download]
+    match_fields: [fields.Image, fields.CommandLine]
+    representative_images: [certutil.exe]
+  security_tool_config_change_observed:
+    must_review: true
+    flags: [security_tool_config_changed]
+    match_fields: [fields.Image, fields.CommandLine]
+  persistence_command_observed:
+    must_review: true
+    flags: [persistence_command]
+    match_fields: [fields.Image, fields.CommandLine]
+    representative_images: [schtasks.exe]
+  uac_bypass_candidate_observed:
+    must_review: true
+    flags: [uac_bypass_candidate]
+    match_fields: [fields.Image, fields.CommandLine]
+    representative_images: [fodhelper.exe]
+  discovery_command_observed:
+    must_review: true
+    flags: [discovery_command]
+    match_fields: [fields.Image, fields.CommandLine]
+    representative_images: [whoami.exe]
   credential_export_option_observed:
     must_review: true
     all_contains: [netsh, wlan, key=clear]

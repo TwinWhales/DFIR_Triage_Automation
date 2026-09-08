@@ -30,6 +30,7 @@ class SignalRule:
     name: str
     all_contains: tuple[str, ...] = ()
     any_contains: tuple[str, ...] = ()
+    flags: tuple[str, ...] = ()
     must_review: bool = True
     #: 대표 레코드 선택 우선순위. 선언 순서가 곧 우선순위다.
     representative_images: tuple[str, ...] = ()
@@ -37,10 +38,11 @@ class SignalRule:
     #: 좁히지 않으면 시각 어휘가 경로에 걸리는 식의 오적중이 생긴다.
     match_fields: tuple[str, ...] = ()
 
-    def matches(self, text: str) -> bool:
+    def matches(self, text: str, record_flags: tuple[str, ...] = ()) -> bool:
         return bool(
             (self.all_contains and all(token in text for token in self.all_contains))
             or (self.any_contains and any(token in text for token in self.any_contains))
+            or (self.flags and any(flag in record_flags for flag in self.flags))
         )
 
 
@@ -61,6 +63,19 @@ def _strings(value: Any, label: str) -> tuple[str, ...]:
     if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
         raise PolicyError(f"{label} must be a list of non-empty strings")
     return tuple(item.casefold() for item in value)
+
+
+def _field_names(value: Any, label: str) -> tuple[str, ...]:
+    """점 표기 필드명은 원본 대소문자를 보존한다.
+
+    값 비교용 어휘와 달리 ``fields.CommandLine``은 실제 dict 키를 따라가므로
+    casefold하면 존재하는 필드도 찾지 못한다.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise PolicyError(f"{label} must be a list of non-empty strings")
+    return tuple(value)
 
 
 @functools.lru_cache(maxsize=None)
@@ -97,11 +112,11 @@ def load(directory: str | None = None) -> AttentionPolicy:
     rules = tuple(
         SignalRule(str(name), _strings(spec.get("all_contains"), f"{name}.all_contains"),
                    _strings(spec.get("any_contains"), f"{name}.any_contains"),
+                   _strings(spec.get("flags"), f"{name}.flags"),
                    bool(spec.get("must_review", True)),
                    _strings(spec.get("representative_images"), f"{name}.representative_images"),
-                   _strings(spec.get("match_fields"), f"{name}.match_fields"))
+                   _field_names(spec.get("match_fields"), f"{name}.match_fields"))
         for name, spec in rules_raw.items()
         if isinstance(spec, dict)
     )
     return AttentionPolicy(max_items, tuple(groups), rules)
-

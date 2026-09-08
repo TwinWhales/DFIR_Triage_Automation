@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "verified.schema.json",
   "title": "06_verified.json — 근거 검증 결과",
-  "description": "부분 통과는 두지 않는다. claims 중 하나라도 틀린 문장은 신뢰할 수 없다. unverifiable을 제3의 판정으로 둔 이유는 종합 판단 문장 때문이다. 기각하면 요약이 사라지고 통과시키면 구멍이 생긴다.",
+  "description": "부분 통과는 두지 않는다. claims 중 하나라도 틀린 문장은 신뢰할 수 없다. unverifiable은 보고 단계에서 근거와 수동 검증 사유를 붙인 Warning으로 보존한다. 기각하면 맥락이 사라지고 통과시키면 검증 구멍이 생긴다.",
   "type": "object",
   "required": ["case_id", "stage", "schema_version", "generated_at", "generator", "tolerance", "passed", "rejected", "unverifiable", "stats"],
   "additionalProperties": false,
@@ -75,7 +75,7 @@
         "type": "object", "required": ["sentence_id", "verdict", "reason"], "additionalProperties": false,
         "properties": {
           "sentence_id": { "type": "string", "pattern": "^N[1-9]\\d*$" },
-          "verdict": { "enum": ["supported", "contradicted", "insufficient"] },
+          "verdict": { "enum": ["supported", "supported_with_warning", "contradicted", "insufficient"] },
           "reason": { "type": "string" }
         }
       }

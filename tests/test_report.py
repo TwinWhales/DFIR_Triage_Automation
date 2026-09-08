@@ -78,14 +78,15 @@ def test_rejected_count_is_still_reported(docs):
 
 
 def test_the_fixed_sections_are_always_present(docs):
-    # 미검증 항목과 분석 범위가 이 도구의 신뢰성 근거다.
+    # 경고 항목과 미확인 범위가 이 도구의 신뢰성 근거다.
     # 자동 생성에서 누락되지 않아야 한다.
     text = render(_context(docs))
     for heading in (
         "## 개요",
-        "## 확인된 사항",
-        "## 미검증 항목",
-        "## 분석 범위",
+        "## 확인된 사실 (🟢 Passed)",
+        "## 주의 필요 소견 (🟡 Warning - 분석가 교차 검증 요망)",
+        "## 미확인 사항 (⚪ Unknowns)",
+        "### 분석 범위",
         "### 확인한 아티팩트",
         "### 확인하지 못한 아티팩트",
     ):
@@ -98,13 +99,42 @@ def test_sections_survive_an_empty_case(docs):
     docs["selection"]["excluded"] = []
     docs["selection"]["deferred"] = []
     text = render(_context(docs))
-    assert "## 미검증 항목" in text and "없습니다" in text
-    assert "## 분석 범위" in text
+    assert "## 주의 필요 소견" in text and "없습니다" in text
+    assert "## 미확인 사항" in text
 
 
 def test_unverifiable_statements_are_quoted_verbatim(docs):
     context = _context(docs)
     assert context["unverifiable"][0]["statement"] == docs["findings"]["findings"][2]["statement"]
+
+
+def test_warning_keeps_reason_evidence_and_timeline_context(docs):
+    docs["verified"]["passed"] = [
+        entry for entry in docs["verified"]["passed"] if entry["id"] != "F1"
+    ]
+    docs["verified"]["unverifiable"] = [
+        {"id": "F1", "reason": "서술 일부를 자동 검증하지 못함"}
+    ]
+    context = _context(docs)
+    warning = context["warnings"][0]
+    assert warning["reason"]
+    assert warning["evidence"]
+    timeline = next(item for item in context["timeline"] if "MFT#12345" in item["refs"])
+    assert timeline["verification"] == "Warning"
+
+    text = render(context)
+    assert "⚠️ 분석가 확인 권장:" in text
+
+
+def test_verified_command_line_is_visible_without_rewriting_it(docs):
+    finding = docs["findings"]["findings"][0]
+    finding["claims"].append(
+        {"ref": "MFT#12345", "field": "fields.CommandLine", "value": "tool.exe --fetch a b"}
+    )
+
+    text = render(_context(docs))
+
+    assert "> 검증값: fields.CommandLine: tool.exe --fetch a b" in text
 
 
 def test_scope_limits_merge_excluded_and_unfired_deferred(docs):
