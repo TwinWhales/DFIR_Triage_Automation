@@ -11,7 +11,8 @@
     "MFT#12400",
     "PF#689046",
     "SYSMON#77",
-    "SYSMON#91"
+    "SYSMON#91",
+    "SYSMON#93"
   ],
   "cases": [
     {
@@ -769,6 +770,22 @@
           "ref": "SYSMON#77",
           "field": "Image",
           "value": "c:\\windows\\system32\\cmd.exe"
+        }
+      ]
+    },
+    {
+      "id": "V46",
+      "risk": "구두점만 다른 제품 이름을 지어낸 파일명으로 오인한다",
+      "why": "K-KIOSK-USB-0908-FIX(2026-09-08)에서 침해 체인 전체를 담은 소견 F1이 'Node.js 애플리케이션'이라는 표현 하나로 unverifiable이 됐다. 인용한 레코드에는 ParentImage로 'C:\\Program Files\\nodejs\\node.exe'가 있다 — 글자는 같고 점 하나가 다르다. 파일을 지어낸 것이 아니라 디렉터리 이름을 제품 표기로 쓴 것이다. 이 한 건이 refs 10건·claims 23건을 통째로 떨궜고, 그것을 인용한 서사 문장 10개까지 insufficient로 내렸다.",
+      "statement": "Node.js 애플리케이션이 cmd.exe 를 통해 실행됐습니다.",
+      "refs": [
+        "SYSMON#93"
+      ],
+      "claims": [
+        {
+          "ref": "SYSMON#93",
+          "field": "fields.Image",
+          "value": "C:\\Windows\\System32\\cmd.exe"
         }
       ]
     }
