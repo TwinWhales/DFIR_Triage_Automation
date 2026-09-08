@@ -17,13 +17,14 @@ Wazuh 원본(rule.mitre.id / rule.level / agent.name)  →  AlertAdapterError
 - `src/stage02_normalize/alert_adapter.py`의 `flatten_wazuh()`가
   `rule.mitre.id`→`mitre`, `rule.level`→`severity`, `agent.name`→`host`,
   `data.win.eventdata.*`→`process.*`로 변환한다.
-- `tools/make_case.py --alert alerts/YYYY-MM-DD/<파일>`이 원문을 `01_input.json`의 `raw`에
+- `tools/make_case.py --alert alerts/<파일>`이 원문을 `01_input.json`의 `raw`에
   보존하면서 `source_type=edr_alert`로 감싼다.
-- Wazuh 알럿 파일은 `alerts/` 아래 날짜별 폴더(`alerts/YYYY-MM-DD/`)에 적재된다.
-- **원격 호스트 증거 수집 (규섭님 담당)**: `open_source()`는 원격 라이브 호스트를
-  직접 읽지 못하므로, Tailscale VPN을 통해 대상 단말에 KAPE를 트리거하여
-  `evidence/<노드명>_<타임스탬프>/C/...` 형태로 수집·적재한다. 수집 완료 즉시
-  파이프라인이 자동 연계된다.
+- active-response에서 호출하는 래퍼는 아직 없다.
+
+**라이브 호스트에서 바로 못 읽는다는 것도 함께 본다.** `open_source()`는
+이미지 파일 또는 폴더만 받는다(`\\.\C:` 없음). 알럿이 나면 KAPE가 먼저
+돌아 폴더를 만들어야 한다 — 계획서에 KAPE가 있으니 운영으로 메꿔지지만,
+그 호출을 감싸는 자리가 지금 없다.
 
 ## 다음 세션이 바로 집을 수 있게 — 배선
 
