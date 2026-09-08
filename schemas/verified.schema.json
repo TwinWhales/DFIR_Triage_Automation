@@ -68,6 +68,18 @@
         }
       }
     },
+    "story_review": {
+      "type": "array",
+      "description": "sLLM critic 판정을 finding 검증 결과로 다시 제한한 최종 문장 판정.",
+      "items": {
+        "type": "object", "required": ["sentence_id", "verdict", "reason"], "additionalProperties": false,
+        "properties": {
+          "sentence_id": { "type": "string", "pattern": "^N[1-9]\\d*$" },
+          "verdict": { "enum": ["supported", "contradicted", "insufficient"] },
+          "reason": { "type": "string" }
+        }
+      }
+    },
     "stats": {
       "type": "object",
       "required": ["total_findings", "passed", "rejected", "unverifiable", "hallucination_rate"],

@@ -19,13 +19,36 @@
       "refs": ["MFT#12345", "SYSMON#1983"],
       "technique": "T1059.003" 또는 null,
       "reason": "이 항목들이 어떻게 이어지는지 한두 문장",
-      "severity": "high" | "medium" | "low" | "info"
+      "severity": "high" | "medium" | "low" | "info",
+      "assertion_ids": ["R1"]
     }
-  ]
+  ],
+  "incident_story": {
+    "summary": "사건 전체 요약",
+    "sentences": [
+      {"id": "N1", "text": "관측 사실", "kind": "observed_fact", "refs": ["MFT#12345"]},
+      {"id": "N2", "text": "증거를 종합한 판단", "kind": "analytical_assessment", "refs": ["MFT#12345", "SYSMON#1983"]},
+      {"id": "N3", "text": "아직 확인할 수 없는 점", "kind": "unknown", "refs": ["SYSMON#1983"]}
+    ],
+    "critical_threat": "가장 우선적으로 대응할 위협 분기"
+  }
 }
 ```
 
 JSON 객체 **하나만** 출력합니다. 설명이나 코드펜스를 붙이지 마십시오.
+
+각 connection에는 Python이 제공한 관계 후보 중 실제 설명에 필요한 ID만
+`assertion_ids`에 넣으십시오. 후보가 없거나 설명에 불필요하면 빈 배열을 사용하십시오.
+새 predicate나 endpoint를 직접 만들지 마십시오. 같은 packet이라는 사실만으로
+`same_path`나 `same_hash`를 추측해서는 안 됩니다.
+또한 `incident_story`에 사건 전체를 한 번만 종합하십시오. `sentences`의 각 항목은
+`N1`부터 순서대로 ID를 붙이고 `observed_fact`, `analytical_assessment`, `unknown`
+중 하나로 구분하며, 주어진 ref만 인용하십시오. `critical_threat`의 우선순위와
+사건 의미는 당신이 판단하되 관측 사실처럼 위장하지 마십시오.
+`summary`와 `critical_threat`에 들어간 모든 사실·판단은 반드시 `sentences`에도
+원자 문장으로 포함해야 합니다. Critic은 이 문장 목록을 한 번에 심사합니다.
+Map 근거의 `attention_signals`는 누락 방지 필수 관측입니다. 각 시그널을 최소 한
+문장에서 다루되, 시그널 이름을 결론으로 복사하지 말고 그 Map reason을 종합하십시오.
 
 ## 무엇을 묶고 무엇을 묶지 않나
 

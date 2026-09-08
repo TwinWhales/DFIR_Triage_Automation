@@ -60,6 +60,10 @@ def cited_refs(finding: dict[str, Any]) -> list[str]:
         for endpoint in (assertion.get("subject"), assertion.get("object")):
             if isinstance(endpoint, dict) and endpoint.get("ref") is not None:
                 seen.setdefault(endpoint["ref"], None)
+        if assertion.get("predicate") in {"spawned", "same_path", "same_hash"}:
+            endpoint_ref = assertion.get("object")
+            if isinstance(endpoint_ref, str) and "#" in endpoint_ref:
+                seen.setdefault(endpoint_ref, None)
     return list(seen)
 
 

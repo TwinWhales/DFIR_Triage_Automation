@@ -43,7 +43,7 @@ from ..common import io, llm, schema
 from ..common.llm import DEFAULT_TIMEOUT
 from ..stage03_select import mapping_loader
 from ..stage06_verify import comparators
-from . import allocation, assembly, attention, incident_context, record_filter
+from . import allocation, assembly, attention, incident_context, incident_packet, record_filter
 from .llm_client import (
     ASSEMBLE_NUM_CTX,
     DEFAULT_MODEL,
@@ -205,6 +205,11 @@ def build_findings(
 ) -> dict[str, Any]:
     """모델이 만든 본문에 헤더와 ``input_refs``를 붙인다."""
 
+    extras = {
+        key: body[key]
+        for key in ("signal_dispositions", "incident_story", "story_critic")
+        if body.get(key) not in (None, {}, [])
+    }
     return io.new_document(
         case_id,
         STAGE,
@@ -212,6 +217,7 @@ def build_findings(
         input_refs=input_refs,
         findings=body.get("findings", []),
         timeline=body.get("timeline", []),
+        **extras,
     )
 
 
@@ -597,6 +603,7 @@ def _select_chunk(
     *,
     max_attempts: int = MAX_ATTEMPTS,
     queries: "QueryLog | None" = None,
+    dispositions: "dict[str, Any] | None" = None,
 ) -> list[dict[str, Any]]:
     """조각 하나를 모델에게 물어 고른 것을 받는다.
 
@@ -626,6 +633,8 @@ def _select_chunk(
             # **여기서 검사한다.** 조립까지 미루면 어느 조각이 틀렸는지 알 수
             # 없어 전부 다시 돌게 된다.
             assembly.validate_selection(picked, {r["ref"]: r for r in chunk})
+            if dispositions is not None:
+                dispositions.update(client.last_signal_dispositions)
             return picked
 
         except assembly.SelectionError as e:
@@ -679,6 +688,8 @@ def _connect(
     log: errlog.ErrorLog,
     char_budget: "int | None",
     queries: "QueryLog | None" = None,
+    relation_catalog: "list[dict[str, Any]] | None" = None,
+    max_attempts: int = MAX_ATTEMPTS,
 ) -> list[dict[str, Any]]:
     """고른 항목들 중 서로 이어지는 것을 묶는다 (Reduce).
 
@@ -702,7 +713,7 @@ def _connect(
         return []
 
     if char_budget is not None and char_budget > 0:
-        needed = client.reduce_chars(scenario, picked)
+        needed = client.reduce_chars(scenario, picked, relation_catalog)
         if needed > char_budget:
             log.record(
                 STAGE,
@@ -718,23 +729,42 @@ def _connect(
             )
             return []
 
-    try:
-        found = client.propose_connections(scenario, picked)
-        if queries is not None:
-            queries.record(
-                client, "connections", note=f"단서 {len(picked)}건 → 묶음 {len(found)}건"
+    feedback: str | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            found = client.propose_connections(
+                scenario, picked, relation_catalog, feedback,
+                repair_missing_review=(attempt == max_attempts),
             )
-        return found
-    except (llm.LLMError, llm.MalformedOutput) as e:
-        if queries is not None:
-            queries.record(client, "connections_failed", note=str(e))
-        log.record(
-            STAGE,
-            "malformed_output" if isinstance(e, llm.MalformedOutput) else "llm_error",
-            {"message": f"종합 질의 실패, 건너뜀: {e}"},
-            action="skip",
-        )
-        return []
+            if queries is not None:
+                queries.record(
+                    client, "connections", note=f"단서 {len(picked)}건 → 묶음 {len(found)}건"
+                )
+            return found
+        except llm.MalformedOutput as e:
+            feedback = str(e)
+            if queries is not None:
+                queries.record(client, "connections_retry", note=feedback)
+            if attempt < max_attempts:
+                log.record(
+                    STAGE, "malformed_output", {"message": feedback},
+                    action="retry", attempt=attempt,
+                )
+                continue
+        except llm.LLMError as e:
+            feedback = str(e)
+            if queries is not None:
+                queries.record(client, "connections_failed", note=feedback)
+            break
+
+    client.last_incident_story = None
+    log.record(
+        STAGE,
+        "malformed_output",
+        {"message": f"종합 질의 실패, 건너뜀: {feedback}"},
+        action="skip",
+    )
+    return []
 
 
 def interpret_assembled(
@@ -779,6 +809,7 @@ def interpret_assembled(
 
     chunks = allocation.chunk_records(records, char_budget) if char_budget else [records]
     picked: list[dict[str, Any]] = []
+    dispositions: dict[str, Any] = {}
     for index, chunk in enumerate(chunks, 1):
         picked.extend(
             _select_chunk(
@@ -790,15 +821,42 @@ def interpret_assembled(
                 len(chunks),
                 max_attempts=max_attempts,
                 queries=queries,
+                dispositions=dispositions,
             )
         )
 
-    connections = _connect(scenario, picked, client, log, char_budget, queries)
+    relations = incident_packet.relation_catalog(records, {str(item.get("ref")) for item in picked})
+    connections = _connect(
+        scenario, picked, client, log, char_budget, queries,
+        relation_catalog=relations, max_attempts=max_attempts,
+    )
+    story = client.last_incident_story
+    critic: list[dict[str, Any]] = []
+    if story and story.get("sentences"):
+        try:
+            critic = client.propose_critic(story, picked)
+            if queries is not None:
+                queries.record(client, "story_critic", note=f"문장 {len(critic)}건 판정")
+        except (llm.LLMError, llm.MalformedOutput) as e:
+            log.record(
+                STAGE,
+                "malformed_output" if isinstance(e, llm.MalformedOutput) else "llm_error",
+                {"message": f"내러티브 critic 실패, 분석적 판단으로 유지: {e}"},
+                action="skip",
+            )
 
     feedback: str | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            body = assembly.assemble_body(picked, by_ref, connections=connections)
+            body = assembly.assemble_body(
+                picked, by_ref, connections=connections, relation_catalog=relations
+            )
+            if dispositions:
+                body["signal_dispositions"] = dispositions
+            if story:
+                body["incident_story"] = story
+            if critic:
+                body["story_critic"] = critic
             findings = build_findings(body, case_id, generator, input_refs)
             schema.validate(findings, "findings")
             try:
@@ -1247,9 +1305,9 @@ def main(
     if assembled and budget_chars > 0:
         alloc_budget = budget_chars * max(1, args.max_chunks)
 
-    prepared_records = attention.apply(
-        incident_context.enrich(list(parsed.values())), mappings=args.mappings
-    )
+    contextual_records = incident_context.enrich(list(parsed.values()))
+    packetized_records = incident_packet.enrich(contextual_records)
+    prepared_records = attention.apply(packetized_records, mappings=args.mappings)
     records, quotas, budget = allocation.allocate_records(
         prepared_records,
         priorities=priorities,
@@ -1263,6 +1321,7 @@ def main(
         char_budget=alloc_budget,
         max_list_items=max_list_items,
     )
+    records = incident_packet.restrict(records)
 
     if not records:
         # 파싱은 됐는데 후보가 하나도 없다.

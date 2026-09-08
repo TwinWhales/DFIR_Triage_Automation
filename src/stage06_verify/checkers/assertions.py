@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ntpath
+import re
 from datetime import datetime
 from typing import Any
 
@@ -35,6 +36,61 @@ def _time(value: Any) -> datetime:
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
+def _number(value: Any) -> float:
+    if isinstance(value, bool):
+        raise TypeError("boolean is not a numeric assertion value")
+    return float(value)
+
+
+_HASH_RE = re.compile(r"^(?:md5|sha1|sha256)\s*[:=]\s*", re.IGNORECASE)
+_DIGEST_RE = re.compile(r"^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def _hashes(value: Any) -> set[str]:
+    """Return normalized hash values without guessing algorithms."""
+    if isinstance(value, dict):
+        values = value.values()
+    elif isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        values = (value,)
+    normalized: set[str] = set()
+    for item in values:
+        if item is None:
+            continue
+        # Sysmon commonly stores several ALGORITHM=value pairs in one scalar.
+        for token in re.split(r"[,;]", str(item)):
+            digest = _HASH_RE.sub("", token.strip()).casefold()
+            if _DIGEST_RE.fullmatch(digest):
+                normalized.add(digest)
+    return normalized
+
+
+def _packet_join(assertion: dict[str, Any], subject: Any, other: Any, ctx: CheckContext) -> bool | None:
+    """Recheck a compact packet ref join against the original records."""
+    endpoint = assertion.get("subject")
+    if not isinstance(endpoint, dict) or not isinstance(subject, list) or not isinstance(other, str):
+        return None
+    field = str(endpoint.get("field") or "")
+    predicate = assertion.get("predicate")
+    expected_field = f"incident_packet.{predicate}_refs"
+    if field != expected_field:
+        return None
+    if other not in subject:
+        return False
+    anchor = ctx.records.get(str(endpoint.get("ref")))
+    target = ctx.records.get(other)
+    if anchor is None or target is None:
+        return False
+    left = anchor.get("canonical") if isinstance(anchor.get("canonical"), dict) else {}
+    right = target.get("canonical") if isinstance(target.get("canonical"), dict) else {}
+    if predicate == "same_path":
+        return bool(left.get("subject_path") and right.get("subject_path")) and _path(left["subject_path"]) == _path(right["subject_path"])
+    if predicate == "same_hash":
+        return bool(_hashes(left.get("hashes")) & _hashes(right.get("hashes")))
+    return None
+
+
 def check(finding: dict[str, Any], ctx: CheckContext) -> CheckResult:
     assertions = finding.get("assertions") or []
     passed = 0
@@ -56,11 +112,30 @@ def check(finding: dict[str, Any], ctx: CheckContext) -> CheckResult:
             elif predicate == "outside_path":
                 valid = not _under(subject, other)
             elif predicate == "same_path":
-                valid = _path(subject) == _path(other)
+                packet_valid = _packet_join(assertion, subject, other, ctx)
+                valid = packet_valid if packet_valid is not None else _path(subject) == _path(other)
+            elif predicate == "same_hash":
+                packet_valid = _packet_join(assertion, subject, other, ctx)
+                valid = packet_valid if packet_valid is not None else bool(_hashes(subject) & _hashes(other))
+            elif predicate == "spawned":
+                # Normal prompt form: the deterministic incident packet lists
+                # child refs, avoiding raw GUID token cost. Direct GUID endpoint
+                # comparison remains supported for imported findings.
+                if isinstance(subject, list):
+                    needle = str(other).strip().casefold()
+                    valid = any(str(item).strip().casefold() == needle for item in subject)
+                else:
+                    valid = str(subject).strip().casefold() == str(other).strip().casefold()
             elif predicate == "before":
                 valid = _time(subject) < _time(other)
             elif predicate == "after":
                 valid = _time(subject) > _time(other)
+            elif predicate == "within":
+                tolerance = float(assertion.get("tolerance_seconds", ctx.tolerance_seconds))
+                valid = abs((_time(subject) - _time(other)).total_seconds()) <= tolerance
+            elif predicate in {"duration", "count"}:
+                tolerance = float(assertion.get("tolerance_seconds", ctx.tolerance_seconds))
+                valid = abs(_number(subject) - _number(other)) <= tolerance
             else:
                 valid = False
         except (KeyError, comparators.FieldMissing) as error:

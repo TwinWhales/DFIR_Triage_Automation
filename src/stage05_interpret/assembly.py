@@ -32,6 +32,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from typing import Any
@@ -180,6 +181,11 @@ def claim_for(
     claims: list[dict[str, Any]] = []
     seen: set[str] = set()
     for name in order:
+        # incident_context/incident_packet are deterministic Stage 05 overlays,
+        # not fields stored in 04_parsed. They are valid typed-assertion
+        # endpoints but must never masquerade as verbatim source claims.
+        if name.startswith(("incident_context.", "incident_packet.")):
+            continue
         if name in seen:
             continue
         seen.add(name)
@@ -259,6 +265,51 @@ def validate_selection(
                 ),
             )
 
+        assertions = selection.get("assertions") or []
+        seen_assertions: set[str] = set()
+        for assertion in assertions:
+            signature = json.dumps(assertion, ensure_ascii=False, sort_keys=True)
+            if signature in seen_assertions:
+                raise SelectionError(
+                    f"{ref} 의 assertion이 중복됐다.",
+                    guidance="문장이 주장하는 서로 다른 사실마다 assertion을 하나씩 작성하십시오.",
+                )
+            seen_assertions.add(signature)
+
+            endpoints = [
+                endpoint for endpoint in (assertion.get("subject"), assertion.get("object"))
+                if isinstance(endpoint, dict)
+            ]
+            if not any(endpoint.get("ref") == ref for endpoint in endpoints):
+                raise SelectionError(
+                    f"{ref} 선택의 assertion이 선택 레코드를 참조하지 않는다.",
+                    guidance="각 assertion의 subject 또는 object에 선택한 레코드를 포함하십시오.",
+                )
+            for endpoint in endpoints:
+                endpoint_ref = endpoint.get("ref")
+                endpoint_record = records.get(endpoint_ref)
+                field = endpoint.get("field")
+                if endpoint_record is None or not field or not walk_field(endpoint_record, field)[0]:
+                    raise SelectionError(
+                        f"assertion endpoint를 원본에서 확인할 수 없다: {endpoint_ref}:{field}",
+                        guidance="실제로 전달된 레코드와 존재하는 필드만 assertion에 사용하십시오.",
+                    )
+
+            predicate = assertion.get("predicate")
+            endpoint_refs = {endpoint.get("ref") for endpoint in endpoints}
+            if len(endpoint_refs) > 1 and predicate in {"same_path", "same_hash", "spawned"}:
+                packet_ids = {records[endpoint_ref].get("packet_id") for endpoint_ref in endpoint_refs}
+                if None in packet_ids or len(packet_ids) != 1:
+                    raise SelectionError(
+                        f"{ref} 의 {predicate} assertion이 서로 다른 incident packet을 연결한다.",
+                        guidance="same_path/same_hash/spawned 교차 assertion은 같은 packet_id의 레코드에만 사용하십시오.",
+                    )
+            if predicate == "within" and "tolerance_seconds" not in assertion:
+                raise SelectionError(
+                    f"{ref} 의 within assertion에 tolerance_seconds가 없다.",
+                    guidance="허용할 시간 간격(초)을 tolerance_seconds에 명시하십시오.",
+                )
+
 
 def _sort_time(record: dict[str, Any]) -> datetime:
     """타임라인 정렬에 쓸 시각. 못 읽으면 맨 뒤로.
@@ -290,6 +341,7 @@ def assemble_body(
     records: dict[str, dict[str, Any]],
     fields: "ClaimFields | None" = None,
     connections: "list[dict[str, Any]] | None" = None,
+    relation_catalog: "list[dict[str, Any]] | None" = None,
 ) -> dict[str, Any]:
     """모델이 고른 목록 → findings 본문(``findings`` + ``timeline``).
 
@@ -323,6 +375,9 @@ def assemble_body(
 
     findings: list[dict[str, Any]] = []
     used: set[str] = set()
+    relations_by_id = {
+        str(item["id"]): item for item in relation_catalog or [] if item.get("id")
+    }
 
     # **묶음이 먼저다.** Reduce 가 "이 셋이 한 사건이다"라고 한 것이 보고서의
     # 앞머리여야 하고, 묶인 레코드가 단독 소견으로 또 나오면 같은 사실이 두
@@ -340,6 +395,41 @@ def assemble_body(
         if not statement:
             raise SelectionError("묶음의 reason 이 비었다.")
 
+        assertion_ids = connection.get("assertion_ids") or []
+        unknown_ids = [item for item in assertion_ids if item not in relations_by_id]
+        if unknown_ids:
+            raise SelectionError(f"알 수 없는 관계 assertion ID: {unknown_ids}")
+        assertions = [
+            {
+                key: value for key, value in relations_by_id[item].items()
+                if key in {"predicate", "subject", "object", "tolerance_seconds"}
+            }
+            for item in assertion_ids
+        ]
+        # Backward compatibility for imported/replayed findings. Live Reduce
+        # output is schema-constrained to assertion_ids and cannot author these.
+        assertions.extend(connection.get("assertions") or [])
+        for assertion in assertions:
+            for endpoint in (assertion.get("subject"), assertion.get("object")):
+                if not isinstance(endpoint, dict):
+                    continue
+                endpoint_ref, field = endpoint.get("ref"), endpoint.get("field")
+                if endpoint_ref not in refs or not field or not walk_field(records[endpoint_ref], field)[0]:
+                    raise SelectionError(f"묶음 assertion endpoint를 확인할 수 없다: {endpoint_ref}:{field}")
+            endpoint_refs = {
+                endpoint.get("ref") for endpoint in (assertion.get("subject"), assertion.get("object"))
+                if isinstance(endpoint, dict)
+            }
+            if len(endpoint_refs) > 1 and assertion.get("predicate") in {"same_path", "same_hash", "spawned"}:
+                packet_ids = {records[endpoint_ref].get("packet_id") for endpoint_ref in endpoint_refs}
+                if None in packet_ids or len(packet_ids) != 1:
+                    raise SelectionError("묶음 관계 assertion이 서로 다른 incident packet을 동일 대상으로 단정한다.")
+            catalog_refs = set()
+            for relation_id in assertion_ids:
+                catalog_refs.update(relations_by_id[relation_id].get("refs", []))
+            if catalog_refs and not catalog_refs <= set(refs):
+                raise SelectionError("관계 assertion의 endpoint가 connection refs에 포함되지 않았다.")
+
         claims: list[dict[str, Any]] = []
         for ref in refs:
             # 각 레코드의 근거 필드는 **Map 이 이미 골라 뒀다.** Reduce 는
@@ -356,6 +446,7 @@ def assemble_body(
                 "claims": claims,
                 "technique": connection.get("technique") or None,
                 "severity": connection.get("severity") or "info",
+                **({"assertions": assertions} if assertions else {}),
             }
         )
 
@@ -378,7 +469,10 @@ def assemble_body(
         # 이미 돌았지만 여기서도 부르는 것은, 이 함수가 그 검사 없이 불릴 수
         # 있기 때문이다 — 검사를 통과하지 않은 선별로 문서를 만들면 없는
         # 필드가 claims 에서 조용히 빠진다.
-        validate_selection([selection], {ref: record})
+        # Assertions may intentionally compare this selection with another
+        # record from the same Map packet. Revalidation must therefore retain
+        # the full delivered-record namespace, not only the primary ref.
+        validate_selection([selection], records)
         statement = str(selection.get("reason") or "").strip()
         chosen = (
             [name for name in selection["evidence_fields"] if name]

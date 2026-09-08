@@ -25,6 +25,49 @@ def _text(record: dict[str, Any]) -> str:
     return "\n".join(values).lower()
 
 
+def _string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [item for child in value.values() for item in _string_values(child)]
+    if isinstance(value, list):
+        return [item for child in value for item in _string_values(child)]
+    return []
+
+
+def _signal_context(record: dict[str, Any], signal: str, policy: Any) -> list[str]:
+    """Keep exact matching source values so Reduce sees more than a flag name."""
+    rules = [rule for rule in policy.signals if rule.name == signal]
+    tokens = [
+        token for group in policy.path_groups if group.signal == signal
+        for token in group.contains
+    ]
+    matched: list[str] = []
+    for value in _string_values(record):
+        folded = value.casefold()
+        if any(rule.matches(folded) for rule in rules) or any(token in folded for token in tokens):
+            if value not in matched:
+                matched.append(value)
+    return matched[:4]
+
+
+def _signal_requirement(record: dict[str, Any], signal: str, policy: Any) -> dict[str, list[str]]:
+    blob = _text(record)
+    for rule in policy.signals:
+        if rule.name != signal:
+            continue
+        if rule.all_contains and all(token in blob for token in rule.all_contains):
+            return {"all": list(rule.all_contains)}
+        matched = [token for token in rule.any_contains if token in blob]
+        if matched:
+            return {"any": matched}
+    matched = [
+        token for group in policy.path_groups if group.signal == signal
+        for token in group.contains if token in blob
+    ]
+    return {"any": matched} if matched else {}
+
+
 def signal_ids(record: dict[str, Any], *, mappings: str | None = None) -> list[str]:
     blob = _text(record)
     signals: list[str] = []
@@ -82,6 +125,12 @@ def apply(records: Iterable[dict[str, Any]], *, mappings: str | None = None) -> 
     for signal, record in representatives.items():
         record.setdefault("attention_signals", []).append(signal)
         record["must_review"] = True
+        context = _signal_context(record, signal, policy)
+        if context:
+            record.setdefault("attention_context", {})[signal] = context
+        requirement = _signal_requirement(record, signal, policy)
+        if requirement:
+            record.setdefault("attention_requirements", {})[signal] = requirement
 
     # Related duplicates remain ordinary context.  A single disposition covers
     # the observable signal family and keeps a 1,024-token local-model response

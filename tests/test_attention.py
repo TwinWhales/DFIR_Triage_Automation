@@ -22,6 +22,10 @@ def test_high_value_observations_are_neutral_attention_signals():
     ])
     assert records[0]["must_review"] is True
     assert "credential_export_option_observed" in records[0]["attention_signals"]
+    assert "key=clear" in records[0]["attention_context"]["credential_export_option_observed"][0]
+    assert records[0]["attention_requirements"]["credential_export_option_observed"] == {
+        "all": ["netsh", "wlan", "key=clear"]
+    }
     assert "browser_sandbox_disabled" in records[1]["attention_signals"]
     assert all("malicious" not in signal for record in records for signal in record["attention_signals"])
 
@@ -57,4 +61,6 @@ def test_t1555_vocabulary_drives_attention_and_prompt_preservation():
     trimmed = allocation.for_prompt(record, 5, flagging.prompt_keep_paths())
 
     assert enriched["attention_signals"] == ["sensitive_credential_store_referenced"]
+    assert paths[29] in enriched["attention_context"]["sensitive_credential_store_referenced"]
+    assert "\\logins.json" in enriched["attention_requirements"]["sensitive_credential_store_referenced"]["any"]
     assert paths[29] in trimmed["fields"]["loaded_files"]

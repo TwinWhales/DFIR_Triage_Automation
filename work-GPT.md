@@ -139,7 +139,7 @@ F3 오판의 직접 원인은 아티팩트마다 경로 필드의 의미가 달�
 * **중립적 시그널 명명 (좋은 예 vs 나쁜 예):**
   - **좋은 예 (관찰된 사실):**
     - `credential_export_option_observed` (`netsh ... key=clear`)
-    - `sensitive_store_referenced` (`Login Data`, `Cookies`)
+    - `sensitive_credential_store_referenced` (`Login Data`, `Cookies`)
     - `shell_spawned`
     - `browser_sandbox_disabled` (`--no-sandbox`)
     - `rapid_process_fanout`
@@ -272,17 +272,24 @@ GPT/Codex는 아래 10단계 순서를 지키며 하나씩 완수해 나간다:
   - `src/stage04_parse/` 산출물에 `canonical.subject_path`, `event_time`, `command_line` 주입
   - `mappings/windows/T1204.002.yaml` 및 Sysmon 파서에 EID 1 ↔ EID 5 ProcessGuid 수명 주기 묶음 구현
 - [x] **3. [3단계] `must_review` 중립 시그널 및 보장 쿼터 추가**
-  - `mappings/_flags.yaml`에 `credential_export_option_observed`, `sensitive_store_referenced` 등 등록
+  - `mappings/_attention_signals.yaml`에 `credential_export_option_observed`, `sensitive_credential_store_referenced` 등 등록
   - `src/stage05_interpret/allocation.py`에 보장 레인(Guaranteed Lane) 구현
 - [x] **4. [4단계] Map 출력 포맷에 필수 시그널 disposition 강제**
   - `src/stage05_interpret/prompts/` 및 파서에서 `must_review` 시그널에 대한 `selected|dismissed|uncertain` 응답 강제
-- [ ] **5. [5단계] Typed Assertion 및 관계 검증기 구현** *(핵심 경로 술어 완료, 나머지 술어·critic 잔여)*
+- [x] **5. [5단계] Typed Assertion 및 관계 검증기 구현**
   - `src/stage06_verify/`에 `outside_path`, `under_path`, `spawned` 등 Predicate 검증기 추가
   - F3 소견(`outside_path` on ALZip)이 `contradicted`로 기각되는지 단위 테스트로 검증
-- [ ] **6. [6단계] 프로세스 트리를 `incident_packet`으로 직렬화** *(lifecycle·직접 자식 완료, 다종 corroboration 잔여)*
+  - `same_path`, `same_hash`, `before`, `after`, `within`, `duration`, `count`, `list_contains` 구현
+  - 복합 reason은 사실별 assertion을 요구하고 중복·없는 endpoint를 선택 직후 기각
+  - 최종 Incident Story 문장 critic은 사건 Reduce가 생기는 7단계에서 함께 적용
+- [x] **6. [6단계] 프로세스 트리를 `incident_packet`으로 직렬화**
   - `src/stage05_interpret/allocation.py`의 `_process_context()` 결과를 `incident_packet` 구조로 포맷팅
+  - Sysmon EID 1 anchor와 MFT·Prefetch·Amcache를 정규화 경로/해시로 교차 조인
+  - 엔티티·must-review anchor의 corroboration ref를 함께 전달하는 correlation closure 적용
+  - 미전달 ref는 packet에서 제거하고 Stage 06이 원본 경로·해시를 독립 재검증
 - [ ] **7. [7단계] 패킷 기반 Map → 사건 기반 Reduce 프롬프트 개편**
   - 단일 평면 60개 선택 방식에서 탈피하여, 패킷별 분석 후 사건 전체 내러티브 종합 체계로 프롬프트 개선
+  - 최종 내러티브 문장별 `supported | contradicted | insufficient` sLLM critic 1회 적용
 - [ ] **8. [8단계] 한 번짜리 증거 확장 루프 (`investigation_requests`) 구현**
   - sLLM이 추가 아티팩트를 요청하면 파이썬이 1회 한정 파싱하여 2차 종합에 주입하는 루프 연결
 - [ ] **9. [9단계] 보고서 3영역 분리 및 세부 평가 지표 산출**

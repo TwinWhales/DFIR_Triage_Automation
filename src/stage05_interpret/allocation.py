@@ -68,6 +68,7 @@ from ..stage04_parse.flagging import (
     prompt_keep_paths,
     window_independent_flags,
 )
+from . import incident_packet
 from .record_filter import (
     DEFAULT_LIMIT,
     DEFAULT_WINDOW_SECONDS,
@@ -457,17 +458,46 @@ def chunk_records(
         # allocate_records 가 이미 했고, 여기서 또 하면 사유가 둘이 된다.
         return [list(records)]
 
+    # Treat a packet as one packing unit when it fits. Packet members may be
+    # separated in the time-sorted stream by unrelated records; pulling them
+    # together lets Map see corroboration in one call.
+    by_packet: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        packet_id = record.get("packet_id")
+        if packet_id:
+            by_packet.setdefault(str(packet_id), []).append(record)
+    units: list[list[dict[str, Any]]] = []
+    emitted: set[str] = set()
+    for record in records:
+        packet_id = str(record.get("packet_id") or "")
+        if not packet_id:
+            units.append([record])
+        elif packet_id not in emitted:
+            units.append(by_packet[packet_id])
+            emitted.add(packet_id)
+
     chunks: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     used = 0
 
-    for record in records:
-        size = record_chars(record, max_list_items, drop=drop)
-        if current and used + size > char_budget:
-            chunks.append(current)
-            current, used = [], 0
-        current.append(record)
-        used += size
+    for unit in units:
+        unit_size = sum(record_chars(record, max_list_items, drop=drop) for record in unit)
+        if unit_size <= char_budget:
+            if current and used + unit_size > char_budget:
+                chunks.append(current)
+                current, used = [], 0
+            current.extend(unit)
+            used += unit_size
+            continue
+        # Oversized packets retain packet_id on every fragment so Reduce can
+        # reunite their Map outputs; individual records are never truncated.
+        for record in unit:
+            size = record_chars(record, max_list_items, drop=drop)
+            if current and used + size > char_budget:
+                chunks.append(current)
+                current, used = [], 0
+            current.append(record)
+            used += size
 
     if current:
         chunks.append(current)
@@ -766,6 +796,21 @@ def allocate_records(
         for record in all_records
         if record.get("must_review") and record.get("ref")
     }
+    by_ref = {str(record.get("ref")): record for record in all_records if record.get("ref")}
+    # Correlation closure is limited to anchors explicitly named by the case or
+    # already in the must-review lane. It does not turn every common executable
+    # path into a guaranteed group.
+    packet_anchors = [
+        record for record in all_records
+        if record.get("incident_packet")
+        and (record.get("must_review") or mentions_entity(record, names))
+    ]
+    for anchor in packet_anchors:
+        if anchor.get("ref"):
+            guaranteed.setdefault(str(anchor["ref"]), anchor)
+        for ref in incident_packet.corroboration_refs(anchor):
+            if ref in by_ref:
+                guaranteed.setdefault(ref, by_ref[ref])
 
     def pick(seat_limit: int) -> tuple[dict[str, int], list[tuple[datetime, dict[str, Any]]], int]:
         """자릿수 하나에 대한 배분·선택·글자수."""

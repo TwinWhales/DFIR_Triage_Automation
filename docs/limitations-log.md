@@ -1,5 +1,31 @@
 # limitations-log.md — 해결된 것의 기록
 
+## 2026-09-08 — Incident packet 및 교차 corroboration 완성
+
+- Sysmon EID 1을 anchor로 시작/종료, 수명, 직접 자식, 2초 이내 fan-out을
+  `incident_packet.process`와 `burst`로 직렬화했다.
+- Sysmon·MFT·Prefetch·Amcache 사이의 정규화된 전체 경로 및 유효한
+  MD5/SHA-1/SHA-256 일치를 `same_path`/`same_hash` corroboration으로 묶었다.
+- 동일 아티팩트 반복 이벤트는 corroboration으로 세지 않고, 아티팩트별 대표 ref를
+  제한해 정상 실행 파일의 반복 기록이 패킷을 팽창시키지 않게 했다.
+- 엔티티 또는 must-review anchor의 교차 ref는 allocation correlation closure로 함께
+  전달하며, 최종 전달 집합 밖의 dangling ref는 프롬프트 전에 제거한다.
+- Stage 06은 packet의 결론을 그대로 믿지 않고 두 원본 레코드의 경로·해시를 다시
+  대조한다. SVCStealer 루트에서 `SYSMON#654` ↔ `MFT#460046`/`PF#1401979184`,
+  수명 0.444739초와 직접 자식 7개를 확인했다.
+
+## 2026-09-08 — Typed Assertion 관계 검증 확장
+
+- `spawned`, `same_hash`, `within`, `duration`, `count`를 포함한 관계형 predicate를
+  Stage 05 constrained output과 Stage 06 검증기에 함께 추가했다.
+- 원시 ProcessGuid를 프롬프트에 다시 노출하지 않고 Python이 구성한
+  `incident_context.child_refs`로 `spawned` 관계를 표현한다. 이는 토큰 비용을
+  줄이면서 관측된 프로세스 간선만 검증한다.
+- 복합 reason은 사실마다 별도 assertion을 작성하도록 프롬프트를 강화했고,
+  중복 assertion과 존재하지 않는 endpoint는 선택 직후 기각한다.
+- 최종 Incident Story에 대한 문장별 sLLM critic은 사건 단위 Reduce가 아직
+  없으므로 로드맵 7단계에서 함께 구현한다.
+
 `docs/limitations.md` 에서 옮겨 온, **이미 해결된** 항목의 기록입니다.
 지금 상태를 알고 싶으면 이 문서가 아니라 `docs/limitations.md` 를 봅니다.
 

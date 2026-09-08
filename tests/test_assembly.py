@@ -22,6 +22,7 @@ from src.stage05_interpret.assembly import (
     SelectionError,
     assemble_body,
     claim_for,
+    validate_selection,
     walk_field,
 )
 from src.stage06_verify.verify import technique_artifacts, verify
@@ -371,6 +372,33 @@ def test_a_connection_carries_the_evidence_fields_map_already_chose():
     ]
 
 
+def test_connection_resolves_only_catalogued_relation_assertion_ids():
+    records = _two()
+    records["SYSMON#1"]["packet_id"] = "SYSMON#1"
+    records["MFT#1"]["packet_id"] = "SYSMON#1"
+    records["SYSMON#1"]["incident_packet"] = {"same_path_refs": ["MFT#1"]}
+    picks = [_pick(ref) for ref in records]
+    relation = {
+        "id": "R1", "predicate": "same_path",
+        "subject": {"ref": "SYSMON#1", "field": "incident_packet.same_path_refs"},
+        "object": "MFT#1", "refs": ["SYSMON#1", "MFT#1"],
+    }
+    connection = {
+        **_conn(["MFT#1", "SYSMON#1"]),
+        "assertion_ids": ["R1"],
+    }
+
+    body = assemble_body(
+        picks, records, FIELDS, connections=[connection], relation_catalog=[relation]
+    )
+
+    assert body["findings"][0]["assertions"] == [{
+        "predicate": "same_path",
+        "subject": {"ref": "SYSMON#1", "field": "incident_packet.same_path_refs"},
+        "object": "MFT#1",
+    }]
+
+
 def test_records_left_out_of_a_connection_still_become_findings():
     """묶이지 않은 것을 버리면 모델이 고른 증거가 소리 없이 사라진다."""
     records = {**_two(), "SYSMON#2": _sysmon("SYSMON#2")}
@@ -423,3 +451,81 @@ def test_a_connection_sits_at_the_time_of_its_earliest_record():
     assert body["timeline"][0]["ts"] == "2026-08-26T01:00:00Z"
     assert set(body["timeline"][0]["refs"]) == {"MFT#1", "SYSMON#1"}
 
+
+def test_compound_reason_keeps_distinct_duration_and_count_assertions():
+    record = {
+        "ref": "SYSMON#1",
+        "artifact": "evtx:Sysmon",
+        "timestamp": "2026-09-07T06:30:05Z",
+        "incident_context": {"lifetime_seconds": 0.44, "child_count": 7},
+    }
+    selection = {
+        "ref": "SYSMON#1",
+        "reason": "프로세스가 0.44초 동안 실행되며 자식 7개를 생성했다",
+        "severity": "high",
+        "technique": None,
+        "evidence_fields": [
+            "incident_context.lifetime_seconds",
+            "incident_context.child_count",
+        ],
+        "assertions": [
+            {
+                "predicate": "duration",
+                "subject": {"ref": "SYSMON#1", "field": "incident_context.lifetime_seconds"},
+                "object": 0.44,
+            },
+            {
+                "predicate": "count",
+                "subject": {"ref": "SYSMON#1", "field": "incident_context.child_count"},
+                "object": 7,
+            },
+        ],
+    }
+    validate_selection([selection], {"SYSMON#1": record})
+    body = assemble_body([selection], {"SYSMON#1": record})
+    assert [item["predicate"] for item in body["findings"][0]["assertions"]] == ["duration", "count"]
+
+
+def test_duplicate_assertion_is_rejected_instead_of_masking_a_missing_clause():
+    record = {"ref": "SYSMON#1", "incident_context": {"child_count": 7}}
+    assertion = {
+        "predicate": "count",
+        "subject": {"ref": "SYSMON#1", "field": "incident_context.child_count"},
+        "object": 7,
+    }
+    selection = {
+        "ref": "SYSMON#1", "reason": "자식 7개", "evidence_fields": ["incident_context.child_count"],
+        "assertions": [assertion, dict(assertion)],
+    }
+    with pytest.raises(SelectionError, match="중복"):
+        validate_selection([selection], {"SYSMON#1": record})
+
+
+def test_derived_packet_fields_are_assertion_endpoints_not_source_claims():
+    record = {
+        "ref": "SYSMON#1",
+        "incident_context": {"lifetime_seconds": 0.44},
+        "incident_packet": {"same_path_refs": ["MFT#1"]},
+    }
+    fields = ClaimFields(max_items=4, names=(
+        "incident_context.lifetime_seconds", "incident_packet.same_path_refs",
+    ))
+    assert claim_for(record, fields, list(fields.names)) == []
+
+
+def test_assembly_revalidation_keeps_cross_record_assertion_endpoints():
+    records = {
+        "SYSMON#1": {"ref": "SYSMON#1", "packet_id": "SYSMON#1", "path": r"C:\Temp\x.exe", "timestamp": "2026-09-07T00:00:00Z"},
+        "PF#1": {"ref": "PF#1", "packet_id": "SYSMON#1", "path": r"C:\Temp\x.exe", "timestamp": "2026-09-07T00:00:01Z"},
+    }
+    selection = {
+        "ref": "SYSMON#1", "reason": "두 경로가 같다", "severity": "info", "technique": None,
+        "evidence_fields": ["path"],
+        "assertions": [{
+            "predicate": "same_path",
+            "subject": {"ref": "SYSMON#1", "field": "path"},
+            "object": {"ref": "PF#1", "field": "path"},
+        }],
+    }
+    body = assemble_body([selection], records, ClaimFields(max_items=2, names=("path",)))
+    assert body["findings"][0]["assertions"][0]["object"]["ref"] == "PF#1"
