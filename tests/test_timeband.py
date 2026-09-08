@@ -107,9 +107,30 @@ def test_a_range_that_already_covers_it_is_left_alone():
 
 
 def test_an_explicit_utc_is_taken_at_its_word():
+    """적힌 표준시대로 읽는다 — **다만 손을 떼지는 않는다.**
+
+    2026-09-08 에 계약이 바뀌었다. 예전에는 ``UTC`` 가 보이면 아무 일도 하지
+    않았다. 그런데 "우리가 옮길 일이 없다"와 "모델이 그 시각을 범위에
+    넣었는가"는 다른 문제다 — 실측에서 모델은 ``13:37 UTC`` 를 받고
+    ``02:37Z ~ 07:37Z`` 를 냈고, 정작 그 사건의 레코드가 전부 범위 밖이었다.
+    지금은 UTC 로 읽고 그 점을 덮는지만 본다.
+    """
     raw = "2026년 9월 7일 11:00 UTC 에 실행됐습니다"
     time_range = _range("2026-09-07T10:00:00Z", "2026-09-07T12:00:00Z")
+
+    assert timeband.widen_for_local_time(time_range, raw) is not None
+    # 11:00Z 를 중심으로 PAD 만큼. KST 로 오해했다면 02:00Z 로 내려갔을 것이다.
+    assert time_range["start"] == "2026-09-07T09:00:00Z"
+    assert time_range["end"] == "2026-09-07T13:00:00Z"
+
+
+def test_an_explicit_utc_already_covered_is_left_alone():
+    raw = "2026년 9월 7일 11:00 UTC 에 실행됐습니다"
+    time_range = _range("2026-09-07T00:00:00Z", "2026-09-07T23:59:59Z")
+    before = dict(time_range)
+
     assert timeband.widen_for_local_time(time_range, raw) is None
+    assert time_range == before
 
 
 def test_english_input_is_not_assumed_to_be_korean_time():

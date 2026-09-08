@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 __all__ = [
@@ -37,6 +38,8 @@ __all__ = [
     "Adjustment",
     "local_wall_clocks",
     "widen_for_local_time",
+    "collection_time",
+    "clamp_to_collection",
 ]
 
 #: 한국 표준시. 서머타임이 없어 연중 고정이라 오프셋 하나로 끝난다.
@@ -177,7 +180,17 @@ def widen_for_local_time(
     안 넓히는 경우가 넷이다 — 한글이 없다, 표준시가 적혀 있다, 서술에서
     벽시계 시각을 못 찾았다, 그리고 **이미 `PAD` 만큼 덮고 있다.**
     """
-    if not _HANGUL.search(raw) or _EXPLICIT_TZ.search(raw):
+    if _EXPLICIT_TZ.search(raw):
+        # **손을 떼지 않는다.** 예전에는 여기서 돌아섰다 — "UTC 라고 적혀
+        # 있으니 우리가 옮길 일이 없다" 는 뜻이었다. 그런데 옮길 일이 없는
+        # 것과 **모델이 옳게 넣었는가**는 다른 문제다. 실측에서 모델은
+        # ``13:37 UTC`` 를 받고 ``02:37Z ~ 07:37Z`` 를 냈다 — 말한 시각이
+        # 범위 밖이라 정작 그 사건의 레코드가 전부 `outside_time_range` 다.
+        # 적혀 있는 대로 UTC 로 읽고, 그 점을 범위가 덮는지만 본다.
+        offset_hours = 0
+    elif not _HANGUL.search(raw):
+        # 한글도 없고 표준시도 안 적혔다. 어느 표준시인지 알 길이 없으므로
+        # 가정하지 않는다.
         return None
 
     wall_clocks = local_wall_clocks(raw)
@@ -207,4 +220,94 @@ def widen_for_local_time(
         before=before,
         after=(time_range["start"], time_range["end"]),
         wall_clocks=[moment.strftime("%Y-%m-%d %H:%M") for moment in wall_clocks],
+    )
+
+
+#: KAPE 가 남기는 로그 파일 이름의 앞머리 — ``2026-09-08T03_26_57_…_CopyLog.csv``.
+#: 수집 시각의 **일차 출처**다. 파일 시각(mtime)은 복사·압축·이동에서 바뀌므로
+#: 쓰지 않는다 — 틀린 상한은 없는 상한보다 나쁘다.
+_COPYLOG = re.compile(
+    r"^(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})T(?P<H>\d{2})_(?P<M>\d{2})_(?P<S>\d{2})"
+)
+
+#: 수집 로그를 어디까지 찾아 올라갈 것인가. ``--evidence`` 는 볼륨 루트
+#: (KAPE 라면 ``<수집폴더>/C``)이고 로그는 그 부모에 있다. 한 칸이면 되지만
+#: 한 칸 더 봐 두면 ``<수집폴더>/C/`` 를 그대로 넘긴 경우도 걸린다.
+_COPYLOG_DEPTH = 2
+
+
+def collection_time(evidence_root: "str | None") -> "datetime | None":
+    """증거를 언제 수집했나. 못 찾으면 ``None``.
+
+    **못 찾으면 지어내지 않는다.** 상한이 없는 것과 틀린 상한이 있는 것은
+    다르다 — 틀린 상한은 조용히 레코드를 잘라 낸다.
+    """
+    if not evidence_root:
+        return None
+    here = Path(evidence_root)
+    for _ in range(_COPYLOG_DEPTH + 1):
+        if not here.is_dir():
+            here = here.parent
+            continue
+        for entry in sorted(here.glob("*_CopyLog.csv")):
+            match = _COPYLOG.match(entry.name)
+            if not match:
+                continue
+            try:
+                return datetime(
+                    int(match["y"]), int(match["m"]), int(match["d"]),
+                    int(match["H"]), int(match["M"]), int(match["S"]),
+                    tzinfo=timezone.utc,
+                )
+            except ValueError:
+                continue
+        here = here.parent
+    return None
+
+
+def clamp_to_collection(
+    time_range: dict[str, str], collected_at: "datetime | None", raw: str
+) -> "Adjustment | None":
+    r"""수집 시각을 분석 기간의 상한으로 강제한다. 고쳤으면 무엇을 고쳤는지 낸다.
+
+    두 가지를 본다.
+
+    **① 수집 뒤를 가리키면 당긴다.** 증거에 없는 구간이다.
+
+    **② 서술이 시각을 대지 않았는데 범위가 수집 시각 앞에서 끝나면 늘린다.**
+    이쪽이 실측에서 보고서를 망친 자리다(2026-09-08, `K-LIVE-KIOSK-0908`).
+    02단계가 "시간 단서 없음, 최근 2개월로 넓게 설정" 이라며
+    ``2026-07-01 ~ 2026-08-31`` 을 냈는데 **수집은 09-08 이었다.** 상한이
+    수집일보다 8일 이르니 가장 최근의, 가장 볼 만한 활동 전부에
+    ``outside_time_range`` 가 붙었고, 05단계가 그 꼬리표를 "의심스럽다" 로
+    읽어 보고서 15건 중 8건이 그 부산물이 됐다.
+
+    **서술이 시각을 댔으면 ②를 하지 않는다.** 사람이 창을 좁혀 준 것을
+    우리가 도로 넓히면 그 지시를 무시하는 것이다. 그때는 ①만 건다.
+    """
+    if collected_at is None:
+        return None
+
+    start, end = _parse(time_range["start"]), _parse(time_range["end"])
+    before = (time_range["start"], time_range["end"])
+    new_end = end
+
+    if end > collected_at:
+        new_end = collected_at
+    elif not local_wall_clocks(raw) and end < collected_at:
+        new_end = collected_at
+
+    if new_end == end:
+        return None
+
+    # 상한을 당기다가 시작보다 앞서면 범위가 뒤집힌다. 그럴 바에는 손대지
+    # 않는다 — 뒤집힌 범위는 스키마를 통과해도 뜻이 없다.
+    if new_end <= start:
+        return None
+
+    time_range["end"] = _to_utc(new_end)
+    return Adjustment(
+        before=before,
+        after=(time_range["start"], time_range["end"]),
+        wall_clocks=[collected_at.strftime("%Y-%m-%d %H:%M") + " 수집"],
     )
