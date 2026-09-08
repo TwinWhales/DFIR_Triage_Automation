@@ -45,6 +45,10 @@ NOT_REQUESTED_REASON = "식별된 기법에 매핑된 아티팩트가 아님"
 #: 가지 않는다(`docs/limitations.md` 6-7 과 같은 실패 방식이다).
 FORCE_PRIORITY = 1
 
+#: 바탕 선별 항목의 ``rationale`` 머리말. 읽는 사람이 "이건 기법 매핑이
+#: 고른 게 아니라 늘 여는 바탕"임을 알 수 있어야 한다.
+BASELINE_RATIONALE = "상관분석 바탕"
+
 #: 강제 선별 항목의 ``rationale`` 머리말. 보고서까지 그대로 전달되므로,
 #: 읽는 사람이 "이건 기법 매핑이 고른 게 아니라 사람이 지정한 것"임을
 #: 알 수 있어야 한다.
@@ -139,6 +143,7 @@ def select(
     generator: str = "select.py",
     force: "list[str] | tuple[str, ...]" = (),
     force_scopes: "dict[str, dict[str, Any]] | None" = None,
+    baseline: "tuple[mapping_loader.BaselineRequest, ...]" = (),
 ) -> tuple[dict[str, Any], list[str]]:
     """선별을 수행한다. 문서와 "매핑이 없던 기법 목록"을 함께 돌려준다.
 
@@ -149,6 +154,11 @@ def select(
     ``force`` 는 **기법 매핑과 무관하게 반드시 Tier 1 로 읽을** 아티팩트
     이름이다(`resolve_force_names` 가 편 것). 자세한 것은
     `_force_select` 에 있다.
+
+    ``baseline`` 은 **어느 실행에나 여는 상관분석 바탕**이다
+    (`mapping_loader.load_baseline`). ``force`` 와 달리 사람이 그때그때
+    지정하는 것이 아니라 늘 걸린다. 파일을 읽지 않는다는 이 함수의 성질을
+    지키려고 호출부가 읽어서 넘긴다.
     """
     target_os = scenario["target_os"]
     time_range = scenario["time_range"]
@@ -210,6 +220,16 @@ def select(
                 )
                 deferred_requests.setdefault(request.artifact, (request, context))
 
+    _apply_baseline(
+        baseline,
+        catalog=catalog,
+        scenario=scenario,
+        target_os=target_os,
+        time_range=time_range,
+        selected=selected,
+        requested=requested,
+    )
+
     _force_select(
         force,
         scenario=scenario,
@@ -263,6 +283,81 @@ def _leading_technique(scenario: dict[str, Any]) -> str:
     """
     techniques = scenario["techniques"]
     return max(techniques, key=lambda t: float(t.get("confidence", 0.0)))["id"]
+
+
+def _apply_baseline(
+    baseline: "tuple[mapping_loader.BaselineRequest, ...]",
+    *,
+    catalog: mapping_loader.Catalog,
+    scenario: dict[str, Any],
+    target_os: str,
+    time_range: dict[str, str],
+    selected: list[dict[str, Any]],
+    requested: set[str],
+) -> None:
+    """기법과 무관하게 여는 바탕을 선별에 합친다. ``selected`` 를 제자리에서 고친다.
+
+    **덮어쓰지 않고 더한다.** 기법이 이미 그 아티팩트를 요청했으면 그쪽
+    ``scope`` 에 ``event_ids`` 를 합집합으로 넣는다 — ``T1041`` 의
+    ``[3, 22]`` 는 그 기법에 맞는 판단이고, 우리는 거기에 ``1`` 을 더할
+    뿐이다. 기법이 ``event_ids`` 를 안 적었으면 이미 채널 전체가 열린
+    것이므로 **손대지 않는다.**
+
+    아무도 요청하지 않았으면 Tier 1 항목을 새로 만든다. 그 자리가 바로
+    이 장치가 있는 이유다 — 41개 매핑 중 13개가 ``evtx:Sysmon`` 을 아예
+    요청하지 않고, 그중에 ``T1091``(USB)·``T1200``(하드웨어)처럼 키오스크
+    조사에서 자주 걸리는 것들이 있다.
+
+    OS 에서 못 읽는 아티팩트는 올리지 않는다 — ``_force_select`` 와 같은
+    이유다. 그 자리는 ``excluded`` 가 사유와 함께 받는다.
+    """
+    if not baseline:
+        return
+
+    by_artifact = {entry["artifact"]: entry for entry in selected}
+    for request in baseline:
+        if request.artifact not in catalog:
+            raise mapping_loader.MappingError(
+                f"{mapping_loader.BASELINE_FILE}: 카탈로그에 없는 아티팩트 {request.artifact!r}"
+            )
+        if catalog[request.artifact].unusable_reason(target_os) is not None:
+            continue
+
+        requested.add(request.artifact)
+        existing = by_artifact.get(request.artifact)
+        if existing is not None:
+            scope = existing.get("scope") or {}
+            current = scope.get("event_ids")
+            if current is None:
+                continue  # 채널 전체가 이미 열려 있다
+            merged = sorted(set(current) | set(request.event_ids))
+            if merged != list(current):
+                scope["event_ids"] = merged
+                existing["reason"]["rationale"] = (
+                    f"{existing['reason']['rationale']} (바탕으로 "
+                    f"{', '.join(str(v) for v in request.event_ids)} 추가)"
+                )
+            continue
+
+        entry = {
+            "artifact": request.artifact,
+            "tier": 1,
+            "priority": request.priority,
+            "scope": scope_resolver.resolve(
+                {"event_ids": list(request.event_ids)} if request.event_ids else {},
+                {},
+                time_range,
+            ),
+            "reason": {
+                "technique": _leading_technique(scenario),
+                "rationale": (
+                    f"{BASELINE_RATIONALE} — {request.rationale}. "
+                    f"이번 시나리오의 어떤 기법도 요청하지 않았다"
+                ),
+            },
+        }
+        selected.append(entry)
+        by_artifact[request.artifact] = entry
 
 
 def _force_select(
@@ -407,12 +502,14 @@ def main(argv: "list[str] | None" = None) -> int:
         mappings = mapping_loader.load_all(args.mappings, scenario["target_os"], catalog)
         forced = resolve_force_names(args.force_artifacts, catalog)
         forced_scopes = resolve_force_scopes(args.force_artifacts, catalog)
+        baseline = mapping_loader.load_baseline(args.mappings)
     except mapping_loader.MappingError as e:
         log.abort(STAGE, "schema_violation", {"field": "<mappings>", "message": str(e)})
 
     try:
         selection, unmapped = select(
-            scenario, catalog, mappings, force=forced, force_scopes=forced_scopes
+            scenario, catalog, mappings,
+            force=forced, force_scopes=forced_scopes, baseline=baseline,
         )
     except scope_resolver.UnresolvedVariable as e:
         log.abort(STAGE, "empty_result", {"field": "<scope_template>", "message": str(e)})

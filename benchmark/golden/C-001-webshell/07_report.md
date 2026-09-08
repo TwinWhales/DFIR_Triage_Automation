@@ -55,7 +55,6 @@
 | evtx:Firewall | 식별된 기법에 매핑된 아티팩트가 아님 |
 | evtx:BITS | 식별된 기법에 매핑된 아티팩트가 아님 |
 | evtx:NetworkProfile | 식별된 기법에 매핑된 아티팩트가 아님 |
-| evtx:Sysmon | 식별된 기법에 매핑된 아티팩트가 아님 |
 | evtx:DriverFrameworks | 식별된 기법에 매핑된 아티팩트가 아님 |
 | evtx:KernelPnP | 식별된 기법에 매핑된 아티팩트가 아님 |
 | evtx:AssignedAccess | 식별된 기법에 매핑된 아티팩트가 아님 |
@@ -82,6 +81,7 @@
 | $LogFile | 본 버전 미지원 (파싱 모듈 범위 외) |
 | $UsnJrnl | Tier 2 루프백 미구현으로 미평가 (조건: Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시) |
 | evtx:System | Tier 2 루프백 미구현으로 미평가 (조건: Tier1에서 서비스 관련 정황 발견 시) |
+| evtx:Sysmon | 선별됐으나 산출물에 없음 — 04단계가 사유를 남기지 않았습니다 |
 
 ### 입력 서술을 어떤 기법으로 읽었는가
 
