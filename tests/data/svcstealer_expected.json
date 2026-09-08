@@ -1,0 +1,7 @@
+{
+  "root_sha256": "3a297d846199ddff323b30eadb510daedbbd08a9e76949c06df09e1592dd0f02",
+  "root_lifetime_seconds": 0.444739,
+  "direct_children": ["o1ar5ewb.exe", "yligwv7t.exe", "k8vvoogc.exe", "oygcbgl0.exe", "z7hriire.exe", "y5jo43xy.exe", "OpenBulletCE.exe"],
+  "required_observations": ["credential_export_option_observed", "sensitive_credential_store_referenced", "browser_sandbox_disabled", "silent_install_option_observed", "epoch_timestamp_observed"],
+  "forbidden_claims": ["popats.exe is outside Program Files", "Cookies.json was accessed", "FnHotkeyUtility persistence confirmed"]
+}

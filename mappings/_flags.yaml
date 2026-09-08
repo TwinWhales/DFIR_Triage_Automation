@@ -333,6 +333,19 @@ flags:
   # 빠뜨리면 03단계가 "봤다"고 적고 04단계가 파싱까지 한 뒤 **모델에만 한
   # 건도 안 간다** — 보고서에는 그냥 소견이 없는 걸로 보인다.
 
+  process_lifecycle_closed:
+    artifacts: [evtx:Sysmon]
+    condition: Sysmon 5 process termination; closes a matching Event 1 lifecycle
+    note: |
+      This is correlation context, not a suspiciousness verdict.  Event 5 is
+      retained so the LLM can distinguish a short-lived launcher from the
+      duration of its descendants.
+    rule:
+      when:
+        - artifact: evtx:Sysmon
+          match: event_id
+          values: [5]
+
   shell_spawned:
     artifacts: [evtx:Sysmon]
     condition: Sysmon 1(프로세스 생성) 중 셸·시스템 유틸리티가 실행된 것
@@ -758,39 +771,8 @@ privileged_groups:
 # Sysmon 사정으로 고쳐질 수 있고(ProgramData 를 뺀 것이 그런 경우다),
 # 그때 프리패치 자르기가 조용히 함께 바뀌면 원인을 못 찾는다. 겹치는
 # 항목이 있는 것은 같은 사실을 두 곳이 각자 보고 있기 때문이다.
-prompt_keep_paths:
-  # keep 목록도 상한을 받는다. 안 받으면 적중이 많은 레코드가 자리를
-  # 통째로 먹어 목록 앞머리가 사라진다 — 실행 파일 자신이 대개 첫
-  # 항목이라 그 자리는 남겨야 한다.
-  #
-  # **12 는 실측에서 고른 값이다**(win10_sysmon_testimage, 적재 경로
-  # 10,109건 / 레코드 127건, 2026-08-27):
-  #
-  #   아래 어휘 적중       992건 (9.81%)   적중 레코드 47/127, 중앙값 5
-  #   상한 12 를 넘는 레코드  16건
-  #   상한 20 을 넘는 레코드  11건
-  #
-  # 20(= MAX_LIST_ITEMS) 중 12 를 주면 앞머리 몫 8자리가 남는다. 적중이
-  # 0인 레코드 80건은 지금까지와 똑같이 앞에서부터 20개다.
-  max_items: 12
-
-  # 부분 문자열로 본다. 앞뒤 역슬래시는 부분 일치가 헐거워서 붙였다 —
-  # `\users\` 가 아니라 `users` 로 쓰면 `C:\Program Files\UsersHelper\`
-  # 가 걸린다(execution_from_unusual_path 와 같은 이유).
-  #
-  # **부정으로 쓰지 않는다.** "Windows 폴더 밖" 이 사이드로딩 신호로는
-  # 더 강하지만, 04단계의 장치 경로 변환이 실패하면 부정 조건은 전량을
-  # 잡아 keep 목록이 조용히 무의미해진다. 열거하면 그때 0건이 되고,
-  # 0건은 stats["loaded_paths_converted"] 로 드러난다.
-  contains:
-    - '\appdata\local\temp\'
-    - '\appdata\roaming\'
-    - '\windows\temp\'
-    - '\users\'
-    - '\$recycle.bin\'
-    - '\perflogs\'
-    - '\programdata\'
-    - '\downloads\'
+# 긴 목록 보존과 중립 attention 시그널은 mappings/_attention_signals.yaml의
+# prompt_keep_path_groups를 단일 원본으로 사용한다.
 
 # 05단계가 프롬프트에 실을 때 fields 에서 **통째로 빼는** 필드 이름이다.
 # allocation.for_prompt 가 읽는다. 위 prompt_keep_paths 와 짝이지만 방향이
@@ -878,6 +860,11 @@ claim_fields:
   # 순서가 우선순위다. 경로·이름처럼 그 레코드를 특정하는 것이 앞이고,
   # 시각은 맨 뒤다 — 어느 레코드에나 있어서 앞에 두면 다른 필드를 밀어낸다.
   fields:
+    - canonical.subject_path # artifact-neutral real file path (Amcache key path와 구분)
+    - canonical.command_line
+    - canonical.process_image
+    - canonical.parent_image
+    - canonical.event_time
     - path                    # $MFT, registry:*
     - name                    # $UsnJrnl, prefetch, registry:*
     - reason                  # $UsnJrnl — 이 아티팩트 판단의 핵심이다
@@ -895,6 +882,18 @@ claim_fields:
     # 껍데기다.
     - fields.run_count
     - fields.loaded_file_count
+    - fields.loaded_files       # list_contains typed assertion용; scalar claim에는 복사하지 않음
+    # Python이 GUID 원문을 노출하지 않고 계산한 중립적 프로세스 관계 사실.
+    # sLLM은 이 필드로 spawned/duration/count assertion을 구성한다.
+    - incident_context.child_refs
+    - incident_context.child_count
+    - incident_context.children_within_2s
+    - incident_context.stop_ref
+    - incident_context.lifetime_seconds
+    # 교차 아티팩트 동일성 조인의 압축 ref 목록. 실제 경로/해시는 06단계가
+    # 원본 레코드에서 다시 대조한다.
+    - incident_packet.same_path_refs
+    - incident_packet.same_hash_refs
 
     # $MFT — 이 아티팩트의 flag 는 전부 이 값들에 기댄다. 빠뜨렸다가
     # 실측에서 드러났다(2026-09-03): timestamp_mismatch 가 붙은 레코드에

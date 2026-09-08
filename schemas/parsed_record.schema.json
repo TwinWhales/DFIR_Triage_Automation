@@ -49,6 +49,7 @@
           "firewall_config_changed",
           "bits_transfer",
           "network_state_changed",
+          "process_lifecycle_closed",
           "shell_spawned",
           "execution_from_unusual_path",
           "unexpected_parent_process",
@@ -63,6 +64,20 @@
           "scheduled_task_changed",
           "outside_time_range"
         ]
+      }
+    },
+    "canonical": {
+      "type": "object",
+      "description": "파서 원본을 보존하면서 후속 단계에 공통 의미를 제공하는 additive overlay.",
+      "additionalProperties": false,
+      "properties": {
+        "subject_path": { "type": "string" },
+        "event_time": { "$ref": "#/$defs/timestamp" },
+        "process_image": { "type": "string" },
+        "parent_image": { "type": "string" },
+        "command_line": { "type": "string" },
+        "hashes": {},
+        "user": {}
       }
     },
 

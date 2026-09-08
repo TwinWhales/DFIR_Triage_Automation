@@ -8,6 +8,10 @@
 - **고친 뒤에도 남은 제약**은 `docs/limitations.md` 다 — 가르는 기준은 날짜가
   아니라 **지금도 참인가**다.
 - 실행 명령은 `CLAUDE.md`, 데이터 형식은 `schemas/`.
+- **한 번의 실측이 낳은 후속은 그 실측의 문서에 있다** — 키오스크
+  `K-LIVE-KIOSK-0908`(2026-09-08)은 `work-CLAUDE.md`, SVCStealer 인지·검증
+  개편 로드맵은 `work-GPT.md`. 여기 항목이 커지거나 우선순위 다툼이 생기면
+  그때 이 문서로 올린다.
 
 ## 지금 순서 (2026-09-07)
 
@@ -250,6 +254,26 @@ EXPLORER.EXE 가 KIOSK 사용자 폴더에서 실행되어 …"(claims 는
 
 증상과 지금도 참인 것은 `docs/limitations.md` 의 "`--mode assemble` 에서
 환각률 0% 는 품질을 뜻하지 않습니다".
+
+## 16. attention 시그널 선언형 분리 — 완료 (2026-09-08)
+
+`src/stage05_interpret/attention.py`의 관측 조건·긴 목록 보존 어휘와 **대표
+레코드 선택 우선순위까지** `mappings/_attention_signals.yaml`로 옮겼다.
+
+2026-09-07 판은 매칭 규칙만 옮기고 우선순위는 파이썬 `if` 로 남겨 뒀는데,
+그 자리에 표본 고유값이 박혔다 — `z7hriire.exe` 는 SVCStealer 가 그 실행에서
+만든 무작위 이름이라 다른 어떤 증거에도 존재하지 않는다. 지금은
+`representative_images`(선언 순서가 우선순위)와 `match_fields`(어휘가 볼 값을
+좁힌다) 둘로 선언하고, `attention.py` 에는 실행 파일 이름이 하나도 없다 —
+`test_representative_priority_is_declared_not_hardcoded` 가 `.exe` 문자열의
+부재를 검사한다.
+
+동순위 처리도 바꿨다. `max(ref)` 는 사전순이라 `SYSMON#99` 가 `SYSMON#1000`
+보다 커진다. 지금은 **먼저 관측된 것**이 대표다.
+
+새 어휘는 Python 수정 없이 `prompt_keep_path_groups` 또는 `attention_signals`
+에 추가한다. 남은 것은 4번(시그널이 과도하게 늘 때의 보장 레인 상한)이고,
+지금 상태는 `docs/limitations.md` 의 "보장 레인은 시그널마다 한 건뿐입니다".
 
 ---
 

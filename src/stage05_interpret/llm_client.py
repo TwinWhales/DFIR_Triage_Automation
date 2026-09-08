@@ -195,6 +195,11 @@ def selection_schema(
         {"enum": [*techniques, None]} if techniques else {"type": ["string", "null"]}
     )
 
+    predicate_names = [
+        "equals", "contains", "list_contains", "under_path", "outside_path",
+        "same_path", "same_hash", "spawned", "before", "after", "within",
+        "duration", "count",
+    ]
     branches: list[dict[str, Any]] = []
     for record in records:
         ref = record.get("ref")
@@ -217,12 +222,41 @@ def selection_schema(
             "reason": {"type": "string"},
             "severity": {"enum": list(SEVERITIES)},
             "evidence_fields": evidence,
+            "assertions": {
+                "type": "array",
+                "maxItems": 6,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "predicate": {"enum": predicate_names},
+                        "subject": {
+                            "type": "object",
+                            "properties": {"ref": {"const": ref}, "field": {"enum": names}},
+                            "required": ["ref", "field"], "additionalProperties": False,
+                        },
+                        # Map owns one record. Cross-record endpoint relations
+                        # belong to connection Reduce; allowing them here made
+                        # the 7B model invent same_path links between unrelated
+                        # records. Packet joins use a concrete ref string.
+                        "object": {"type": ["string", "number", "boolean"]},
+                        "tolerance_seconds": {"type": "number", "minimum": 0},
+                    },
+                    "required": ["predicate", "subject", "object"],
+                    "additionalProperties": False,
+                },
+            },
         }
+        packet_id = record.get("packet_id")
+        if packet_id:
+            properties["packet_id"] = {"const": packet_id}
         branches.append(
             {
                 "type": "object",
                 "properties": properties,
-                "required": list(properties),
+                "required": [
+                    "ref", "technique", "reason", "severity", "evidence_fields",
+                    *(["packet_id"] if packet_id else []),
+                ],
                 "additionalProperties": False,
             }
         )
@@ -237,19 +271,73 @@ def selection_schema(
         item = branches[0] if len(branches) == 1 else {"oneOf": branches}
         picks = {"type": "array", "items": item, "maxItems": len(branches)}
 
-    return {
+    signal_ids = [
+        f"{record['ref']}:{signal}"
+        for record in records
+        for signal in (record.get("attention_signals") or [])
+        if record.get("ref")
+    ]
+    def disposition_value(record: dict[str, Any]) -> dict[str, Any]:
+        names = record_field_names(record, allowed_fields)
+        return {
+            "type": "object",
+            "properties": {
+                "disposition": {"enum": ["selected", "dismissed", "uncertain"]},
+                "reason": {"type": "string"},
+                "evidence_fields": {"type": "array", "items": {"enum": names}, "minItems": 1, "maxItems": min(4, len(names))},
+            },
+            "required": ["disposition", "reason", "evidence_fields"],
+            "additionalProperties": False,
+        }
+    signal_records = {
+        f"{record['ref']}:{signal}": record
+        for record in records
+        for signal in (record.get("attention_signals") or [])
+        if record.get("ref")
+    }
+    dispositions: dict[str, Any] = {
+        "type": "object",
+        "properties": {signal_id: disposition_value(signal_records[signal_id]) for signal_id in signal_ids},
+        "required": signal_ids,
+        "additionalProperties": False,
+    }
+    result = {
         "type": "object",
         "properties": {SELECTION_BODY_FIELD: picks},
         "required": [SELECTION_BODY_FIELD],
     }
+    if signal_ids:
+        result["properties"]["signal_dispositions"] = dispositions
+        result["required"].append("signal_dispositions")
+    return result
 
 
 #: Reduce 질의에서 모델이 낼 필드.
 CONNECTION_BODY_FIELD = "connections"
 
 
+def critic_schema(story: dict[str, Any]) -> dict[str, Any]:
+    ids = [item["id"] for item in story.get("sentences", []) if isinstance(item, dict) and item.get("id")]
+    item = {
+        "type": "object",
+        "properties": {
+            "sentence_id": {"enum": ids} if ids else {"type": "string"},
+            "verdict": {"enum": ["supported", "contradicted", "insufficient"]},
+            "reason": {"type": "string"},
+        },
+        "required": ["sentence_id", "verdict", "reason"], "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {"story_critic": {"type": "array", "minItems": len(ids), "maxItems": len(ids), "items": item}},
+        "required": ["story_critic"], "additionalProperties": False,
+    }
+
+
 def connection_schema(
-    scenario: dict[str, Any], picked: list[dict[str, Any]]
+    scenario: dict[str, Any],
+    picked: list[dict[str, Any]],
+    relation_catalog: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Reduce 질의의 출력 스키마.
 
@@ -263,6 +351,8 @@ def connection_schema(
     refs = sorted({item["ref"] for item in picked if item.get("ref")})
     techniques = sorted({t["id"] for t in scenario.get("techniques", []) if "id" in t})
 
+    relation_ids = [str(item["id"]) for item in relation_catalog or [] if item.get("id")]
+
     properties: dict[str, Any] = {
         "refs": {
             "type": "array",
@@ -275,6 +365,11 @@ def connection_schema(
         ),
         "reason": {"type": "string"},
         "severity": {"enum": list(SEVERITIES)},
+        "assertion_ids": {
+            "type": "array",
+            "items": {"enum": relation_ids} if relation_ids else {"type": "string"},
+            "maxItems": min(6, len(relation_ids)),
+        },
     }
     items = {
         "type": "object",
@@ -288,10 +383,49 @@ def connection_schema(
         # 묶음이 항목 수보다 많을 이유가 없다.
         connections["maxItems"] = len(refs)
 
+    sentence = {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "text": {"type": "string"},
+            "kind": {"enum": ["observed_fact", "analytical_assessment", "unknown"]},
+            "refs": {"type": "array", "items": {"enum": refs}, "maxItems": len(refs)},
+        },
+        "required": ["id", "text", "kind", "refs"], "additionalProperties": False,
+    }
+    must_review_refs = sorted({
+        str(item.get("ref")) for item in picked
+        if item.get("ref") and item.get("attention_signals")
+    })
+    sentences_schema: dict[str, Any] = {
+        "type": "array", "maxItems": 12, "items": sentence,
+    }
+    if must_review_refs:
+        sentences_schema["allOf"] = [
+            {
+                "contains": {
+                    "type": "object",
+                    "properties": {
+                        "refs": {"type": "array", "contains": {"const": ref}}
+                    },
+                    "required": ["refs"],
+                }
+            }
+            for ref in must_review_refs
+        ]
+    story = {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "sentences": sentences_schema,
+            "critical_threat": {"type": "string"},
+        },
+        "required": ["summary", "sentences", "critical_threat"], "additionalProperties": False,
+    }
     return {
         "type": "object",
-        "properties": {CONNECTION_BODY_FIELD: connections},
-        "required": [CONNECTION_BODY_FIELD],
+        "properties": {CONNECTION_BODY_FIELD: connections, "incident_story": story},
+        "required": [CONNECTION_BODY_FIELD, "incident_story"],
     }
 
 
@@ -310,6 +444,10 @@ def selection_digest(picked: list[dict[str, Any]]) -> str:
             json.dumps(
                 {
                     "ref": item.get("ref"),
+                    "packet_id": item.get("packet_id"),
+                    "attention_signals": item.get("attention_signals", []),
+                    "attention_context": item.get("attention_context", {}),
+                    "attention_requirements": item.get("attention_requirements", {}),
                     "technique": technique,
                     "severity": item.get("severity", "info"),
                     "reason": item.get("reason", ""),
@@ -354,6 +492,9 @@ class InterpretClient:
         #: 된다. 실제로 알고 싶은 것은 "어느 프롬프트라도 창을 넘었는가"이고,
         #: 그 답은 최댓값에 있다.
         self.largest_prompt: tuple[int, int] = (0, 0)
+        self.last_signal_dispositions: dict[str, Any] = {}
+        self.last_incident_story: dict[str, Any] | None = None
+        self.last_story_critic: list[dict[str, Any]] = []
 
     @property
     def name(self) -> str:
@@ -426,35 +567,79 @@ class InterpretClient:
     def reduce_system_prompt(self) -> str:
         return (PROMPT_DIR / "reduce_system.txt").read_text(encoding="utf-8")
 
+    def critic_system_prompt(self) -> str:
+        return (PROMPT_DIR / "critic_system.txt").read_text(encoding="utf-8")
+
+    def propose_critic(self, story: dict[str, Any], picked: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        system = self.critic_system_prompt()
+        user = "\n\n".join([
+            "### 검토할 사건 내러티브\n" + json.dumps(story, ensure_ascii=False),
+            "### 검증 가능한 Map 근거\n" + selection_digest(picked),
+            "### 출력",
+        ])
+        self.last_system, self.last_user = system, user
+        raw = self.backend.complete(system, user, fmt=critic_schema(story) if self.constrain else None)
+        self.last_raw = raw
+        self._note_prompt(len(system) + len(user))
+        parsed = extract_json(raw)
+        critic = parsed.get("story_critic")
+        if not isinstance(critic, list):
+            raise MalformedOutput("story_critic 가 목록이 아님")
+        expected = {item.get("id") for item in story.get("sentences", []) if isinstance(item, dict)}
+        received = [item.get("sentence_id") for item in critic if isinstance(item, dict)]
+        if len(received) != len(set(received)) or set(received) != expected:
+            raise MalformedOutput(f"critic sentence_id 불일치: expected={sorted(expected)}, received={received}")
+        self.last_story_critic = [item for item in critic if isinstance(item, dict)]
+        return self.last_story_critic
+
     def reduce_user_prompt(
-        self, scenario: dict[str, Any], picked: list[dict[str, Any]]
+        self,
+        scenario: dict[str, Any],
+        picked: list[dict[str, Any]],
+        relation_catalog: list[dict[str, Any]] | None = None,
+        feedback: str | None = None,
     ) -> str:
         techniques = ", ".join(
             f"{t['id']}({t['name']})" for t in scenario.get("techniques", [])
         )
-        return "\n\n".join(
-            [
+        parts = [
                 "### 시나리오\n"
                 f"- 대상 OS: {scenario.get('target_os', '?')}\n"
                 f"- 의심 기법: {techniques or '없음'}",
                 f"### 앞 단계가 고른 항목 ({len(picked)}건)\n"
                 + selection_digest(picked),
-                "### 출력",
-            ]
-        )
+                "### Python이 검증한 관계 후보\n"
+                + ("\n".join(json.dumps(item, ensure_ascii=False) for item in relation_catalog or []) or "(없음)"),
+        ]
+        if feedback:
+            parts.append(
+                "### 직전 출력의 문제\n" + feedback
+                + "\n이 문제만 고친 JSON 객체 하나를 다시 출력하십시오."
+            )
+        parts.append("### 출력")
+        return "\n\n".join(parts)
 
-    def reduce_chars(self, scenario: dict[str, Any], picked: list[dict[str, Any]]) -> int:
+    def reduce_chars(
+        self,
+        scenario: dict[str, Any],
+        picked: list[dict[str, Any]],
+        relation_catalog: list[dict[str, Any]] | None = None,
+    ) -> int:
         """Reduce 질의가 차지할 글자 수. **보내기 전에 잰다.**
 
         단서가 수십 건이면 그것만으로 창을 넘는다. 넘는데도 보내면 앞이
         잘리고, 잘린 프롬프트는 오류 없이 돌아온다.
         """
         return len(self.reduce_system_prompt()) + len(
-            self.reduce_user_prompt(scenario, picked)
+            self.reduce_user_prompt(scenario, picked, relation_catalog)
         )
 
     def propose_connections(
-        self, scenario: dict[str, Any], picked: list[dict[str, Any]]
+        self,
+        scenario: dict[str, Any],
+        picked: list[dict[str, Any]],
+        relation_catalog: list[dict[str, Any]] | None = None,
+        feedback: str | None = None,
     ) -> list[dict[str, Any]]:
         """고른 항목들 중 **서로 이어지는 것**을 묶어 달라고 묻는다.
 
@@ -462,21 +647,85 @@ class InterpretClient:
         적이 없다. 이 질의가 그것을 말한다 — 없으면 Map-Reduce 가 이름만
         Reduce 이고 실제로는 파이썬 append 다.
         """
-        system, user = self.reduce_system_prompt(), self.reduce_user_prompt(scenario, picked)
+        system = self.reduce_system_prompt()
+        user = self.reduce_user_prompt(scenario, picked, relation_catalog, feedback)
         self.last_system, self.last_user = system, user
         raw = self.backend.complete(
             system,
             user,
-            fmt=connection_schema(scenario, picked) if self.constrain else None,
+            fmt=connection_schema(scenario, picked, relation_catalog) if self.constrain else None,
         )
         self.last_raw = raw
-        self._note_prompt(self.reduce_chars(scenario, picked))
+        self._note_prompt(len(system) + len(user))
         parsed = extract_json(raw)
         found = parsed.get(CONNECTION_BODY_FIELD)
         if not isinstance(found, list):
             raise MalformedOutput(
                 f"{CONNECTION_BODY_FIELD} 가 목록이 아님: {type(found).__name__}"
             )
+        relations_by_id = {
+            str(item["id"]): item for item in relation_catalog or [] if item.get("id")
+        }
+        for connection in found:
+            if not isinstance(connection, dict):
+                continue
+            refs = list(dict.fromkeys(connection.get("refs") or []))
+            for relation_id in connection.get("assertion_ids") or []:
+                relation = relations_by_id.get(str(relation_id))
+                if relation is None:
+                    raise MalformedOutput(f"알 수 없는 관계 assertion ID: {relation_id}")
+                # Selecting a catalogued edge necessarily selects both of its
+                # endpoints. Completing this set changes no analytical claim.
+                refs.extend(ref for ref in relation.get("refs") or [] if ref not in refs)
+            connection["refs"] = refs
+        story = parsed.get("incident_story")
+        candidate_story = story if isinstance(story, dict) else None
+        if candidate_story is not None:
+            sentences = candidate_story.get("sentences")
+            if not isinstance(sentences, list):
+                raise MalformedOutput("incident_story.sentences 가 목록이 아님")
+            for sentence in sentences:
+                if isinstance(sentence, dict) and isinstance(sentence.get("refs"), list):
+                    # Constrained decoding can still repeat enum values.  Refs
+                    # are a set semantically, so canonicalize before Critic and
+                    # persisted-schema validation.
+                    sentence["refs"] = list(dict.fromkeys(sentence["refs"]))
+            ids = [item.get("id") for item in sentences if isinstance(item, dict)]
+            expected_ids = [f"N{index}" for index in range(1, len(sentences) + 1)]
+            if ids != expected_ids:
+                raise MalformedOutput(f"incident_story 문장 ID가 순차적이지 않음: {ids}")
+            allowed_refs = {item.get("ref") for item in picked}
+            story_refs = {
+                ref for item in sentences if isinstance(item, dict)
+                for ref in (item.get("refs") or [])
+            }
+            if not story_refs <= allowed_refs:
+                raise MalformedOutput(f"incident_story가 Map에 없는 ref를 인용함: {sorted(story_refs - allowed_refs)}")
+            # **인용했는가만 본다.** 시그널 어휘가 문장에 문자 그대로
+            # 있는지까지 요구하면, "Wi-Fi 자격증명을 평문으로 내보내는 명령이
+            # 실행됐다" 처럼 옳게 쓴 문장이 `key=clear` 가 없다는 이유로
+            # 기각된다. 그것은 의미 검사가 아니라 전사(轉寫) 강요이고, 모델에게
+            # 무엇을 쓸지 받아쓰게 하는 것이다. 우리가 보장할 것은 "그 증거가
+            # 서사에서 다뤄졌는가"까지이고, 잘 다뤘는지는 Critic 이 판정한다.
+            cited = {
+                ref for sentence in sentences if isinstance(sentence, dict)
+                for ref in (sentence.get("refs") or [])
+            }
+            missing_review = sorted({
+                str(item.get("ref"))
+                for item in picked
+                if item.get("ref") and item.get("attention_signals")
+                and str(item.get("ref")) not in cited
+            })
+            # 못 채우면 기각하고 재시도한다. **파이썬이 대신 쓰지 않는다** —
+            # 서사를 만드는 것이 sLLM 의 일이고, 대신 써 주면 그 문장이
+            # Critic 심사와 story_review 를 거쳐 모델 판단으로 보이게 된다.
+            if missing_review:
+                raise MalformedOutput(
+                    "incident_story가 must_review 증거를 인용하지 않음: "
+                    + ", ".join(missing_review)
+                )
+        self.last_incident_story = candidate_story
         return [item for item in found if isinstance(item, dict)]
 
     def propose_selection(
@@ -509,12 +758,71 @@ class InterpretClient:
             + len(self.select_user_prompt(scenario, records, feedback))
         )
         parsed = extract_json(raw)
+        expected_signals = {
+            f"{record['ref']}:{signal}"
+            for record in records
+            for signal in (record.get("attention_signals") or [])
+            if record.get("ref")
+        }
+        dispositions = parsed.get("signal_dispositions", {})
+        if not isinstance(dispositions, dict):
+            raise MalformedOutput("signal_dispositions 가 객체가 아님")
+        received_signals = set(dispositions)
+        if received_signals != expected_signals:
+            missing = sorted(expected_signals - received_signals)
+            extra = sorted(received_signals - expected_signals)
+            raise MalformedOutput(f"signal disposition 불일치: missing={missing}, extra={extra}")
+        self.last_signal_dispositions = dispositions
         picked = parsed.get(SELECTION_BODY_FIELD)
         if not isinstance(picked, list):
             raise MalformedOutput(
                 f"{SELECTION_BODY_FIELD} 가 목록이 아님: {type(picked).__name__}"
             )
-        return [item for item in picked if isinstance(item, dict)]
+        selected = [item for item in picked if isinstance(item, dict)]
+        records_by_ref = {record.get("ref"): record for record in records}
+        for item in selected:
+            source = records_by_ref.get(item.get("ref"), {})
+            if source.get("packet_id"):
+                item["packet_id"] = source["packet_id"]
+            if source.get("attention_signals"):
+                item["attention_signals"] = list(source["attention_signals"])
+            if source.get("attention_context"):
+                item["attention_context"] = dict(source["attention_context"])
+            if source.get("attention_requirements"):
+                item["attention_requirements"] = dict(source["attention_requirements"])
+        selected_refs = {item.get("ref") for item in selected}
+        signal_records = {
+            f"{record['ref']}:{signal}": record
+            for record in records
+            for signal in (record.get("attention_signals") or [])
+            if record.get("ref")
+        }
+        # A model-selected mandatory signal must become a finding even when the
+        # model omitted the same ref from suspicious_records.  The reason and
+        # evidence fields still come from the model; Python only preserves its
+        # explicit disposition.
+        for signal_id, disposition in dispositions.items():
+            ref = signal_id.split(":", 1)[0]
+            if disposition.get("disposition") != "selected" or ref in selected_refs:
+                continue
+            source_record = signal_records.get(signal_id, {})
+            selected.append({
+                "ref": ref,
+                **({"packet_id": source_record["packet_id"]} if source_record.get("packet_id") else {}),
+                "technique": None,
+                "reason": disposition.get("reason") or signal_id,
+                "severity": "info",
+                "evidence_fields": disposition.get("evidence_fields") or [],
+                "attention_signals": list(source_record.get("attention_signals") or []),
+                "attention_context": dict(source_record.get("attention_context") or {}),
+                "attention_requirements": dict(source_record.get("attention_requirements") or {}),
+                # **assertion 을 파이썬이 지어 넣지 않는다.** 특정 시그널
+                # 이름과 특정 아티팩트 필드를 여기 적으면, 모델이 만든 적 없는
+                # 검산식이 모델 출력인 것처럼 findings 에 실린다.
+                "assertions": [],
+            })
+            selected_refs.add(ref)
+        return selected
 
     def _trim_notice(self) -> str:
         """목록이 잘렸다는 사실을 모델에게 말한다.

@@ -1253,3 +1253,14 @@ def test_process_time_wins_over_an_earlier_named_file_timestamp_for_the_burst():
     )
 
     assert {record["ref"] for record in chosen} == {"MFT#1", "SYSMON#1", "PS#2"}
+
+
+def test_packet_members_are_kept_in_the_same_chunk_when_the_packet_fits():
+    first = {"ref": "SYSMON#1", "artifact": "evtx:Sysmon", "packet_id": "SYSMON#1", "flags": []}
+    noise = {"ref": "MFT#9", "artifact": "$MFT", "flags": []}
+    mate = {"ref": "PF#1", "artifact": "prefetch", "packet_id": "SYSMON#1", "flags": []}
+    packet_size = allocation.record_chars(first) + allocation.record_chars(mate)
+
+    chunks = allocation.chunk_records([first, noise, mate], packet_size)
+
+    assert [record["ref"] for record in chunks[0]] == ["SYSMON#1", "PF#1"]

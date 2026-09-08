@@ -56,6 +56,14 @@ def cited_refs(finding: dict[str, Any]) -> list[str]:
         ref = claim.get("ref")
         if ref is not None:
             seen.setdefault(ref, None)
+    for assertion in finding.get("assertions", []):
+        for endpoint in (assertion.get("subject"), assertion.get("object")):
+            if isinstance(endpoint, dict) and endpoint.get("ref") is not None:
+                seen.setdefault(endpoint["ref"], None)
+        if assertion.get("predicate") in {"spawned", "same_path", "same_hash"}:
+            endpoint_ref = assertion.get("object")
+            if isinstance(endpoint_ref, str) and "#" in endpoint_ref:
+                seen.setdefault(endpoint_ref, None)
     return list(seen)
 
 
@@ -131,6 +139,7 @@ DEFAULT_ORDER: tuple[str, ...] = (
     "ref_exists",
     "ref_in_input",
     "value_match",
+    "assertions",
     "technique_supported",
     "statement_grounded",
 )
@@ -162,12 +171,14 @@ from .ref_in_input import check as _ref_in_input  # noqa: E402
 from .statement_grounded import check as _statement_grounded  # noqa: E402
 from .technique_supported import check as _technique_supported  # noqa: E402
 from .value_match import check as _value_match  # noqa: E402
+from .assertions import check as _assertions  # noqa: E402
 
 #: 이름 → 체커. ``--checkers``가 이 키를 받는다.
 CHECKERS: dict[str, Checker] = {
     "ref_exists": _ref_exists,
     "ref_in_input": _ref_in_input,
     "value_match": _value_match,
+    "assertions": _assertions,
     "technique_supported": _technique_supported,
     "statement_grounded": _statement_grounded,
 }

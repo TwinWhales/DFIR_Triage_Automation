@@ -1,5 +1,31 @@
 # limitations-log.md — 해결된 것의 기록
 
+## 2026-09-08 — Incident packet 및 교차 corroboration 완성
+
+- Sysmon EID 1을 anchor로 시작/종료, 수명, 직접 자식, 2초 이내 fan-out을
+  `incident_packet.process`와 `burst`로 직렬화했다.
+- Sysmon·MFT·Prefetch·Amcache 사이의 정규화된 전체 경로 및 유효한
+  MD5/SHA-1/SHA-256 일치를 `same_path`/`same_hash` corroboration으로 묶었다.
+- 동일 아티팩트 반복 이벤트는 corroboration으로 세지 않고, 아티팩트별 대표 ref를
+  제한해 정상 실행 파일의 반복 기록이 패킷을 팽창시키지 않게 했다.
+- 엔티티 또는 must-review anchor의 교차 ref는 allocation correlation closure로 함께
+  전달하며, 최종 전달 집합 밖의 dangling ref는 프롬프트 전에 제거한다.
+- Stage 06은 packet의 결론을 그대로 믿지 않고 두 원본 레코드의 경로·해시를 다시
+  대조한다. SVCStealer 루트에서 `SYSMON#654` ↔ `MFT#460046`/`PF#1401979184`,
+  수명 0.444739초와 직접 자식 7개를 확인했다.
+
+## 2026-09-08 — Typed Assertion 관계 검증 확장
+
+- `spawned`, `same_hash`, `within`, `duration`, `count`를 포함한 관계형 predicate를
+  Stage 05 constrained output과 Stage 06 검증기에 함께 추가했다.
+- 원시 ProcessGuid를 프롬프트에 다시 노출하지 않고 Python이 구성한
+  `incident_context.child_refs`로 `spawned` 관계를 표현한다. 이는 토큰 비용을
+  줄이면서 관측된 프로세스 간선만 검증한다.
+- 복합 reason은 사실마다 별도 assertion을 작성하도록 프롬프트를 강화했고,
+  중복 assertion과 존재하지 않는 endpoint는 선택 직후 기각한다.
+- 최종 Incident Story에 대한 문장별 sLLM critic은 사건 단위 Reduce가 아직
+  없으므로 로드맵 7단계에서 함께 구현한다.
+
 `docs/limitations.md` 에서 옮겨 온, **이미 해결된** 항목의 기록입니다.
 지금 상태를 알고 싶으면 이 문서가 아니라 `docs/limitations.md` 를 봅니다.
 
@@ -2488,4 +2514,37 @@ USN 이력을 되찾은 것은 아니므로 재수집 한계는 `limitations.md`
 `artifacts` 가 아니라 `corroborates` 에 넣었다(`mappings/windows/T1204.002.yaml`). `artifacts` 는 03단계의 수집 축이라 넓히면 파싱 시간과 토큰 예산이 커지지만, `corroborates` 는 06단계 판정에서만 읽히므로 수집 부담 없이 오기각을 닫는다.
 
 **이 프로젝트에서 `corroborates` 를 쓰는 첫 매핑이다.** 규약대로 실측 기각을 보고 넣었고, 판단 근거를 `benchmark/rejections.yaml` 에 `mapping_narrow` 로 남겼다. 테스트 `test_corroborates_has_rejection_record` 가 대장에 근거 없는 확장을 막는다.
+## 2026-09-07 — SVCStealer 인지·검증 1차 개편
 
+- 파서 원본을 보존하는 `canonical` 오버레이를 추가했다. Amcache 파일 경로는
+  레지스트리 키 `path`가 아니라 `fields.LowerCaseLongPath`에서 가져온다.
+- T1204.002 범위에 Sysmon EID 5를 포함하고 ProcessGuid로 EID 1과 결합해
+  수명, 직접 자식, 2초 내 fan-out을 모델 입력에 명시한다.
+- 고위험 관측값을 악성 판정이 아닌 `attention_signals`/`must_review`로 표시하고
+  할당 보장 레인 및 `selected|dismissed|uncertain` 의무 응답을 추가했다.
+- Stage 06에 typed assertion 검사를 추가했다. Program Files (x86)의 popats.exe를
+  `outside_path(..., C:\Program Files)`라고 주장하면 `assertion_contradicted`로 기각한다.
+- SVCStealer 회귀 fixture와 전용 테스트를 추가했다. 전체 테스트 스위트로 호환성을 확인한다.
+- 실물 재실측에서 필수 disposition을 배열로 내면 1,024-token 출력 한도를 반복 초과했다.
+  시그널 종류별 대표 레코드 하나와 고정 키 객체로 바꾸고 assemble 출력 예약을 2,048
+  token으로 늘리자 Stage 05가 4개 Map 질의, 63개 입력 ref, 13개 finding으로 완주했다.
+- 후속 06/07 수동 관통은 통과 6, 기각 0, 미검증 7로 완료했다. `netsh key=clear`,
+  `--no-sandbox`, silent installer가 확인 사항에 남았고 기존 popats F3 오판은 재발하지 않았다.
+- 같은 실측에서 `Login Data` 시그널이 모델에 의해 dismissed된 원인은 Prefetch 원본에서는
+  보였지만 20개 목록 절삭 결과에는 근거 경로가 없었기 때문이다. `prompt_keep_paths`를
+  선언 순위 기반으로 바꾸고 `\\login data`를 최우선 보존하여 실제 프롬프트 포함을 확인했다.
+  이 마지막 수정 뒤 전체 live_check 재실행은 아직 수행하지 않았다.
+
+## 2026-09-07 — T1555 자격증명 저장소 어휘군 및 최종 재실측
+
+- `mappings/_attention_signals.yaml`을 추가하고 `prompt_keep_path_groups`의
+  `credential_stores`를 attention과 Prefetch 목록 보존의 단일 원본으로 만들었다.
+- Chromium `Login Data`/`Cookies`, Firefox `logins.json`/`key4.db`/`cookies.sqlite`,
+  FileZilla `recentservers.xml`, WinSCP `winscp.ini`를 중립 시그널
+  `sensitive_credential_store_referenced`로 일반화했다.
+- YAML 선언 순서가 대표 레코드와 목록 보존 우선순위를 함께 정한다. SVCStealer에서는
+  `PF#936533914`가 대표가 되었으며 `Login Data`와 `Cookies`가 모델 입력에 남았다.
+- 목록형 근거는 `list_contains` typed assertion으로 원본 Prefetch 목록과 대조한다.
+- 최종 `K-LIVE-SVCSTEALER` 실측은 11/11 PASS, 123.2초, 13,781개 레코드,
+  finding 7개, passed 7/rejected 0/unverifiable 0이었다. 보고서에 `netsh key=clear`,
+  `--no-sandbox`, Login Data/Cookies 참조가 포함됐고 popats 오판은 재발하지 않았다.

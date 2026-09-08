@@ -143,6 +143,13 @@ def verify(
     파일을 읽지도 쓰지도 않는다. 순수 함수라 목업만으로 완주할 수 있고,
     그것이 이 단계를 04·05보다 먼저 구현할 수 있는 이유다.
     """
+    # Rebuild the same deterministic overlays used for sLLM packaging. Source
+    # claims still target raw 04 fields; typed assertions may target these
+    # derived graph/lifecycle facts.
+    from ..stage05_interpret import incident_context, incident_packet
+
+    enriched = incident_packet.enrich(incident_context.enrich(list(records.values())))
+    records = {record["ref"]: record for record in enriched}
     active = checkers.resolve(checker_names)
     ctx = checkers.CheckContext(
         records=records,
@@ -176,7 +183,7 @@ def verify(
             rejected.append(
                 {"id": finding["id"], "reason": rejection.reason, "detail": rejection.detail}
             )
-        elif not finding.get("claims"):
+        elif not finding.get("claims") and not finding.get("assertions"):
             unverifiable.append({"id": finding["id"], "reason": UNVERIFIABLE_REASON})
         elif downgrade is not None:
             unverifiable.append({"id": finding["id"], "reason": downgrade.reason})
@@ -187,6 +194,31 @@ def verify(
 
     total = len(passed) + len(rejected) + len(unverifiable)
     judged = len(passed) + len(rejected)
+    findings_by_id = {finding["id"]: finding for finding in findings_doc.get("findings", [])}
+    passed_refs = {
+        ref for item in passed for ref in findings_by_id.get(item["id"], {}).get("refs", [])
+    }
+    rejected_refs = {
+        ref for item in rejected for ref in findings_by_id.get(item["id"], {}).get("refs", [])
+    }
+    story_by_id = {
+        item["id"]: item
+        for item in (findings_doc.get("incident_story") or {}).get("sentences", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    story_review = []
+    for review in findings_doc.get("story_critic", []):
+        sentence_id = review.get("sentence_id")
+        refs = set(story_by_id.get(sentence_id, {}).get("refs", []))
+        verdict = review.get("verdict")
+        reason = str(review.get("reason") or "")
+        if verdict == "supported" and refs & rejected_refs:
+            verdict = "contradicted"
+            reason += " [Stage 06: 인용 finding의 assertion/claim이 기각됨]"
+        elif verdict == "supported" and (not refs or not refs <= passed_refs):
+            verdict = "insufficient"
+            reason += " [Stage 06: 모든 인용 ref가 검증 통과 finding으로 뒷받침되지 않음]"
+        story_review.append({"sentence_id": sentence_id, "verdict": verdict, "reason": reason.strip()})
     return io.new_document(
         findings_doc["case_id"],
         STAGE,
@@ -195,6 +227,7 @@ def verify(
         passed=passed,
         rejected=rejected,
         unverifiable=unverifiable,
+        **({"story_review": story_review} if story_review else {}),
         stats={
             "total_findings": total,
             "passed": len(passed),

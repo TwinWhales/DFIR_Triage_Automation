@@ -14,7 +14,7 @@ from src.stage05_interpret import allocation
 from src.stage05_interpret import interpret as interpret_mod
 from src.stage05_interpret import record_filter
 from src.stage05_interpret.interpret import build_findings, interpret
-from src.stage05_interpret.llm_client import InterpretClient
+from src.stage05_interpret.llm_client import InterpretClient, MalformedOutput, connection_schema
 from casepaths import FIXTURES
 
 PARSED = FIXTURES / "04_parsed"
@@ -814,12 +814,14 @@ def test_each_chunk_is_asked_separately(monkeypatch, tmp_path):
     # 예산이 0 이 되고 이 시험은 "조각이 나뉘는가"가 아니라 "예산이 남는가"
     # 를 재게 된다. 2026-09-07 에 flags 지침을 넣으며 고정분이 2,194 →
     # 2,633자가 되어 5400 → 5620 으로 옮겼다(예산 414 → 415자로 같다).
+    # 2026-09-08 typed assertion 원자화 지침 뒤 6000, packet/Story 지침 뒤
+    # 6200으로 재보정했다.
     # 프롬프트를 또 고치면 여기도 같이 본다.
     code = _run_assembled(
         monkeypatch,
         tmp_path,
         backend,
-        extra=["--num-ctx", "5620", "--reserve-output-tokens", "4096"],
+        extra=["--num-ctx", "6200", "--reserve-output-tokens", "4096"],
     )
 
     assert code == 0
@@ -876,10 +878,210 @@ def test_a_failed_reduce_skips_instead_of_stopping(monkeypatch, tmp_path):
     assert _run_assembled(monkeypatch, tmp_path, backend) == 0
 
     recorded = _errors(tmp_path)
-    assert [(e["type"], e["action"]) for e in recorded] == [("malformed_output", "skip")]
+    assert [(e["type"], e["action"]) for e in recorded] == [
+        ("malformed_output", "retry"),
+        ("malformed_output", "retry"),
+        ("malformed_output", "skip"),
+    ]
     doc = io.read_json(tmp_path / "05_findings.json")
     # 증거는 다 실렸다 — 묶이지 않았을 뿐이다.
     assert {f["refs"][0] for f in doc["findings"]} == {"MFT#12345", "EVTX-SEC#40912"}
+
+
+def test_reduce_builds_one_incident_story_and_runs_one_batched_critic(monkeypatch, tmp_path):
+    story = {
+        "summary": "파일 생성과 후속 계정 이벤트가 하나의 사건으로 이어진다.",
+        "sentences": [
+            {"id": "N1", "text": "파일이 생성됐다.", "kind": "observed_fact", "refs": ["MFT#12345"]},
+            {"id": "N2", "text": "후속 행위의 의도는 미확인이다.", "kind": "unknown", "refs": ["EVTX-SEC#40912"]},
+        ],
+        "critical_threat": "후속 계정 행위",
+    }
+    backend = FakeBackend(
+        _selection(_pick("MFT#12345"), _pick("EVTX-SEC#40912", evidence_fields=["event_id"])),
+        json.dumps({
+            "connections": [{
+                "refs": ["MFT#12345", "EVTX-SEC#40912"], "technique": None,
+                "reason": "파일 생성 뒤 계정 이벤트가 이어졌다", "severity": "high",
+                "assertions": [{
+                    "predicate": "contains", "subject": {"ref": "MFT#12345", "field": "path"},
+                    "object": ".aspx",
+                }],
+            }],
+            "incident_story": story,
+        }, ensure_ascii=False),
+        json.dumps({"story_critic": [
+            {"sentence_id": "N1", "verdict": "supported", "reason": "MFT 근거가 있다"},
+            {"sentence_id": "N2", "verdict": "insufficient", "reason": "의도 근거가 없다"},
+        ]}, ensure_ascii=False),
+    )
+
+    assert _run_assembled(monkeypatch, tmp_path, backend) == 0
+    doc = io.read_json(tmp_path / "05_findings.json")
+    assert doc["incident_story"] == story
+    assert len(doc["story_critic"]) == 2
+    assert len(backend.calls) == 3
+    assert doc["findings"][0]["assertions"][0]["predicate"] == "contains"
+
+
+def test_signal_dispositions_accumulate_across_map_chunks(tmp_path):
+    records = [
+        {"ref": "SYSMON#1", "fields": {"Image": "a.exe"}, "attention_signals": ["a"]},
+        {"ref": "SYSMON#2", "fields": {"Image": "b.exe"}, "attention_signals": ["b"]},
+    ]
+    responses = []
+    for ref, signal in (("SYSMON#1", "a"), ("SYSMON#2", "b")):
+        responses.append(json.dumps({
+            "suspicious_records": [],
+            "signal_dispositions": {f"{ref}:{signal}": {
+                "disposition": "dismissed", "reason": "검토함", "evidence_fields": ["fields.Image"],
+            }},
+        }, ensure_ascii=False))
+    client = InterpretClient(FakeBackend(*responses))
+    accumulated = {}
+    log = errlog.ErrorLog(tmp_path / "errors.jsonl")
+    for index, record in enumerate(records, 1):
+        interpret_mod._select_chunk(
+            {"case_id": "C", "techniques": []}, [record], client, log, index, 2,
+            dispositions=accumulated,
+        )
+    assert set(accumulated) == {"SYSMON#1:a", "SYSMON#2:b"}
+
+
+def test_reduce_schema_allows_relation_ids_not_authored_endpoints():
+    fmt = connection_schema(
+        {"techniques": []},
+        [_pick("SYSMON#1"), _pick("MFT#1")],
+        [{"id": "R1"}],
+    )
+    connection = fmt["properties"]["connections"]["items"]
+    assert "assertion_ids" in connection["properties"]
+    assert "assertions" not in connection["properties"]
+    assert connection["properties"]["assertion_ids"]["items"]["enum"] == ["R1"]
+
+
+def test_reduce_schema_requires_each_must_review_ref_in_story():
+    picked = [
+        {**_pick("SYSMON#1"), "attention_signals": ["credential_export_option_observed"]},
+        _pick("MFT#1"),
+    ]
+    fmt = connection_schema({"techniques": []}, picked, [])
+    sentences = fmt["properties"]["incident_story"]["properties"]["sentences"]
+    required_ref = sentences["allOf"][0]["contains"]["properties"]["refs"]["contains"]["const"]
+    assert required_ref == "SYSMON#1"
+
+
+def test_reduce_rejects_story_that_drops_a_must_review_ref():
+    picked = [
+        {**_pick("SYSMON#1"), "attention_signals": ["credential_export_option_observed"]},
+        _pick("MFT#1"),
+    ]
+    response = json.dumps({
+        "connections": [],
+        "incident_story": {
+            "summary": "요약", "critical_threat": "위협",
+            "sentences": [{
+                "id": "N1", "text": "다른 증거만 기술", "kind": "observed_fact",
+                "refs": ["MFT#1"],
+            }],
+        },
+    }, ensure_ascii=False)
+    client = InterpretClient(FakeBackend(response))
+
+    with pytest.raises(MalformedOutput, match="must_review"):
+        client.propose_connections({"techniques": []}, picked, [])
+
+
+def test_reduce_accepts_a_paraphrase_that_cites_the_must_review_ref():
+    """**어휘 전사를 요구하지 않는다.**
+
+    시그널 어휘(`key=clear`)가 문장에 문자 그대로 있는지까지 보면, 뜻을 옳게
+    옮긴 문장이 단어가 다르다는 이유로 기각된다. 그것은 의미 검사가 아니라
+    받아쓰기 강요다. 여기서 보장할 것은 그 증거가 서사에서 다뤄졌는가까지고,
+    잘 다뤘는지는 Critic 이 판정한다.
+    """
+    picked = [{
+        **_pick("SYSMON#1"),
+        "attention_signals": ["credential_export_option_observed"],
+        "attention_requirements": {
+            "credential_export_option_observed": {"all": ["netsh", "wlan", "key=clear"]}
+        },
+    }, _pick("MFT#1")]
+    response = json.dumps({
+        "connections": [],
+        "incident_story": {
+            "summary": "요약", "critical_threat": "위협",
+            "sentences": [{
+                "id": "N1",
+                "text": "무선 프로파일을 평문으로 내보내는 명령이 실행됐다",
+                "kind": "observed_fact", "refs": ["SYSMON#1"],
+            }],
+        },
+    }, ensure_ascii=False)
+    client = InterpretClient(FakeBackend(response))
+
+    client.propose_connections({"techniques": []}, picked, [])
+
+    assert client.last_incident_story["sentences"][0]["refs"] == ["SYSMON#1"]
+
+
+def test_reduce_completes_catalogued_relation_endpoints_without_inference():
+    picked = [_pick("SYSMON#1"), _pick("MFT#1"), _pick("SYSMON#2")]
+    response = json.dumps({
+        "connections": [{
+            "refs": ["SYSMON#1", "MFT#1"], "technique": None,
+            "reason": "관계", "severity": "high", "assertion_ids": ["R1"],
+        }],
+        "incident_story": {
+            "summary": "요약", "critical_threat": "위협",
+            "sentences": [{
+                "id": "N1", "text": "관계", "kind": "analytical_assessment",
+                "refs": ["SYSMON#1", "MFT#1"],
+            }],
+        },
+    }, ensure_ascii=False)
+    relation = [{
+        "id": "R1", "predicate": "spawned",
+        "subject": {"ref": "SYSMON#1", "field": "incident_packet.process.child_refs"},
+        "object": "SYSMON#2", "refs": ["SYSMON#1", "SYSMON#2"],
+    }]
+    client = InterpretClient(FakeBackend(response))
+
+    connections = client.propose_connections({"techniques": []}, picked, relation)
+    assert connections[0]["refs"] == ["SYSMON#1", "MFT#1", "SYSMON#2"]
+
+
+def test_python_never_ghostwrites_a_missing_review_sentence():
+    """서사를 만드는 것은 sLLM 의 일이다.
+
+    못 채우면 기각하고 재시도한다. 파이썬이 대신 문장을 써 넣으면 그것이
+    Critic 심사와 story_review 를 거쳐 **모델이 판단한 것처럼 보인다.**
+    """
+    picked = [
+        {
+            **_pick("SYSMON#1"),
+            "attention_signals": ["credential_export_option_observed"],
+            "attention_context": {
+                "credential_export_option_observed": ["netsh wlan export profile key=clear"]
+            },
+        },
+        _pick("MFT#1"),
+    ]
+    response = json.dumps({
+        "connections": [],
+        "incident_story": {
+            "summary": "요약", "critical_threat": "위협",
+            "sentences": [{
+                "id": "N1", "text": "다른 사실", "kind": "observed_fact", "refs": ["MFT#1"],
+            }],
+        },
+    }, ensure_ascii=False)
+    client = InterpretClient(FakeBackend(response))
+
+    with pytest.raises(MalformedOutput, match="SYSMON#1"):
+        client.propose_connections({"techniques": []}, picked, [])
+
+    assert client.last_incident_story is None
 
 
 def test_one_pick_needs_no_reduce_query(monkeypatch, tmp_path):

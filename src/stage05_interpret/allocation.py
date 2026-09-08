@@ -68,6 +68,7 @@ from ..stage04_parse.flagging import (
     prompt_keep_paths,
     window_independent_flags,
 )
+from . import incident_packet
 from .record_filter import (
     DEFAULT_LIMIT,
     DEFAULT_WINDOW_SECONDS,
@@ -153,7 +154,11 @@ RESERVE_FINDINGS_TOKENS = 4096
 #: 항목 하나가 대략 60~90토큰이다(``ref`` 8, 기법 6, 사유 30~50, 필드
 #: 이름 둘 15). 60건을 전부 고르는 최악에도 5,400토큰이지만, 그렇게 고르면
 #: 선별이 아니다 — 20건 안팎을 상정하고 여유를 뒀다.
-RESERVE_SELECTION_TOKENS = 1024
+# Typed assertions and mandatory signal dispositions make Map responses larger
+# than the former ref-only selection.  SVCStealer live runs repeatedly truncated
+# at ~2.5-3.4K characters with 1,024 tokens, so reserve a safe 2,048 tokens and
+# spend the remaining context through additional Map chunks.
+RESERVE_SELECTION_TOKENS = 2048
 
 #: 프롬프트에 실을 때 ``fields`` 안의 목록을 몇 개까지 남길 것인가
 #: (``for_prompt`` 참조). ``None`` 이면 안 자른다.
@@ -237,6 +242,15 @@ class Budget:
         return self.enforced and self.effective_limit < self.requested_limit
 
     @property
+    def over_budget(self) -> bool:
+        """줄일 만큼 줄이고도 예산을 넘었는가.
+
+        보장 레인(``must_review``)은 자릿수 상한을 받지 않으므로 이 값이
+        참일 수 있습니다. 조용히 넘기지 않기 위해 재고 남깁니다.
+        """
+        return self.enforced and self.used_chars > (self.char_budget or 0)
+
+    @property
     def estimated_tokens(self) -> int:
         return int(self.used_chars / CHARS_PER_TOKEN)
 
@@ -252,11 +266,17 @@ def _trim_list(values: list, max_list_items: int, keep: KeepPaths) -> list:
     hit_budget = min(keep.max_items, max_list_items)
     chosen: set[int] = set()
     if hit_budget:
-        for index, value in enumerate(values):
+        # Declaration order is priority.  Specific evidence such as browser
+        # Login Data can therefore reserve a slot before broad ``\users\``
+        # matches consume the keep budget.
+        for needle in keep.contains:
+            for index, value in enumerate(values):
+                if len(chosen) >= hit_budget:
+                    break
+                if isinstance(value, str) and needle in value.lower():
+                    chosen.add(index)
             if len(chosen) >= hit_budget:
                 break
-            if isinstance(value, str) and keep.matches(value):
-                chosen.add(index)
 
     for index in range(len(values)):
         if len(chosen) >= max_list_items:
@@ -447,17 +467,46 @@ def chunk_records(
         # allocate_records 가 이미 했고, 여기서 또 하면 사유가 둘이 된다.
         return [list(records)]
 
+    # Treat a packet as one packing unit when it fits. Packet members may be
+    # separated in the time-sorted stream by unrelated records; pulling them
+    # together lets Map see corroboration in one call.
+    by_packet: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        packet_id = record.get("packet_id")
+        if packet_id:
+            by_packet.setdefault(str(packet_id), []).append(record)
+    units: list[list[dict[str, Any]]] = []
+    emitted: set[str] = set()
+    for record in records:
+        packet_id = str(record.get("packet_id") or "")
+        if not packet_id:
+            units.append([record])
+        elif packet_id not in emitted:
+            units.append(by_packet[packet_id])
+            emitted.add(packet_id)
+
     chunks: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     used = 0
 
-    for record in records:
-        size = record_chars(record, max_list_items, drop=drop)
-        if current and used + size > char_budget:
-            chunks.append(current)
-            current, used = [], 0
-        current.append(record)
-        used += size
+    for unit in units:
+        unit_size = sum(record_chars(record, max_list_items, drop=drop) for record in unit)
+        if unit_size <= char_budget:
+            if current and used + unit_size > char_budget:
+                chunks.append(current)
+                current, used = [], 0
+            current.extend(unit)
+            used += unit_size
+            continue
+        # Oversized packets retain packet_id on every fragment so Reduce can
+        # reunite their Map outputs; individual records are never truncated.
+        for record in unit:
+            size = record_chars(record, max_list_items, drop=drop)
+            if current and used + size > char_budget:
+                chunks.append(current)
+                current, used = [], 0
+            current.append(record)
+            used += size
 
     if current:
         chunks.append(current)
@@ -751,22 +800,58 @@ def allocate_records(
         for artifact, artifact_records in by_artifact.items()
     }
     counts = {artifact: len(entries) for artifact, entries in ranked.items()}
+    guaranteed = {
+        str(record.get("ref")): record
+        for record in all_records
+        if record.get("must_review") and record.get("ref")
+    }
+    by_ref = {str(record.get("ref")): record for record in all_records if record.get("ref")}
+    # Correlation closure is limited to anchors explicitly named by the case or
+    # already in the must-review lane. It does not turn every common executable
+    # path into a guaranteed group.
+    packet_anchors = [
+        record for record in all_records
+        if record.get("incident_packet")
+        and (record.get("must_review") or mentions_entity(record, names))
+    ]
+    for anchor in packet_anchors:
+        if anchor.get("ref"):
+            guaranteed.setdefault(str(anchor["ref"]), anchor)
+        for ref in incident_packet.corroboration_refs(anchor):
+            if ref in by_ref:
+                guaranteed.setdefault(ref, by_ref[ref])
 
     def pick(seat_limit: int) -> tuple[dict[str, int], list[tuple[datetime, dict[str, Any]]], int]:
         """자릿수 하나에 대한 배분·선택·글자수."""
         seats = allocate_seats(counts, priorities, seat_limit)
         picked: list[tuple[datetime, dict[str, Any]]] = []
         chars = 0
+        picked_refs: set[str] = set()
         for artifact in sorted(ranked):
             for _key, moment, record in ranked[artifact][: seats[artifact]]:
                 picked.append((moment, record))
                 chars += record_chars(record, max_list_items)
+                picked_refs.add(str(record.get("ref", "")))
+        # The guaranteed lane may exceed the ordinary seat limit.  It is still
+        # bounded by the number of concrete observations and is split into Map
+        # chunks later.  Silently losing one is worse than an extra chunk.
+        for ref, record in guaranteed.items():
+            if ref in picked_refs:
+                continue
+            times = activity_times(record)
+            picked.append((min(times) if times else NO_TIME, record))
+            chars += record_chars(record, max_list_items)
         return seats, picked, chars
 
     effective_limit = max(0, limit)
     seats, chosen, used_chars = pick(effective_limit)
     natural_records = len(chosen)
 
+    # 보장 레인만으로 예산을 넘더라도 **줄이는 것을 건너뛰지 않는다.**
+    # 건너뛰면 일반 자리가 상한 그대로 남아 초과폭이 더 커지고, 예산을 넘긴
+    # 사실이 아무 데도 안 남는다. ``_fit_limit`` 은 하나도 안 들어오면 0을
+    # 주고, 그때 남는 것은 보장 레인뿐이다 — 초과분은 뒤에서 Map 조각으로
+    # 나뉘고, 남은 초과는 ``Budget.over_budget`` 으로 드러난다.
     if char_budget is not None and used_chars > char_budget:
         effective_limit = _fit_limit(pick, effective_limit, char_budget)
         seats, chosen, used_chars = pick(effective_limit)
@@ -981,6 +1066,3 @@ def _rank(
 
     entries.sort(key=lambda item: item[0])
     return entries
-
-
-

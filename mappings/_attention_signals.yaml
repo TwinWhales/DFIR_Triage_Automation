@@ -1,0 +1,81 @@
+version: 1
+
+# One ordered vocabulary drives both long-list preservation and attention.
+# Entries describe observed strings only; they do not classify maliciousness.
+#
+# 대표 레코드 선택도 여기서 선언한다. 파이썬에 실행 파일 이름을 적으면 그
+# 표본에서만 맞는 값이 코드에 남는다 — 실제로 그렇게 됐었다(`z7hriire.exe`는
+# SVCStealer 가 그 실행에서 만든 무작위 이름이라 다른 증거엔 존재하지 않는다).
+prompt_keep_path_groups:
+  # keep 목록도 상한을 받는다. 안 받으면 적중이 많은 레코드가 자리를
+  # 통째로 먹어 목록 앞머리가 사라진다 — 실행 파일 자신이 대개 첫
+  # 항목이라 그 자리는 남겨야 한다.
+  #
+  # **12 는 실측에서 고른 값이다**(win10_sysmon_testimage, 적재 경로
+  # 10,109건 / 레코드 127건, 2026-08-27):
+  #
+  #   아래 어휘 적중       992건 (9.81%)   적중 레코드 47/127, 중앙값 5
+  #   상한 12 를 넘는 레코드  16건
+  #   상한 20 을 넘는 레코드  11건
+  #
+  # 20(= MAX_LIST_ITEMS) 중 12 를 주면 앞머리 몫 8자리가 남는다. 적중이
+  # 0인 레코드 80건은 지금까지와 똑같이 앞에서부터 20개다.
+  max_items: 12
+
+  # 부분 문자열로 본다. 앞뒤 역슬래시는 부분 일치가 헐거워서 붙였다 —
+  # `\users\` 가 아니라 `users` 로 쓰면 `C:\Program Files\UsersHelper\`
+  # 가 걸린다(execution_from_unusual_path 와 같은 이유).
+  #
+  # **부정으로 쓰지 않는다.** "Windows 폴더 밖" 이 사이드로딩 신호로는
+  # 더 강하지만, 04단계의 장치 경로 변환이 실패하면 부정 조건은 전량을
+  # 잡아 keep 목록이 조용히 무의미해진다. 열거하면 그때 0건이 되고,
+  # 0건은 stats["loaded_paths_converted"] 로 드러난다.
+  #
+  # 그룹의 선언 순서가 보존 우선순위이고, 그룹 안 `contains` 의 선언 순서가
+  # 대표 레코드 선택의 우선순위다.
+  groups:
+    credential_stores:
+      attack: T1555
+      signal: sensitive_credential_store_referenced
+      must_review: true
+      # 같은 어휘가 여러 레코드에 걸릴 때 어느 것을 대표로 볼 것인가.
+      # 선언 순서가 우선순위이며, 목록에 없는 실행 파일은 전부 동순위다.
+      representative_images: ['msedge.exe']
+      contains:
+        - '\login data'
+        - '\logins.json'
+        - '\key4.db'
+        - '\cookies'
+        - '\cookies.sqlite'
+        - '\recentservers.xml'
+        - '\winscp.ini'
+    investigation_paths:
+      must_review: false
+      contains:
+        - '\appdata\local\temp\'
+        - '\appdata\roaming\'
+        - '\windows\temp\'
+        - '\users\'
+        - '\$recycle.bin\'
+        - '\perflogs\'
+        - '\programdata\'
+        - '\downloads\'
+
+attention_signals:
+  credential_export_option_observed:
+    must_review: true
+    all_contains: [netsh, wlan, key=clear]
+    representative_images: ['netsh.exe', 'cmd.exe']
+  browser_sandbox_disabled:
+    must_review: true
+    all_contains: ['--no-sandbox']
+  silent_install_option_observed:
+    must_review: true
+    any_contains: ['/verysilent', '/silent']
+  epoch_timestamp_observed:
+    must_review: true
+    # **어느 값을 보는지 반드시 좁힌다.** 좁히지 않으면 레코드의 모든 문자열이
+    # 대상이 되어 `C:\photos\1970-summer.jpg` 같은 정상 경로가 보장 레인
+    # 한 자리를 먹는다 (2026-09-08 실측 확인).
+    match_fields: [timestamp]
+    any_contains: ['1970-']
