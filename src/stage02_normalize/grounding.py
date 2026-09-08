@@ -45,6 +45,10 @@ __all__ = [
 ]
 
 
+#: 공백 전부. 낱말과 원문을 같은 방식으로 눌러 비교하는 데 쓴다.
+_SPACES = re.compile(r"\s+")
+
+
 #: 이름 붙은 메커니즘을 전제하는 기법과, 입력에 그 메커니즘이 있었다고 볼
 #: 낱말들. **여기 없는 기법은 검사하지 않는다.**
 #:
@@ -60,10 +64,26 @@ __all__ = [
 #: 대소문자는 무시하고 **부분문자열로** 본다. ``명령 프롬프트를`` 안의
 #: ``명령 프롬프트`` 를 잡기 위해서다 — 조사를 떼는 형태소 분석 없이
 #: 넘어가는 것은 `coverage` 와 같은 방식이다.
+#:
+#: **띄어쓰기 변형은 여기 적지 않는다.** ``ungrounded_techniques`` 가 공백을
+#: 지운 사본과도 대조하므로 ``명령창`` 하나면 ``명령 창``·``명령  창`` 이
+#: 함께 걸린다. 변형을 손으로 나열하면 목록이 길어지기만 하고 다음 변형은
+#: 또 빠진다 — 기본형(붙여 쓴 형태) 하나만 둔다.
+#:
+#: **낱말을 넓힐 때는 다른 기법과 겹치지 않는지 본다.** 맨 ``셸`` 을 넣으면
+#: ``파워셸`` 이 걸려 T1059.001 서술이 T1059.003 을 통과시킨다. 맨 ``터미널``
+#: 은 ``키오스크 단말(터미널)`` 을 잡는다. 그래서 창을 뜻하는 덩어리만
+#: 넣었다 — ``명령창``·``검은창``·``콘솔창``.
 MECHANISM_CUES: dict[str, tuple[str, ...]] = {
     "T1059.003": (
-        "cmd", "cmd.exe", "command shell", "명령 셸", "명령셸", "명령 프롬프트",
-        "커맨드", "배치 파일", "batch", ".bat", ".cmd", "conhost",
+        "cmd", "cmd.exe", "command shell", "command prompt", "명령셸",
+        "명령 프롬프트", "커맨드", "배치 파일", "batch", ".bat", ".cmd", "conhost",
+        # 신고자는 도구 이름을 모른다. 실측(2026-09-08)에서 `명령 창이
+        # 열리고` 라는 서술에 모델이 T1059.003 을 골랐고, 이 목록에 그 말이
+        # 없어 기각됐다. 남는 기법이 없으니 스키마 위반이 되고, 재시도해도
+        # 모델은 같은 답을 내므로 **02단계가 3회 만에 멈춘다.** 오분류가
+        # 아니라 전면 실패였다.
+        "명령창", "검은창", "까만창", "도스창", "콘솔창", "터미널창",
     ),
     "T1059.001": (
         "powershell", "파워셸", "파워쉘", "ps1", ".ps1", "pwsh",
@@ -142,12 +162,16 @@ def ungrounded_techniques(scenario: dict[str, Any], raw: str) -> list[dict[str, 
     어디에도 그 도구가 없으면 어느 절을 인용했든 근거가 아니다.
     """
     lowered = raw.lower()
+    #: 공백을 지운 사본. 어휘에 띄어쓰기 변형을 나열하지 않으려는 것이다 —
+    #: ``명령창`` 하나로 ``명령 창``·``명령  창`` 이 함께 걸린다. 낱말 쪽도
+    #: 같이 지워야 ``command shell`` 처럼 공백이 든 낱말이 살아남는다.
+    squeezed = _SPACES.sub("", lowered)
     found: list[dict[str, str]] = []
     for technique in scenario.get("techniques") or []:
         cues = MECHANISM_CUES.get(str(technique.get("id")))
         if cues is None:
             continue
-        if any(cue.lower() in lowered for cue in cues):
+        if any(_SPACES.sub("", cue.lower()) in squeezed for cue in cues):
             continue
         found.append(
             {
