@@ -79,3 +79,6 @@ JSON 객체 **하나만** 출력합니다. 설명이나 코드펜스를 붙이�
 
 쓸 말이 없으면 **그 레코드는 고르지 마십시오.** 적게 고르는 것은 손해지만,
 사실 없는 항목을 채워 넣는 것은 보고서를 오염시킵니다.
+`attention_signals`는 판정이 아닌 누락 방지 관측값입니다. 각 값을
+`signal_dispositions` 객체에서 `<ref>:<값>` 키마다 정확히 한 번 답하십시오.
+disposition은 `selected|dismissed|uncertain`이며 이유와 실제 근거 필드가 필수입니다.

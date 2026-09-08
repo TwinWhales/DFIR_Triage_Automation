@@ -36,6 +36,7 @@ from typing import Any, Callable, Iterable, Iterator
 import yaml
 
 from ..common.io import parse_timestamp
+from ..common import attention_policy
 
 __all__ = [
     "FLAGS",
@@ -769,32 +770,11 @@ def prompt_keep_paths(directory: str | None = None) -> KeepPaths:
     ``contains``가 목록이 아니면 ``VocabularyError``입니다. 슬쩍 무시하면
     "왜 그 DLL 이 프롬프트에 없지"를 되짚을 방법이 없습니다.
     """
-    path = Path(directory or mappings_dir()) / "_flags.yaml"
-    if not path.is_file():
-        return NO_KEEP_PATHS
-
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    spec = data.get("prompt_keep_paths")
-    if spec is None:
-        return NO_KEEP_PATHS
-    if not isinstance(spec, dict):
-        raise VocabularyError(f"{path}: prompt_keep_paths 가 매핑이 아님")
-
-    max_items = spec.get("max_items", 0)
-    if isinstance(max_items, bool) or not isinstance(max_items, int) or max_items < 0:
-        raise VocabularyError(
-            f"{path}: prompt_keep_paths.max_items 는 0 이상의 정수여야 함 "
-            f"(현재 {max_items!r})"
-        )
-
-    contains = spec.get("contains") or []
-    if not isinstance(contains, list) or any(not isinstance(c, str) for c in contains):
-        raise VocabularyError(f"{path}: prompt_keep_paths.contains 는 문자열 목록이어야 함")
-
-    return KeepPaths(
-        max_items=int(max_items),
-        contains=tuple(c.lower() for c in contains),
-    )
+    try:
+        policy = attention_policy.load(str(directory or mappings_dir()))
+    except attention_policy.PolicyError as error:
+        raise VocabularyError(str(error)) from error
+    return KeepPaths(max_items=policy.max_keep_items, contains=policy.keep_contains)
 
 
 @functools.lru_cache(maxsize=None)

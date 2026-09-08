@@ -252,10 +252,10 @@ EXPLORER.EXE 가 KIOSK 사용자 폴더에서 실행되어 …"(claims 는
 증상과 지금도 참인 것은 `docs/limitations.md` 의 "`--mode assemble` 에서
 환각률 0% 는 품질을 뜻하지 않습니다".
 
-## 16. attention 시그널 선언형 분리 — `mappings/_attention_signals.yaml`
+## 16. attention 시그널 선언형 분리 — 완료 (2026-09-07)
 
-`src/stage05_interpret/attention.py` 에 하드코딩된 `if "netsh" in blob...` 관측
-조건들을 **선언형 설정 파일(`mappings/_attention_signals.yaml`)로 분리**한다.
+`src/stage05_interpret/attention.py`의 관측 조건과 긴 목록 보존 어휘를
+**선언형 설정 파일(`mappings/_attention_signals.yaml`)로 분리했다.**
 
 지금은 TDD 검증을 위해 파이썬 if 문으로 최소 구현되어 있다. 새 악성코드나
 시그널 추가 시 파이썬 코드를 건드려야 하고, `mappings/_flags.yaml` 처럼 일관된
@@ -270,7 +270,8 @@ EXPLORER.EXE 가 KIOSK 사용자 폴더에서 실행되어 …"(claims 는
 3. `tests/test_attention.py` 및 `tests/test_svcstealer_benchmark.py` 회귀 통과 확인.
 4. 시그널이 과도하게 늘어날 경우를 대비한 보장 레인 상한/우선순위 가드 마련.
 
-**착수 조건:** 코덱스의 `work-GPT.md` 10단계(SVCStealer 실측 관통) 완료 후.
+SVCStealer 11단계 실측 11/11 PASS로 관통 검증했다. 새 어휘는 Python 수정 없이
+`prompt_keep_path_groups` 또는 `attention_signals`에 추가한다.
 
 ---
 

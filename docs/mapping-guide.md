@@ -374,6 +374,26 @@ privileged_group_add:
 
 ### 프롬프트에 먼저 실을 경로 (`prompt_keep_paths`)
 
+> 현재 구현의 단일 원본은 `mappings/_attention_signals.yaml`의
+> `prompt_keep_path_groups`입니다. 과거 `_flags.yaml`의 평면
+> `prompt_keep_paths` 형식은 더 이상 읽지 않습니다. 그룹의 선언 순서는 긴 목록의
+> 보존 우선순위이며, `signal`과 `must_review`가 있으면 같은 어휘가 attention
+> 시그널도 생성합니다.
+
+```yaml
+prompt_keep_path_groups:
+  max_items: 12
+  groups:
+    credential_stores:
+      attack: T1555
+      signal: sensitive_credential_store_referenced
+      must_review: true
+      contains:
+        - '\login data'
+        - '\logins.json'
+        - '\cookies'
+```
+
 **플래그가 아닙니다.** 05단계는 `fields` 안의 긴 목록을 상한까지 자르는데
 (`allocation.MAX_LIST_ITEMS`), 그 자리에 **먼저 넣을** 항목을 여기 어휘로
 고릅니다. 프리패치 `loaded_files` 처럼 수백 건짜리 목록이 대상입니다.

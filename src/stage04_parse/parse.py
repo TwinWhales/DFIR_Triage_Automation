@@ -47,7 +47,7 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, schema
-from . import evidence, flagging, osinfo, parsers
+from . import canonical, evidence, flagging, osinfo, parsers
 from .parsers.base import Scope
 
 __all__ = [
@@ -363,7 +363,9 @@ def parse_artifact(
         scope, size_bytes, threshold_bytes=large_artifact_bytes, enabled=prune_large_artifacts
     )
 
-    records = flagging.apply_all(_records(parser, source, artifact, scope), scope)
+    records = canonical.apply(
+        flagging.apply_all(_records(parser, source, artifact, scope), scope)
+    )
     if prune:
         records = _drop_outside_range(records, counter)
     written = io.write_jsonl(out_dir / filename, counter(records))

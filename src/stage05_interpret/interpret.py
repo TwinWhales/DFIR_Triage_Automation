@@ -43,7 +43,7 @@ from ..common import io, llm, schema
 from ..common.llm import DEFAULT_TIMEOUT
 from ..stage03_select import mapping_loader
 from ..stage06_verify import comparators
-from . import allocation, assembly, record_filter
+from . import allocation, assembly, attention, incident_context, record_filter
 from .llm_client import (
     ASSEMBLE_NUM_CTX,
     DEFAULT_MODEL,
@@ -1247,8 +1247,11 @@ def main(
     if assembled and budget_chars > 0:
         alloc_budget = budget_chars * max(1, args.max_chunks)
 
+    prepared_records = attention.apply(
+        incident_context.enrich(list(parsed.values())), mappings=args.mappings
+    )
     records, quotas, budget = allocation.allocate_records(
-        parsed.values(),
+        prepared_records,
         priorities=priorities,
         signal_sources=signal_sources,
         # 02단계가 입력에서 건져 낸 이름. 그 이름을 가진 레코드는 아티팩트

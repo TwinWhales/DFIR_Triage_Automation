@@ -171,7 +171,11 @@ def claim_for(
     # 흔한 필드가 된다. 실측(2026-09-03)에서 프리패치 소견의 claims 가
     # path·name·timestamp 였고, 그 아티팩트 판단의 핵심인 run_count·
     # loaded_files 는 하나도 들어가지 않았다.
-    order = list(chosen) if chosen else list(fields.names)
+    # ``None`` means a legacy/direct caller did not provide a selection.  An
+    # explicit empty list means the model selected no support fields and must
+    # remain empty; silently substituting convenient fields creates tautological
+    # claims unrelated to the sentence.
+    order = list(chosen) if chosen is not None else list(fields.names)
 
     claims: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -233,6 +237,12 @@ def validate_selection(
             raise SelectionError(
                 f"{ref} 의 reason 이 플래그 이름의 나열이다: {reason!r}",
                 guidance=_REASON_GUIDANCE,
+            )
+
+        if "evidence_fields" in selection and not (selection.get("evidence_fields") or []):
+            raise SelectionError(
+                f"{ref} 의 evidence_fields 가 비었다.",
+                guidance="문장을 직접 뒷받침하는 원본 필드를 하나 이상 지목하십시오.",
             )
 
         missing = [
@@ -303,7 +313,10 @@ def assemble_body(
     """
     fields = claim_fields() if fields is None else fields
     chosen_by_ref = {
-        item["ref"]: [name for name in (item.get("evidence_fields") or []) if name]
+        item["ref"]: (
+            [name for name in item["evidence_fields"] if name]
+            if "evidence_fields" in item else None
+        )
         for item in selections
         if item.get("ref")
     }
@@ -367,7 +380,10 @@ def assemble_body(
         # 필드가 claims 에서 조용히 빠진다.
         validate_selection([selection], {ref: record})
         statement = str(selection.get("reason") or "").strip()
-        chosen = [name for name in (selection.get("evidence_fields") or []) if name]
+        chosen = (
+            [name for name in selection["evidence_fields"] if name]
+            if "evidence_fields" in selection else None
+        )
 
         findings.append(
             {
@@ -377,6 +393,7 @@ def assemble_body(
                 "claims": claim_for(record, fields, chosen),
                 "technique": selection.get("technique") or None,
                 "severity": selection.get("severity") or "info",
+                **({"assertions": selection["assertions"]} if selection.get("assertions") else {}),
             }
         )
 
