@@ -117,7 +117,7 @@ PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 evidence/WEB01
 .venv/Scripts/python.exe benchmark/evaluate.py --dataset benchmark/datasets/C-001-webshell
 
 # 2) 검증기 회귀 방지 테스트 (표기 오류를 환각으로 세지 않는지 검사)
-.venv/Scripts/python.exe tools/validator_check.py
+.venv/Scripts/python.exe benchmark/validator_check.py
 ```
 
 * **4단계 증거 도달률**: 정답 레코드가 `파싱 ➔ 전달 ➔ 인용 ➔ 검증통과` 중 어느 지점에서 탈락했는지 정밀 추적.
