@@ -132,7 +132,7 @@ def test_the_registry_hives_declare_their_signal_source(catalog):
 
     05단계가 이것을 모르면 플래그 없는 레코드를 전부 버려서, 선별이
     ``path_prefix``로 정확히 골라 온 1,754건이 한 건도 모델에 가지 않는다
-    (``docs/limitations.md`` 6-7 실측).
+    (``docs/limitations-log.md`` 6-7 실측).
     """
     assert catalog["registry:SYSTEM"].signal_source == "scope"
     assert catalog["registry:SOFTWARE"].signal_source == "scope"
@@ -287,7 +287,7 @@ def test_missing_rationale_is_refused(tmp_path, catalog):
 def test_a_request_without_a_priority_reads_as_neutral(mappings):
     """``priority``는 사람이 채우는 값이고 아직 채워지지 않았다.
 
-    ``docs/limitations.md`` 6-5 — 어떤 자동 규칙에서도 나오지 않는 값이라
+    ``docs/limitations.md`` 3-8 — 어떤 자동 규칙에서도 나오지 않는 값이라
     분석가가 판단해 적고 다른 사람이 검토해야 나온다. 그때까지는 중립이며,
     배분에서 빠지는 것이 아니라 같은 몫을 받는다.
     """

@@ -7,7 +7,7 @@
 **그런데 스텁만으로는 확인되지 않는 것이 있습니다.** 프롬프트가 실제
 모델에게 말이 되는지, 응답이 우리 파서를 통과하는지, 모델이 지어낸 `ref`를
 우리가 잡아내는지는 실제로 불러 봐야 압니다. 실측에서 드러난 결함 여섯 개
-중 넷은 스텁으로는 나올 수 없는 것이었습니다(`docs/limitations.md` 5장 —
+중 넷은 스텁으로는 나올 수 없는 것이었습니다(`docs/limitations-log.md` —
 스키마의 `ref` 패턴 누락, 배분의 실물 규모, 120초 타임아웃, `num_ctx` 4096).
 
 ## 켜는 법
@@ -161,7 +161,7 @@ def _live_args(mode: "str | None" = None) -> "list[str]":
         "--model", MODEL,
         "--host", HOST,
         "--timeout", TIMEOUT,
-        # 0 이면 재시도가 같은 답을 반복한다(docs/limitations.md 5장 ⑤).
+        # 0 이면 재시도가 같은 답을 반복한다(docs/limitations.md 3-9).
         # 테스트가 모델 사정으로 한 번에 실패하는 것을 막는다.
         "--temperature", "0.3",
     ]

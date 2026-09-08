@@ -800,6 +800,26 @@ class PipelineWorker(QThread):
 
         return output_dir
 
+    def _stage04_inputs(self):
+        """04단계 산출물을 바꿀 수 있는 파일 전부. 캐시 키의 재료다.
+
+        빠뜨리면 그 파일을 고쳐도 캐시가 살아남아, 고친 것이 반영되지 않은
+        04_parsed 가 05 로 간다. 넓게 잡는 쪽이 안전하다 — 관계없는 파일이
+        섞여 캐시가 한 번 더 비는 것은 손해가 아니지만, 관계있는 파일이
+        빠지면 틀린 결과가 조용히 나온다.
+        """
+        sources = sorted(
+            (self.project_root / "src" / "stage04_parse").rglob("*.py"),
+            key=lambda path: str(path),
+        )
+        sources = [path for path in sources if "__pycache__" not in path.parts]
+
+        flags = self.project_root / "mappings" / "_flags.yaml"
+        if flags.exists():
+            sources.append(flags)
+
+        return [path for path in sources if path.is_file()]
+
     def _stage04_cache_dir(self, selection_file, evidence_path):
         """같은 Case ID + Evidence + Selection + parser 버전에만 재사용되는 안전한 캐시."""
         if not self.use_stage04_cache:
@@ -832,10 +852,16 @@ class PipelineWorker(QThread):
                     h.update(str(rel).replace("\\", "/").encode("utf-8", errors="replace"))
                     h.update(f":{st.st_size}:{st.st_mtime_ns}".encode())
 
-        parser_file = self.project_root / "src" / "stage04_parse" / "parse.py"
-        if parser_file.exists():
-            st = parser_file.stat()
-            h.update(f"parser:{st.st_size}:{st.st_mtime_ns}".encode())
+        # 04단계 산출물은 parse.py 하나가 아니라 **04단계 코드 전부와 flags
+        # 어휘**에 달려 있다. parse.py 만 보면 flagging.py·parsers/·structs/ 나
+        # mappings/_flags.yaml 을 고친 뒤에도 캐시가 살아 있어, 고친 것이
+        # 반영되지 않은 04_parsed 를 그대로 05 에 넘긴다 — 조용히 틀린
+        # 결과가 나오는 경로다.
+        for source in self._stage04_inputs():
+            st = source.stat()
+            rel = source.relative_to(self.project_root)
+            h.update(str(rel).replace("\\", "/").encode("utf-8", errors="replace"))
+            h.update(f":{st.st_size}:{st.st_mtime_ns}".encode())
 
         key = h.hexdigest()[:24]
         safe_case = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in self.case_id)

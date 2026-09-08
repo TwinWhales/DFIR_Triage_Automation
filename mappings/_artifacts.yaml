@@ -46,7 +46,7 @@ artifacts:
   # 아래 셋은 evtx 파서를 그대로 재사용한다 — 채널만 다르고 온디스크
   # 형식이 같다. Security/System 만 보던 동안 네트워크 쪽 흔적은 카탈로그에
   # 없어서 "확인하지 못한 아티팩트"에도 나타나지 않았다(2026-08-24 실측,
-  # docs/limitations.md "네트워크 흔적을 볼 수 없다").
+  # docs/limitations.md 2-5).
   #
   # 셋 다 로그가 작다(실측 394·118·30건). Security 처럼 event_ids 로
   # 좁히지 않아도 쿼터를 잡아먹지 않으므로 signal_source 는 기본값(flags)을
@@ -170,7 +170,7 @@ artifacts:
   # 전부 훑고 재미있는 것에 플래그를 붙이지만, 레지스트리는 붙일 플래그가
   # 없다 — 위 문단대로 판정이 이미 path_prefix 에서 끝났기 때문이다.
   # 05단계가 이것을 모르면 플래그 없는 레코드를 전부 버려서 선별이 정확히
-  # 골라 온 것이 한 건도 모델에 가지 않는다(limitations.md 6-7 실측).
+  # 골라 온 것이 한 건도 모델에 가지 않는다(limitations-log.md 6-7 실측).
   registry:SYSTEM:
     parser: registry
     os: [windows]
@@ -188,7 +188,7 @@ artifacts:
   # Amcache.hve도 regf 포맷이라 registry 파서를 그대로 재사용한다.
   # SYSTEM/SOFTWARE와 같은 이유로 flags가 붙지 않으므로
   # signal_source 도 같다 — 빼먹으면 파싱은 되는데 05단계에서 통째로
-  # 사라진다(docs/limitations.md 6-7).
+  # 사라진다(docs/limitations-log.md 6-7).
   registry:Amcache:
     parser: registry
     os: [windows]
@@ -223,7 +223,7 @@ artifacts:
   # 남은 사실 — Windows Server 는 기본 비활성화라 수집되지 않는 경우가
   # 많다 — 은 제외 사유가 아니라 **증거 없음**이고, 04단계가
   # artifact_not_found 로 기록해 보고서의 "분석 범위 한계"에 싣는다.
-  # 레지스트리와 같은 자리다(limitations.md 6-8). "CMD.EXE가 5회 실행됐다"는
+  # 레지스트리와 같은 자리다(limitations-log.md 6-8). "CMD.EXE가 5회 실행됐다"는
   # 그 자체로 신호가 아니고, shell.aspx 를 적재했다는 사실이 신호인데 그
   # 판단은 선별(path_prefix)이 이미 했다. program_executed 같은 플래그를
   # 새로 만드는 안은 접었다 — 모든 레코드에 붙으면 플래그가 "볼 만하다"는

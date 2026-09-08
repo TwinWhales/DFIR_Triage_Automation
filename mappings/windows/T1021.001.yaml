@@ -38,4 +38,4 @@ artifacts:
     rationale: 원격 세션의 목적지 IP·포트
 
   # NTUSER.DAT 의 Terminal Server Client\Servers(접속 대상 이력)는 카탈로그에
-  # 없다 — docs/limitations.md "SAM·SECURITY·NTUSER를 읽지 않는다".
+  # 없다 — docs/limitations.md 2-8.

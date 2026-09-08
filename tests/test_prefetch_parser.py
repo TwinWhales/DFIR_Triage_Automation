@@ -77,7 +77,7 @@ class Spec(NamedTuple):
 #:
 #: 줄 끝 주석이 어느 Windows인지, 실물로 확인한 것인지 말합니다. 버전
 #: 23과 30/220만 실측이고 나머지는 [LIBSCCA] 명세입니다
-#: (`docs/limitations.md` "프리패치에서 확인되지 않은 것"). 명세만 있는
+#: (`docs/limitations.md` 2-11). 명세만 있는
 #: 줄은 **"이 값이 맞다"가 아니라 "이 값을 쓰기로 했다"**를 고정합니다.
 SPEC: dict[tuple[int, int], Spec] = {
     (17, 68): Spec(0x24, 1, 0x3C, 20, 40),      # XP/2003

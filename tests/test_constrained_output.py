@@ -9,7 +9,7 @@
 우리 배선 실수로 오염되는 것이다. 선례가 있다 — ``findings.schema.json``의
 ``ref`` 패턴에 ``PF``가 빠져 프리패치가 닿는 케이스는 모델이 무엇을 내든
 통과할 수 없었고, 그것이 모델의 환각으로 집계됐다
-(``docs/limitations.md`` 2026-08-24 절 ①).
+(``docs/limitations-log.md`` 2026-08-24 절).
 
 그래서 출력 스키마를 손으로 쓰지 않고 ``llm.output_schema``가 동결
 스키마에서 파생시킨다. 여기 있는 시험은 그 파생이 실제로 부분집합인지,
@@ -101,7 +101,7 @@ def test_the_technique_enum_is_exactly_the_list_we_know():
 
 
 def test_the_hallucinated_subtechnique_from_K_001_cannot_be_produced():
-    """``limitations.md`` 2026-08-24 절 ⑤ 의 그 값이다.
+    """``limitations.md`` 3-9 의 그 값이다.
 
     ``T1200``은 실재하고 ``T1200.001``은 실재하지 않는다. 형식만 보면
     구별되지 않아 패턴으로는 막을 수 없었고, ``temperature 0``에서는

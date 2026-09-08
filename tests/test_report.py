@@ -141,7 +141,7 @@ def test_scope_limits_merge_excluded_and_unfired_deferred(docs):
     limits = {entry["artifact"]: entry["reason"] for entry in _context(docs)["limits"]}
     assert "미지원" in limits["$LogFile"]
     # Tier 2 루프백이 없으므로 조건을 **평가한 적이 없다.** "조건 미충족"은
-    # 평가했는데 안 걸린 것처럼 읽혀 사실과 다르다(docs/limitations.md 3).
+    # 평가했는데 안 걸린 것처럼 읽혀 사실과 다르다(docs/limitations.md 3-1).
     for artifact in ("$UsnJrnl", "evtx:System"):
         assert "미평가" in limits[artifact]
         assert "조건 미충족" not in limits[artifact]
@@ -149,7 +149,7 @@ def test_scope_limits_merge_excluded_and_unfired_deferred(docs):
 
 # ==================================== 04가 읽지 못한 것이 보고서에 실리는가
 #
-# docs/limitations.md 4-1. 고치기 전에는 04단계가 건너뛴 아티팩트가
+# docs/limitations-log.md 4-1. 고치기 전에는 04단계가 건너뛴 아티팩트가
 # errors.jsonl 에만 남고 보고서에는 **언급조차 되지 않았다.** 실제 증거로
 # 재현했을 때 보고서는 "카탈로그의 모든 아티팩트를 확인했습니다"라고
 # 적었다 — 누락이 아니라 거짓 진술이었다.

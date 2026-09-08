@@ -60,7 +60,7 @@ artifacts:
     rationale: 장치 드라이버 설치 시각
 
   # 사용자별 장치 이력(MountPoints2)은 NTUSER.DAT 에 있고 카탈로그에
-  # 없다 — docs/limitations.md "SAM·SECURITY·NTUSER를 읽지 않는다".
+  # 없다 — docs/limitations.md 2-8.
   - name: registry:SOFTWARE
     tier: 2
     priority: 2
