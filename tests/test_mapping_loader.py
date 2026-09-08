@@ -392,8 +392,11 @@ def test_time_range_is_appended_without_the_basis(scenario):
 
 
 def test_reproduces_the_selection_fixture_exactly(scenario, catalog, mappings):
+    # 골든은 `main()` 이 만든 것이라 상관분석 바탕이 들어 있다. `select()` 는
+    # 파일을 읽지 않으므로(그 함수의 계약) 여기서 읽어 넘긴다.
     expected = io.read_json(GOLDEN / "03_selection.json")
-    got, unmapped = select(scenario, catalog, mappings)
+    baseline = mapping_loader.load_baseline(MAPPINGS)
+    got, unmapped = select(scenario, catalog, mappings, baseline=baseline)
     assert unmapped == []
     got.pop("generated_at")
     expected.pop("generated_at")

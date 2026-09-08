@@ -71,8 +71,11 @@ def test_the_same_artifact_requested_twice_is_read_once():
 
 
 def test_real_selection_groups_cleanly():
+    # `evtx:Sysmon` 은 기법이 부른 것이 아니라 상관분석 바탕이다
+    # (`mappings/_baseline.yaml`). 웹셸 시나리오의 두 기법
+    # (T1505.003·T1136.001)은 Sysmon 을 요청하지 않는다.
     grouped = group_by_artifact(io.read_json(GOLDEN / "03_selection.json"))
-    assert set(grouped) == {"$MFT", "evtx:Security"}
+    assert set(grouped) == {"$MFT", "evtx:Security", "evtx:Sysmon"}
     assert grouped["$MFT"]["extensions"] == [".aspx", ".asp", ".ashx", ".asmx"]
 
 
@@ -109,7 +112,8 @@ def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
 
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
     skipped = {entry["detail"]["value"] for entry in logged if entry["action"] == "skip"}
-    assert skipped == {"$MFT", "evtx:Security"}
+    # 바탕으로 들어온 `evtx:Sysmon` 도 이 픽스처 증거에는 없어 함께 건너뛴다.
+    assert skipped == {"$MFT", "evtx:Security", "evtx:Sysmon"}
     assert logged[-1]["action"] == "abort"
     assert "--skip-existing" in logged[-1]["detail"]["message"]
 

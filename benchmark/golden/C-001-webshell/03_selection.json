@@ -49,6 +49,24 @@
         "technique": "T1136.001",
         "rationale": "계정 생성 및 권한 그룹 추가"
       }
+    },
+    {
+      "artifact": "evtx:Sysmon",
+      "tier": 1,
+      "priority": 3,
+      "scope": {
+        "event_ids": [
+          1
+        ],
+        "time_range": {
+          "start": "2026-07-18T00:00:00Z",
+          "end": "2026-07-22T23:59:59Z"
+        }
+      },
+      "reason": {
+        "technique": "T1505.003",
+        "rationale": "상관분석 바탕 — 프로세스 생성 — 기법과 무관하게 여는 상관분석 바탕. 이번 시나리오의 어떤 기법도 요청하지 않았다"
+      }
     }
   ],
   "deferred": [
@@ -82,10 +100,6 @@
     },
     {
       "artifact": "evtx:NetworkProfile",
-      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
-    },
-    {
-      "artifact": "evtx:Sysmon",
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
     {
@@ -186,8 +200,8 @@
     }
   ],
   "stats": {
-    "selected_count": 2,
+    "selected_count": 3,
     "deferred_count": 2,
-    "excluded_count": 28
+    "excluded_count": 27
   }
 }

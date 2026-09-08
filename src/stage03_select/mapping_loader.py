@@ -32,6 +32,9 @@ __all__ = [
     "load_catalog",
     "load_mapping",
     "load_all",
+    "BASELINE_FILE",
+    "BaselineRequest",
+    "load_baseline",
 ]
 
 
@@ -422,3 +425,60 @@ def load_all(mappings_dir: str | Path, target_os: str, catalog: Catalog) -> dict
             raise MappingError(f"기법 중복: {mapping.technique}")
         mappings[mapping.technique] = mapping
     return mappings
+
+
+#: 기법과 무관하게 여는 상관분석 바탕. 파일 자체의 설명은 그 안에 있다.
+BASELINE_FILE = "_baseline.yaml"
+
+
+@dataclass(frozen=True)
+class BaselineRequest:
+    """바탕으로 여는 아티팩트 하나.
+
+    `ArtifactRequest` 와 따로 두는 것은 **합치는 규칙이 다르기** 때문이다.
+    기법의 요청은 그 자체로 하나의 선별 항목이 되지만, 바탕은 이미 있는
+    항목에 ``event_ids`` 를 **더한다**.
+    """
+
+    artifact: str
+    event_ids: tuple[int, ...]
+    priority: int
+    rationale: str
+
+
+def load_baseline(mappings_dir: "str | Path") -> tuple[BaselineRequest, ...]:
+    """``mappings/_baseline.yaml`` 을 읽는다. 없으면 빈 튜플.
+
+    **없어도 된다.** 파일을 지우면 예전처럼 기법 매핑만으로 선별한다 —
+    그 차이를 재려고 파일 하나로 분리해 두었다.
+    """
+    path = Path(mappings_dir) / BASELINE_FILE
+    if not path.is_file():
+        return ()
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    entries = data.get("baseline") or []
+    if not isinstance(entries, list):
+        raise MappingError(f"{path}: baseline 은 목록이어야 함")
+
+    result: list[BaselineRequest] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            raise MappingError(f"{path}: baseline 항목에 name 이 없음")
+        event_ids = entry.get("event_ids") or []
+        if not isinstance(event_ids, list) or any(
+            isinstance(v, bool) or not isinstance(v, int) for v in event_ids
+        ):
+            raise MappingError(f"{path}: {entry['name']}.event_ids 는 정수 목록이어야 함")
+        priority = entry.get("priority", DEFAULT_PRIORITY)
+        if isinstance(priority, bool) or not isinstance(priority, int):
+            raise MappingError(f"{path}: {entry['name']}.priority 는 정수여야 함")
+        result.append(
+            BaselineRequest(
+                artifact=str(entry["name"]),
+                event_ids=tuple(event_ids),
+                priority=priority,
+                rationale=str(entry.get("rationale") or "상관분석 바탕"),
+            )
+        )
+    return tuple(result)
