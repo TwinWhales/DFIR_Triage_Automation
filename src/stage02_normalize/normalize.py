@@ -227,7 +227,10 @@ def enforce_grounding(
 
 
 def correct_time_range(
-    scenario: dict[str, Any], raw: str, log: errlog.ErrorLog
+    scenario: dict[str, Any],
+    raw: str,
+    log: errlog.ErrorLog,
+    evidence_root: "str | None" = None,
 ) -> dict[str, Any]:
     """한국어 서술의 벽시계 시각을 UTC 범위가 덮게 만든다.
 
@@ -235,16 +238,25 @@ def correct_time_range(
     했는지 안 했는지 알 수 없으므로 두 읽기를 다 덮는다. 이미 덮고 있으면
     아무 일도 일어나지 않는다.
     """
-    adjustment = timeband.widen_for_local_time(scenario["time_range"], raw)
-    if adjustment is None:
-        return scenario
+    def apply(adjustment: "timeband.Adjustment | None") -> None:
+        if adjustment is None:
+            return
+        basis = str(scenario["time_range"].get("basis") or "").strip()
+        sentence = adjustment.sentence()
+        # basis 는 "범위가 틀렸을 때 원인이 드러난다"는 자리다(스키마). 우리가
+        # 넓힌 것도 그 원인의 일부이므로 모델의 근거를 지우지 않고 잇는다.
+        scenario["time_range"]["basis"] = f"{basis} {sentence}".strip()
+        log.record(STAGE, "timezone_adjusted", adjustment.as_detail(), action="record")
 
-    basis = str(scenario["time_range"].get("basis") or "").strip()
-    sentence = adjustment.sentence()
-    # basis 는 "범위가 틀렸을 때 원인이 드러난다"는 자리다(스키마). 우리가
-    # 넓힌 것도 그 원인의 일부이므로 모델의 근거를 지우지 않고 잇는다.
-    scenario["time_range"]["basis"] = f"{basis} {sentence}".strip()
-    log.record(STAGE, "timezone_adjusted", adjustment.as_detail(), action="record")
+    apply(timeband.widen_for_local_time(scenario["time_range"], raw))
+    # **수집 시각이 상한이다.** 넓힌 뒤에 건다 — 벽시계 보정이 만든 범위도
+    # 증거가 없는 구간까지 가면 안 된다. 수집 시각을 못 찾으면 아무 일도
+    # 하지 않는다(`timeband.collection_time`).
+    apply(
+        timeband.clamp_to_collection(
+            scenario["time_range"], timeband.collection_time(evidence_root), raw
+        )
+    )
     return scenario
 
 
@@ -276,7 +288,7 @@ def normalize(
             # 순서를 뒤집으면 떨어진 축이 아무 데도 안 남는다.
             scenario = enforce_grounding(scenario, raw, log)
             scenario = record_coverage(scenario, raw, log)
-            scenario = correct_time_range(scenario, raw, log)
+            scenario = correct_time_range(scenario, raw, log, evidence.get("root"))
             # 우리가 넣은 값도 같은 관문을 지난다.
             schema.validate(scenario, "scenario")
             return scenario
