@@ -342,6 +342,13 @@ class Runner:
             raise StepFailed(f"Ollama 응답 없음 ({self.args.host}): {e}") from None
 
         tags = {m.get("name", "") for m in models}
+        # qwen2.5:7b-instruct-q4_K_M 이 없고 qwen2.5:latest 가 있으면 자동 매핑
+        if self.args.model not in tags and "qwen2.5:latest" in tags:
+            print(f"  안내: {self.args.model} 대신 설치된 qwen2.5:latest 로 자동 전환합니다.")
+            self.args.model = "qwen2.5:latest"
+        if self.args.model_interpret and self.args.model_interpret not in tags and "qwen2.5:latest" in tags:
+            self.args.model_interpret = "qwen2.5:latest"
+
         wanted = {self.args.model, self.model_interpret}
         absent = sorted(t for t in wanted if t not in tags)
         if absent:
@@ -1011,7 +1018,7 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
             "예전 동작이다 — 강제 선별이 결과를 얼마나 바꾸는지 재려고 남겨 둔다"
         ),
     )
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="02 정규화 모델. 기본 %(default)s")
+    parser.add_argument("--model", default="qwen2.5:latest", help="02 정규화 모델. 기본 %(default)s")
     parser.add_argument(
         "--model-interpret",
         default=None,
