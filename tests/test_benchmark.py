@@ -453,7 +453,7 @@ def test_validator_cli_fails_when_the_verifier_is_too_strict(capsys):
     assert "과엄격" in capsys.readouterr().out
 
 
-# ================================================== 기각 대장 (work.md 10번)
+# ================================================== 기각 대장 (benchmark/rejections.yaml)
 
 
 def _run_with_rejection(case_id, technique, artifacts, also=(), started_at=None, fid="F1"):

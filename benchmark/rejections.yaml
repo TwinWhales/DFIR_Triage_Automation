@@ -77,7 +77,7 @@ decided:
       다만 이것이 T1091 에 evtx:Sysmon 이 필요 없다는 뜻은 아니다. USB 에서
       실행된 파일은 Sysmon EID 1 의 Image 가 이동식 드라이브를 가리키므로
       직접 증거에 가깝고, 그렇다면 corroborates 가 아니라 artifacts 에
-      들어가야 한다. 실물로 확인한 뒤의 일이다(work.md 0번·10번).
+      들어가야 한다. 실물로 확인한 뒤의 일이다(docs/limitations.md "Assigned Access 축 미검증").
 
   - technique: T1204.002
     artifacts: [evtx:Defender]

@@ -60,7 +60,7 @@ artifacts:
   # 가 지정하는 것은 UWP 앱이다. 그 축을 이 둘이 메운다.
   #
   # 매핑 자리는 잠정이다 — 키오스크 기법 목록이 확정되면 다시 본다
-  # (work.md 0번). 지금 여기 둔 이유는 "무엇이 실행됐나"를 묻는 기법이
+  # (docs/limitations.md "Assigned Access 축 미검증"). 지금 여기 둔 이유는 "무엇이 실행됐나"를 묻는 기법이
   # 이것 하나뿐이기 때문이다.
   - name: sqlite:StateRepository
     tier: 2

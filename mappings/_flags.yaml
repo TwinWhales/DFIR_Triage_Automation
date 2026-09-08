@@ -940,7 +940,7 @@ prompt_drop_fields:
   # 상관용 GUID. **우리는 GUID 로 잇지 않는다** — 05단계는 레코드 단위로
   # 보고 ref 로 잇는다. 모델에게는 128비트 난수일 뿐이고, 넷을 합쳐
   # evtx:Sysmon 전체의 9.8% 다. 프로세스 계보가 필요해지면(3대 상관분석,
-  # work.md 4번) 그때는 파이썬이 원본에서 읽어 잇는 것이 맞다.
+  # docs/limitations-log.md) 그때는 파이썬이 원본에서 읽어 잇는 것이 맞다.
   - ProcessGuid
   - ParentProcessGuid
   - LogonGuid

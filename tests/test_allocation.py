@@ -209,7 +209,7 @@ def test_an_anchor_from_one_artifact_pulls_in_another():
 # ============================================================ 시나리오 반영
 
 
-# ============================================ 창 밖 신호의 순서 (work.md 15번)
+# ============================================ 창 밖 신호의 순서 (docs/limitations-log.md)
 
 
 def test_an_in_window_signal_outranks_an_older_one_outside_the_window():

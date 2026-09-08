@@ -263,7 +263,7 @@ def render_rejections(rows: list[dict[str, Any]]) -> str:
         return (
             "기각 기록이 없습니다.\n"
             "  technique_unsupported 기각이 쌓여야 매핑을 넓힐 근거가 생깁니다"
-            " (work.md 10번).\n"
+            " (benchmark/rejections.yaml).\n"
             "  tools/live_check.py 를 돌리면 실행마다 여기에 쌓입니다."
         )
 

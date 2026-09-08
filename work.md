@@ -72,5 +72,5 @@
 * **팀원 트랙 (세형님)**:
   - KIOSK 실측 오답 분석(미탐/오탐 원인 규명) 및 벤치마크 정답 데이터(Ground Truth) 작성 진행.
 * **해결된 이력 및 시스템 제약**:
-  - 완료된 엔지니어링 기록은 [docs/limitations-log.md](file:///c:/Users/user/Desktop/케이쉴드주니어/DFIR_Triage_Automation/DFIR_Triage_Automation_GPT/docs/limitations-log.md) 참조.
-  - 현재도 유효한 파서 및 시스템 층위의 제약은 [docs/limitations.md](file:///c:/Users/user/Desktop/케이쉴드주니어/DFIR_Triage_Automation/DFIR_Triage_Automation_GPT/docs/limitations.md) 참조.
+  - 완료된 엔지니어링 기록은 [docs/limitations-log.md](docs/limitations-log.md) 참조.
+  - 현재도 유효한 파서 및 시스템 층위의 제약은 [docs/limitations.md](docs/limitations.md) 참조.
