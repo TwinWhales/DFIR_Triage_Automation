@@ -625,6 +625,70 @@ $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황�
 
 ---
 
+---
+
+## 08_campaign.json · 08_campaign.md — 노드 여럿을 한 사건으로
+
+**01~07과 나란히 서지 않고 그 위에 섭니다.** 노드마다 평범한 케이스로 01~07을
+완주시킨 뒤, 08이 노드 **사이**를 잇습니다. 파이프라인의 여덟 번째 걸음이 아니라
+캠페인 레이어이므로 단일 노드 분석에는 전혀 관여하지 않습니다. 설계 근거는
+`docs/proposals/multi-node-campaign.md`입니다.
+
+**입력은 사람이 씁니다** (`campaign.json`). 스키마를 두지 않는 이유는 01단계
+입력과 같습니다 — 틀렸을 때 스키마 위반 문구보다 무엇을 고쳐야 하는지 말해
+주는 편이 낫습니다.
+
+```json
+{
+  "campaign_id": "KIOSK-0910",
+  "nodes": [
+    {"node": "kiosk",  "case_id": "KIOSK-0910-kiosk",  "role": "endpoint"},
+    {"node": "pos",    "case_id": "KIOSK-0910-pos",    "role": "endpoint"},
+    {"node": "server", "case_id": "KIOSK-0910-server", "role": "server"}
+  ]
+}
+```
+
+노드마다 `04_parsed/`·`05_findings.json`·`06_verified.json`을 읽고,
+`02_scenario.json`이 있으면 호스트 이름도 받습니다.
+
+**노드 하나가 없거나 덜 끝났어도 멈추지 않습니다.** `nodes[].status`가
+`missing`(케이스 디렉터리 없음) 또는 `incomplete`(04·06 중 하나 없음)이 되고
+`reason`이 붙으며, 보고서 첫 화면에 실립니다. 조용히 지나가면 읽는 사람이
+"그 단말에는 흔적이 없었다"로 읽습니다.
+
+### 링크 — 노드를 잇는 것
+
+서로 다른 노드 **둘 이상**에서 같은 값이 관측되면 링크입니다. 축은 다섯이고
+값은 04단계 `canonical` 오버레이에서 옵니다.
+
+| 축 | 값 |
+|---|---|
+| `hash` | `canonical.hashes` (접두어 제거·소문자) |
+| `network` | `canonical.remote_ip` 와 `command_line`에 박힌 IPv4. 루프백·`0.0.0.0` 제외 |
+| `filename` | 정규화한 경로의 basename |
+| `path` | 정규화한 전체 경로 |
+| `account` | `canonical.user`에서 도메인을 뗀 이름. 내장 계정과 컴퓨터 계정(`...$`) 제외 |
+
+`observations`는 **노드마다 가장 이른 관측 하나**입니다. 같은 값이 한 노드에서
+수백 번 나와도 링크는 하나입니다.
+
+### 신호등을 우회하지 않습니다
+
+| 양끝 | 결과 |
+|---|---|
+| 둘 다 `passed` 소견이 인용 | `links`, `grade: passed` |
+| 하나라도 `unverifiable` 소견이 인용 | `links`, `grade: warning` |
+| **`rejected` 소견만 인용** | **링크를 만들지 않습니다** |
+| 어느 소견도 인용하지 않음 | `context_links` — 본문 체인 밖, 개수와 함께 별도 절 |
+
+`stats.ubiquitous_values`는 **모든 노드에 나타나 배경으로 보고 내린 값의 수**입니다.
+지우지 않고 세는 이유는 그 판정이 베이스라인 없이 이뤄지기 때문입니다 — 배포
+이미지가 같아서 공통인 값은 여전히 섞일 수 있고, 그 사실이 수치로 남아야 합니다.
+
+**LLM을 부르지 않습니다.** 07과 같은 이유이고, 그래서 노드를 잇는 연결고리는
+지어낼 수 없는 값뿐입니다.
+
 ## 단계 실행 인터페이스
 
 모든 스크립트는 동일한 CLI 형태를 따릅니다.
@@ -649,6 +713,15 @@ $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황�
 .venv/Scripts/python.exe -m src.stage07_report.report \
     --in cases/C-001/06_verified.json --findings cases/C-001/05_findings.json \
     --selection cases/C-001/03_selection.json --out cases/C-001/07_report.md
+
+```
+
+캠페인은 노드들이 07까지 끝난 뒤에 따로 돕니다.
+
+```bash
+.venv/Scripts/python.exe -m src.stage08_campaign.campaign \
+    --in campaigns/KIOSK-0910/campaign.json --cases cases/ \
+    --out campaigns/KIOSK-0910/
 ```
 
 각 스크립트는 시작 시 입력 파일을, 종료 시 출력 파일을 `schemas/` 아래 JSON Schema로 검증합니다. 검증 실패는 `errors.jsonl`에 기록 후 비정상 종료합니다.

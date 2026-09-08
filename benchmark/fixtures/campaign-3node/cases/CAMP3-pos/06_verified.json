@@ -1,0 +1,15 @@
+{
+  "case_id": "CAMP3-pos",
+  "stage": "06_verify",
+  "passed": [
+    {
+      "id": "F1"
+    }
+  ],
+  "unverifiable": [
+    {
+      "id": "F2"
+    }
+  ],
+  "rejected": []
+}

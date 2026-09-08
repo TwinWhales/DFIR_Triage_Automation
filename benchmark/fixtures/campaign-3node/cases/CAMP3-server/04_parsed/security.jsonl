@@ -1,0 +1,1 @@
+{"ref": "EVTX-SEC#51090", "artifact": "evtx:Security", "record_num": 51090, "offset": "0x3F1200", "timestamp": "2026-09-10T13:52:18Z", "flags": ["logon_success"], "fields": {"TargetUserName": "kioskadmin", "SubjectUserName": "MGMT01\\svc", "User": "MGMT01\\kioskadmin"}}

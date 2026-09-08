@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "campaign.schema.json",
+  "title": "08_campaign.json — 노드 간 상관분석 결과",
+  "description": "노드마다 01~07을 완주한 뒤 그 위에서 파이썬이 결정론으로 잇는다. 연결고리는 지어낼 수 없는 값(같은 해시·같은 IP·같은 계정·같은 경로)뿐이고, LLM은 이 단계를 부르지 않는다. 링크는 '같은 값이 두 노드에 있었다'까지만 말하며 인과를 주장하지 않는다 — docs/proposals/multi-node-campaign.md 6장.",
+  "type": "object",
+  "required": ["case_id", "stage", "schema_version", "generated_at", "generator", "nodes", "links", "context_links", "stats"],
+  "additionalProperties": false,
+  "$defs": {
+    "ref": { "type": "string", "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF|SYSMON|EVTX-DRV|EVTX-PNP|EVTX-AAOP|EVTX-AAADM|EVTX-AABRK|EVTX-RDPCM|EVTX-RDPLSM|EVTX-APP|EVTX-DEF|EVTX-PS|SRUM-NET|SRUM-APP|SRUM-CONN|SQLITE-SR|SQLITE-WPN)#(0|[1-9]\\d*)$" },
+    "node_name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$" },
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" },
+    "observation": {
+      "type": "object",
+      "required": ["node", "ref", "artifact", "verdict"],
+      "additionalProperties": false,
+      "properties": {
+        "node": { "$ref": "#/$defs/node_name" },
+        "ref": { "$ref": "#/$defs/ref" },
+        "artifact": { "type": "string", "minLength": 1 },
+        "at": { "$ref": "#/$defs/timestamp" },
+        "verdict": {
+          "enum": ["passed", "warning", "uncited"],
+          "description": "이 ref를 인용한 소견의 06단계 판정. uncited는 04에는 있으나 05가 고르지 않은 레코드다 — 검증된 것과 섞으면 구별이 사라지므로 context_links로만 간다."
+        }
+      }
+    }
+  },
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "description": "08단계에서는 캠페인 ID다. 헤더 규약을 노드 케이스와 같게 두려고 필드 이름을 바꾸지 않았다."
+    },
+    "stage": { "const": "08_campaign" },
+    "schema_version": { "const": "1.0" },
+    "generated_at": { "$ref": "#/$defs/timestamp" },
+    "generator": { "type": "string", "minLength": 1 },
+    "nodes": {
+      "type": "array",
+      "description": "campaign.json이 적은 노드 전부. 빠진 노드도 사유와 함께 남긴다 — 조용히 적은 노드짜리 캠페인이 되면 안 된다.",
+      "items": {
+        "type": "object",
+        "required": ["node", "case_id", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "node": { "$ref": "#/$defs/node_name" },
+          "case_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+          "role": { "type": "string", "minLength": 1 },
+          "status": {
+            "enum": ["ok", "missing", "incomplete"],
+            "description": "missing은 케이스 디렉터리가 없는 것, incomplete는 있으나 04·06 중 하나를 못 낸 것."
+          },
+          "reason": { "type": "string", "minLength": 1 },
+          "host": { "type": "string", "minLength": 1 },
+          "records": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "links": {
+      "type": "array",
+      "description": "서로 다른 노드 둘 이상에서 같은 값이 관측된 것. 양끝이 소견에 인용된 것만 여기 온다.",
+      "items": {
+        "type": "object",
+        "required": ["axis", "value", "grade", "observations"],
+        "additionalProperties": false,
+        "properties": {
+          "axis": {
+            "enum": ["hash", "path", "filename", "account", "network"],
+            "description": "path는 정규화한 전체 경로, filename은 basename이다. 노드마다 드라이브 문자나 사용자 폴더가 다를 수 있어 둘 다 본다."
+          },
+          "value": { "type": "string", "minLength": 1 },
+          "grade": {
+            "enum": ["passed", "warning"],
+            "description": "양끝 관측의 등급 중 낮은 쪽. rejected 소견만 인용한 ref로는 링크를 만들지 않는다."
+          },
+          "observations": {
+            "type": "array",
+            "minItems": 2,
+            "description": "노드마다 가장 이른 관측 하나. 같은 값이 한 노드에서 수백 번 나와도 링크는 하나다.",
+            "items": { "$ref": "#/$defs/observation" }
+          },
+          "span_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "description": "가장 이른 관측과 가장 늦은 관측의 간격. 시각이 없는 관측이 섞이면 생략된다."
+          }
+        }
+      }
+    },
+    "context_links": {
+      "type": "array",
+      "description": "값은 여러 노드에 있으나 어느 소견도 인용하지 않은 것. 본문 체인에 넣지 않고 개수와 함께 따로 싣는다.",
+      "items": {
+        "type": "object",
+        "required": ["axis", "value", "observations"],
+        "additionalProperties": false,
+        "properties": {
+          "axis": { "enum": ["hash", "path", "filename", "account", "network"] },
+          "value": { "type": "string", "minLength": 1 },
+          "observations": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/observation" } },
+          "span_seconds": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": ["nodes_total", "nodes_ok", "links", "links_passed", "links_warning", "context_links"],
+      "additionalProperties": false,
+      "properties": {
+        "nodes_total": { "type": "integer", "minimum": 0 },
+        "nodes_ok": { "type": "integer", "minimum": 0 },
+        "links": { "type": "integer", "minimum": 0 },
+        "links_passed": { "type": "integer", "minimum": 0 },
+        "links_warning": { "type": "integer", "minimum": 0 },
+        "context_links": { "type": "integer", "minimum": 0 },
+        "ubiquitous_values": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "모든 노드에 나타나 배경으로 보고 내린 값의 수. 진짜 해법은 베이스라인이므로 지우지 않고 센다."
+        }
+      }
+    }
+  }
+}

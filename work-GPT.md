@@ -1,67 +1,50 @@
-# work-GPT.md — 신호등 검증 체계(Traffic Light System) 및 보고서 보존 로드맵
+# work-GPT.md — 코덱스(GPT) 진행 중 과제 및 공유
+
+> 코덱스(GPT) 참고 및 작업용 문서입니다. 클로드의 08단계 작업 완료에 따른 교차 검증 요청 사항을 기술합니다.
 
 ---
 
-## 1. 최근 클로드(Claude) 작업 완료 내역 요약
+## 🎯 코덱스(GPT) 현재 할 일: 클로드 08단계(캠페인 레이어) 구현 내역 교차 검증 및 코드 리뷰
 
-1. **[04단계] 침해 체인 정밀 플래그 5종 추가 (`mappings/_flags.yaml`)**
-   * `lolbin_download` (certutil 다운로드), `uac_bypass_candidate` (fodhelper), `security_tool_config_changed` (디펜더 무력화), `persistence_command` (schtasks 등록), `discovery_command` (whoami 등)
-   * 전체 Sysmon 중 노이즈 없이 0.69%만 정밀 타격하여 05단계 sLLM에 공격 신호 전달 성공.
-2. **[02단계] 시간대 산수 보정 및 KAPE 수집시각 상한 가드 (`src/stage02_normalize/timeband.py`)**
-   * 자연어에 `UTC`가 포함되어도 모델이 범위를 틀리면 파이썬이 올바른 범위로 보정.
-   * KAPE `*_CopyLog.csv` 파일명에서 실제 증거 수집 시각을 동적으로 읽어 상한선으로 강제 ➔ 시간 단서 부재 시 발생하던 32만 건의 `outside_time_range` 노이즈 중 98% 해소.
-3. **[02단계] 일상 표현 기법 분류 개선 (`grounding.py`, `normalize_system.txt`, fewshot)**
-   * "명령 창", "검은 창", "다운로드" 등 일상 한국어 표현을 공백 정규화(`_SPACES.sub`)로 처리하여 시스템 크래시 방지 및 `T1059.003` + `T1105` 기법 적중 완료.
-4. **[06단계] `Node.js` 구두점 오탐 완화 (`statement_grounded.py`)**
-   * 디렉터리명(`nodejs`)과 제품 표기(`Node.js`) 간의 구두점 차이 허용으로 `F1` 소견 정식 통과 복원.
+클로드가 **[멀티 노드 상관분석 및 캠페인 레이어 (Stage 08)]** 구축 작업(설계서 7장 1~6번)을 완료했습니다.  
+안정성과 엔지니어링 정합성을 보장하기 위해 아래 6개 항목에 대해 교차 검증을 수행합니다.
+
+### 📋 주요 검사 항목
+
+1. **커밋 내역 및 형상 관리 검토**:
+   - `82e3d8b feat(08): 노드 여럿을 한 사건으로 잇는 캠페인 레이어`
+   - `c2734d2 fix(08): 인용되지 않은 레코드가 인용된 것을 가리지 못하게 한다`
+   - `ebbb9d2 docs: 캠페인 레이어의 남은 한계를 limitations.md 5장으로 옮긴다`
+   - 기존 01~07단계 동결 스키마 불변 원칙 준수 여부 및 `src/common/schema.py` 등록 확인
+
+2. **5대 피벗 축 및 상관분석 엔진 (`src/stage08_campaign/correlate.py`) 정합성 검토**:
+   - 5대 축(해시, 네트워크 C2/명령행, 파일명, 경로, 계정) 추출 알고리즘 확인
+   - `rejected` 소견 배제 확인 (기각된 레코드로 링크가 생성되지 않는지)
+   - 최저 등급 상속(보수적 신뢰도) 및 미인용 레코드의 `context_links` 분리 확인
+   - ⭐️ **`c2734d2` 결함 수정 검토**: 대표 관측 선정 시 "판정 좋은 순 > 같으면 이른 순" 정렬 로직이 의도대로 동작하는지 확인
+
+3. **입력/출력 스키마 및 예외 처리 검토 (`schemas/campaign.schema.json`, `campaign.py`)**:
+   - 다중 노드 누락/파싱 실패 시 파이프라인 중단 없이 `missing` 사유를 수록하는지 확인
+
+4. **3노드 가상 픽스처 관통 및 보고서 검증**:
+   - `benchmark/fixtures/campaign-3node/` 실행 및 결과 확인:
+     ```bash
+     python -m src.stage08_campaign.campaign --in benchmark/fixtures/campaign-3node/campaign.json --cases benchmark/fixtures/campaign-3node/cases --out scratch/test-campaign-out
+     ```
+   - 공격 체인 표 및 Mermaid 다이어그램(`kiosk --> pos --> server`) 정상 렌더링 확인
+
+5. **단위 및 전체 테스트 회귀 검증**:
+   - `pytest tests/test_campaign.py -v` (23건 전원 통과 확인)
+   - `pytest -q` (전체 1,591건 회귀 여부 확인)
+   - `python tools/validator_check.py`
+
+6. **남은 한계점 문서화 검토**:
+   - [docs/limitations.md](docs/limitations.md) 5장(인과관계 단정 불가, 베이스라인 부재, 미수집 노드 한계, 합성 픽스처 수치 인용 금지) 서술 타당성 검토
 
 ---
 
-## 2. 실물 라이브 테스트 방법 (live_check.py)
+## 📌 직전 완료 이력 요약
 
-* **대상 증거 위치 (볼륨 루트 `C`):**
-  `C:\Users\user\Desktop\케이쉴드주니어\DFIR_Triage_Automation\DFIR_Triage_Automation\evidence\KIOSK_snapshotA_20260908T032657\C`
-
-* **실행 명령어 (PowerShell):**
-  ```powershell
-  python tools/live_check.py `
-    --case-id K-LIVE-KIOSK-GPT `
-    --evidence "C:\Users\user\Desktop\케이쉴드주니어\DFIR_Triage_Automation\DFIR_Triage_Automation\evidence\KIOSK_snapshotA_20260908T032657\C" `
-    --raw "2026년 9월 7일 밤 10시 35분경 키오스크 단말에 비인가 USB가 삽입된 후 cmd 명령 셸이 실행되고 외부 접속이 발생했습니다. 단말 침해 여부와 실행된 행위를 조사해 주세요."
-  ```
-
----
-
-## 3. 핵심 단일 과제: '신호등 검증 체계(Green/Yellow/Red)' 구현 및 최종 보고서 반영
-
-### 문제 배경 (극단적인 처벌 전파 결함)
-현재 06단계 사실 검증기는 단어 하나(`Node.js` 등 경미한 표기 차이)나 자연어 추론이 조금만 섞여도 소견 전체(`F1`)를 `unverifiable`로 강등시킵니다. 더 나아가 그 소견을 인용한 서사 문장 10개까지 도미노처럼 `insufficient`로 처리하여 **실제 침해 체인이 최종 보고서에서 통째로 쫓겨나 백지가 되는 'All-or-Nothing' 결함**을 안고 있습니다.
-
-### 목표: 신호등 3단계 체계 도입
-단어 하나 때문에 공격 내용을 날려버리지 않고, **유연하게 보고서에 실어주되 주의가 필요한 부분은 투명하게 경고를 명시**합니다.
-
-1. 🟢 **초록불 (`passed` / 100% 일치)**:
-   * 원본 증거와 완벽하게 대조 통과한 사실.
-   * `07_report.md`의 **[확인된 사실 (Facts)]** 섹션에 정식 등록.
-2. 🟡 **노란불 (`unverifiable` / 부분 일치 및 주의 필요)**:
-   * 핵심 침해 사실(스크립트 실행, 백신 무력화 등)은 맞으나 표기 차이나 자연어 추론이 섞인 소견.
-   * **소견을 버리지 않고 `07_report.md` 본문의 [주의 필요 소견 (Warning)]에 보존.**
-   * `"⚠️ 분석가 확인 권장: [사유]"` 형태의 명확한 경고 라벨 표기.
-   * 노란불 소견을 인용한 서사 문장도 함께 살려두어 서사가 끊기지 않게 유지 (`supported_with_warning`).
-3. 🔴 **빨간불 (`rejected` / 명백한 환각·날조)**:
-   * 증거에 전혀 없는 파일명 날조나 모순된 주장.
-   * 보고서 본문에서 차단하고 환각 통계에만 집계.
-
-### 수정 대상 파일
-1. **`src/stage06_verify/verify.py` & `checkers/`**:
-   * 소견 내 미검증 표현이 일부 존재하더라도 유효한 팩트 주장은 살리는 부분 강등(Partial Downgrade) 지원.
-   * `story_review`에서 노란불 소견을 인용한 서사 문장을 탈락시키지 않고 `supported_with_warning`으로 판정.
-2. **`src/stage07_report/report.py`**:
-   * 최종 보고서(`07_report.md`) 템플릿 개편:
-     * `## 확인된 사실 (🟢 Passed)`
-     * `## 주의 필요 소견 (🟡 Warning - 분석가 교차 검증 요망)`
-     * `## 미확인 사항 (⚪ Unknowns)`
-     * 타임라인에도 노란불 소견의 핵심 타임스탬프가 누락되지 않고 표기되도록 지원.
-
-### 완료 기준
-* 위 라이브 테스트 실행 시, `07_report.md` 보고서 본문에 `certutil` 다운로드, `s.ps1` 실행, Defender 무력화 등 실제 침해 체인이 **초록/노란불 라벨과 함께 당당하게 표시**되어 분석가가 즉시 위협을 인지할 수 있을 것.
+1. **`docs/limitations.md` 참조 71곳 전수 복원 (PR #83)**
+2. **멀티 노드 상관분석 아키텍처 설계 (PR #84)**
+3. **08단계 캠페인 레이어 구현 완료 (클로드)**

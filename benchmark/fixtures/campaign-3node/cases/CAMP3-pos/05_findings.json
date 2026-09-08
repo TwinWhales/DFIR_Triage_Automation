@@ -1,0 +1,20 @@
+{
+  "case_id": "CAMP3-pos",
+  "stage": "05_interpret",
+  "findings": [
+    {
+      "id": "F1",
+      "refs": [
+        "SYSMON#3310"
+      ],
+      "statement": "POS 단말이 같은 외부 주소로 접속했다"
+    },
+    {
+      "id": "F2",
+      "refs": [
+        "SYSMON#3318"
+      ],
+      "statement": "같은 해시의 스크립트가 POS 에서 실행됐다"
+    }
+  ]
+}
