@@ -24,12 +24,15 @@
 
 ### 구현 순서 (1~3은 모델 없이 끝난다)
 
-- [ ] **1단계 — 모델 없이 되는 절반**
-  - `schemas/investigation.schema.json` 신설 (`stage: "05_investigate"`)
-  - `src/common/schema.py`의 `STAGE_SCHEMA`에 `"05_investigate": "investigation"` 한 줄
-  - `src/common/errors.py`의 `ERROR_TYPES`에 `investigation_rejected` 한 줄
-  - `src/stage02_normalize/expand.py` 신설 — 요청 → 2차 시나리오 + `disposition` 기록. **LLM 없음**
-  - `tests/test_loopback.py` — 시간 합집합·`clamp_to_collection`·기법 추가 후 스키마 통과·기각 사유 일곱·**상위집합 시험**
+- [x] **1단계 — 모델 없이 되는 절반** (2026-09-09, 브랜치 `feat/investigation-loopback`)
+  - [x] `schemas/investigation.schema.json` 신설 (`stage: "05_investigate"`, `round: {"const": 1}`로 G1을 파일에서도 드러낸다)
+  - [x] `src/common/schema.py`의 `STAGE_SCHEMA`에 `"05_investigate": "investigation"` 한 줄
+  - [x] `src/common/errors.py`의 `ERROR_TYPES`에 `investigation_rejected` 한 줄 (근거 주석 포함)
+  - [x] `src/stage02_normalize/expand.py` 신설 — 요청 → 2차 시나리오 + `disposition` 기록. **LLM 없음**
+  - [x] `tests/test_loopback.py` 25건 — 상위집합 불변식·시간 합집합·수집 시각 상한·기각 사유 일곱·CLI 세 갈래
+  - [x] `tests/test_schemas.py` — `ref`를 제약하는 스키마 목록에 `investigation` 추가 (기존 시험이 새 스키마를 잡아냈다)
+  - **구현하며 하나 더 막았다**: 수집 시각 **뒤**를 축(`pivot_time`)으로 잡은 요청. 상한 클램프만으로는 1차의 끝과 수집 시각 사이 몇 초를 얻자고 재파싱을 통째로 돌리게 된다. 축이 증거 밖이면 `out_of_evidence`로 기각한다.
+  - **관통 확인**: `T1041` 요청 하나가 03단계에서 `srum:NetworkUsage`를 새로 열었고 1차가 고른 셋은 그대로다. `psreadline_history` 요청은 `unsupported_artifact`로 기각됐다.
 - [ ] **2단계 — 04 부분 재사용** (1단계와 독립)
   - `src/stage04_parse/parse.py`에 `--reuse-from`, `scope_key()`(정렬 후 비교), 매니페스트 항목 `"reused": true`
   - `--skip-existing`과 동시 사용은 argparse 단계에서 거부 (두 "건너뛰기"의 뜻이 다르다)

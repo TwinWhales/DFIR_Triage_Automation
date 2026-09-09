@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investigation.schema.json",
+  "title": "05_requests.json — 05단계가 낸 추가 조사 요청",
+  "description": "05단계가 1차 해석을 마친 뒤 '무엇을 더 봐야 하는가'를 구조화해 낸 것이다. 요청은 모델이 내고 반영은 파이썬이 한다 — expand.py 가 이 파일을 읽어 2차 시나리오를 만들고, 같은 파일에 disposition 을 채운다. findings 에 넣지 않고 파일을 나눈 이유는 findings.schema.json 이 동결이고 additionalProperties 가 false 이기 때문이다. 설계는 docs/proposals/stage05-investigation-loopback.md.",
+  "type": "object",
+  "required": [
+    "case_id",
+    "stage",
+    "schema_version",
+    "generated_at",
+    "generator",
+    "round",
+    "requests"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "type": "string",
+      "pattern": "^(MFT|USN|EVTX-SEC|EVTX-SYS|EVTX-FW|EVTX-BITS|EVTX-NET|REG-SYS|REG-SW|AMCACHE|RFCACHE|PF|SYSMON|EVTX-DRV|EVTX-PNP|EVTX-AAOP|EVTX-AAADM|EVTX-AABRK|EVTX-RDPCM|EVTX-RDPLSM|EVTX-APP|EVTX-DEF|EVTX-PS|SRUM-NET|SRUM-APP|SRUM-CONN|SQLITE-SR|SQLITE-WPN)#(0|[1-9]\\d*)$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "disposition": {
+      "type": "object",
+      "description": "요청 하나를 어떻게 처리했는가. **05단계가 쓰지 않는다** — expand.py 가 처리한 뒤 채운다. 요청과 판정이 한 파일에 있어야 '무엇을 물었고 무엇이 받아들여졌나'를 한 번에 본다.",
+      "required": [
+        "verdict",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "verdict": {
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "applied",
+            "ungrounded_ref",
+            "unknown_technique",
+            "unmapped_technique",
+            "already_selected",
+            "unsupported_artifact",
+            "out_of_evidence",
+            "no_widening"
+          ],
+          "description": "applied 만 accepted 다. 나머지는 전부 기각 사유이며 errors.jsonl 에 investigation_rejected 로도 남는다 — 실패가 아니라 측정이므로 action 은 record 다."
+        },
+        "detail": {
+          "type": "string",
+          "description": "무엇이 어떻게 바뀌었는지(수용) 또는 왜 못 받았는지(기각)를 사람이 읽을 문장으로."
+        }
+      }
+    }
+  },
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "stage": {
+      "const": "05_investigate"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "generated_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "generator": {
+      "type": "string",
+      "minLength": 1
+    },
+    "round": {
+      "const": 1,
+      "description": "이 요청을 낸 라운드. **1 뿐이다** — 2차 05 실행에는 --investigate 를 주지 않으므로 3차 요청이 생길 자리가 없다(가드레일 G1). 카운터가 아니라 구조로 거는 자리이고, 이 const 는 그 구조가 깨졌을 때 파일에서 드러나게 한다."
+    },
+    "requests": {
+      "type": "array",
+      "maxItems": 3,
+      "description": "2차 파싱이 1차보다 커지지 않게 상한을 둔다. 같은 상한이 질의의 출력 스키마에도 걸리므로, 여기 걸리는 일은 --no-constrain 실행에서만 생긴다.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "based_on_ref",
+              "rationale",
+              "pivot_time",
+              "window_hours"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "expand_time_range"
+              },
+              "based_on_ref": {
+                "$ref": "#/$defs/ref"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "pivot_time": {
+                "$ref": "#/$defs/timestamp",
+                "description": "무엇을 축으로 넓히나. 전달한 레코드에 실재하는 시각이어야 한다 — 증거에 없는 시각을 축으로 삼으면 넓힌 범위가 아무것도 가리키지 않는다."
+              },
+              "window_hours": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 24,
+                "description": "축의 앞뒤로 몇 시간씩. 상한이 없으면 2차가 증거 전체를 다시 읽는다."
+              },
+              "disposition": {
+                "$ref": "#/$defs/disposition"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "based_on_ref",
+              "rationale",
+              "technique_id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "request_technique"
+              },
+              "based_on_ref": {
+                "$ref": "#/$defs/ref"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "technique_id": {
+                "type": "string",
+                "pattern": "^T\\d{4}(\\.\\d{3})?$",
+                "description": "형식만 본다. 실재하는지는 src/common/attack.py 가, 매핑 YAML 이 있는지는 expand.py 가 따로 검사한다 — 두 기각을 나눠 세야 '없는 ID 를 지어냈다'와 '매핑이 아직 없다'가 구분된다."
+              },
+              "disposition": {
+                "$ref": "#/$defs/disposition"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "based_on_ref",
+              "rationale",
+              "artifact"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "request_artifact"
+              },
+              "based_on_ref": {
+                "$ref": "#/$defs/ref"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "artifact": {
+                "type": "string",
+                "minLength": 1,
+                "description": "03단계가 Tier 2 로 유예했거나 아예 요청하지 않은 아티팩트. 카탈로그에서 supported 가 true 여야 한다 — 파서가 없으면 03단계 _force_select 가 올리지 않아 2차가 헛돈다."
+              },
+              "disposition": {
+                "$ref": "#/$defs/disposition"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "applied": {
+      "type": "object",
+      "description": "수용된 요청이 실제로 무엇을 바꿨는가. **expand.py 가 채운다** — 05단계가 낸 파일에는 이 키가 없다. artifacts 는 시나리오에 담을 자리가 없어(동결 스키마) 여기 남고, 오케스트레이터가 03단계에 --force-artifacts 로 넘긴다.",
+      "required": [
+        "time_range",
+        "techniques",
+        "artifacts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "time_range": {
+          "type": "object",
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "start": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "end": {
+              "$ref": "#/$defs/timestamp"
+            }
+          }
+        },
+        "techniques": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^T\\d{4}(\\.\\d{3})?$"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
