@@ -499,3 +499,23 @@ def test_the_three_node_fixture_recovers_the_whole_chain(tmp_path):
     text = (out / "08_campaign.md").read_text(encoding="utf-8")
     assert "backup" in text
     assert "보지 못한 것입니다" in text
+
+
+def test_two_nodes_that_pick_the_same_host_name_get_none(tmp_path):
+    """같은 이름을 두 노드가 집으면 그 이름은 어느 쪽도 특정하지 못한다.
+
+    한 사건을 **한 질문으로** 조사하면 노드마다 시나리오가 같아져
+    `entities.hosts[0]` 이 셋 다 같아진다. 그때 표에 그 이름을 적으면
+    POS 를 키오스크라고 부르게 된다 (`K2L-20260908` 실측).
+    """
+    nodes = [
+        {"node": "kiosk", "case_id": "A", "status": "ok", "host": "키오스크"},
+        {"node": "pos", "case_id": "B", "status": "ok", "host": "키오스크"},
+        {"node": "mgmt", "case_id": "C", "status": "ok", "host": "관리서버"},
+    ]
+    campaign.drop_ambiguous_hosts(nodes)
+
+    assert "host" not in nodes[0]
+    assert "host" not in nodes[1]
+    # 혼자 집은 이름은 남는다 — 노드마다 다른 신고문을 받은 실행이 그렇다.
+    assert nodes[2]["host"] == "관리서버"

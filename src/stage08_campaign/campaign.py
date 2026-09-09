@@ -175,8 +175,42 @@ def read_node(entry: dict[str, Any], cases_dir: Path) -> dict[str, Any]:
     return node
 
 
+def drop_ambiguous_hosts(nodes: list[dict[str, Any]]) -> None:
+    """두 노드가 같은 호스트 이름을 집었으면 그 이름은 어느 쪽도 특정하지 못한다.
+
+    ``read_node`` 가 채우는 ``host`` 의 출처는 **02단계 시나리오의
+    ``entities.hosts[0]``** 이고, 그것은 신고자가 문장에서 처음 언급한
+    기계다. 노드마다 다른 신고문을 받으면 대개 자기 자신이 맨 앞에 오지만,
+    **한 사건을 한 질문으로 조사하면 세 노드가 같은 이름을 집는다.**
+
+    실측(`K2L-20260908`, 2026-09-10). 세 노드에 같은 두 줄
+    ("키오스크에 USB가 꽂힌 뒤 포스기를 지나 관리서버까지...")을 주자
+    ``entities.hosts`` 가 이렇게 나왔다:
+
+        kiosk  ['키오스크', '관리서버']    → 키오스크
+        pos    ['키오스크', '관리서버']    → 키오스크   ← POS 를 키오스크라고 적었다
+        mgmt   []                          → 미상
+
+    표에 틀린 이름을 적는 것은 비워 두는 것보다 나쁘다. 겹치면 셋 다 지운다.
+
+    **이것은 신원을 알아내는 코드가 아니라 없는 신원을 주장하지 않게 하는
+    코드다.** 노드의 진짜 신원은 증거에 있다(SYSTEM 하이브의 ComputerName).
+    지금은 그 키가 선별 범위에 없어 04단계가 읽지 않는다 — 읽게 되면 이
+    함수가 아니라 ``read_node`` 가 거기서 값을 가져와야 한다.
+    """
+    seen: dict[str, list[dict[str, Any]]] = {}
+    for node in nodes:
+        if node.get("host"):
+            seen.setdefault(str(node["host"]), []).append(node)
+    for owners in seen.values():
+        if len(owners) > 1:
+            for node in owners:
+                node.pop("host", None)
+
+
 def build(campaign: dict[str, Any], nodes: list[dict[str, Any]], *, generator: str = "campaign.py") -> dict[str, Any]:
     """08 문서를 만든다. 파일을 읽지도 쓰지도 않는다."""
+    drop_ambiguous_hosts(nodes)
     usable = [node for node in nodes if node["status"] == "ok"]
     per_node = {
         node["node"]: correlate.observations_of(node["node"], node["_records"], node["_verdicts"])
