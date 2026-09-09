@@ -223,11 +223,18 @@ $PY -m src.stage06_verify.verify \
     --findings "$C/05_findings.json" --parsed "$C/04_parsed/" \
     --out "$C/06_verified.json"
 
+# 루프백이 돌았으면 요청과 처리를 보고서의 "미확인 사항"에 싣는다.
+# **기각된 요청이 그 절의 요지다** — 모델이 더 보자고 했는데 보지 않은
+# 자리이므로. 파일이 없으면(LOOP=0) 절 자체가 안 실린다.
+REPORT_REQUESTS=()
+[[ -f "$C/05_requests.json" ]] && REPORT_REQUESTS=(--requests "$C/05_requests.json")
+
 echo "== 07 보고 =="
 $PY -m src.stage07_report.report \
     --in "$C/06_verified.json" --findings "$C/05_findings.json" \
     --selection "$C/03_selection.json" --scenario "$C/02_scenario.json" \
-    --parsed "$C/04_parsed/" --out "$C/07_report.md"
+    --parsed "$C/04_parsed/" --out "$C/07_report.md" \
+    "${REPORT_REQUESTS[@]+"${REPORT_REQUESTS[@]}"}"
 
 echo
 echo "done: $C/07_report.md"

@@ -245,3 +245,53 @@ def test_a_real_run_needs_a_model(case, capsys):
     with pytest.raises(SystemExit):
         react_loop.main(["--case", str(case), "--evidence", str(case.parent / "evidence")])
     assert "--model 이 필요하다" in capsys.readouterr().err
+
+
+# ==================================================== 관문 (tools/live_check.py)
+#
+# live_check 는 실물 증거와 실제 모델로만 도는 도구라 여기서 돌릴 수 없습니다.
+# 그래도 **배선**은 볼 수 있고, 이 둘은 틀리면 5분짜리 실물 실행 중간에야
+# 드러나는 종류입니다.
+
+
+def test_every_live_check_step_has_a_handler():
+    """단계 하나가 ``getattr(self, f"do_{key}")`` 로 불린다.
+
+    키 오타는 import 에서도 문법 검사에서도 안 걸리고, 그 단계 차례가 와야
+    AttributeError 로 터진다.
+    """
+    import live_check
+
+    keys = [plan.key for plan in live_check.PLAN] + [live_check.LOOPBACK_PLAN.key]
+    missing = [key for key in keys if not hasattr(live_check.Runner, f"do_{key}")]
+    assert missing == []
+
+
+def test_the_loopback_gate_sits_between_05_and_06(tmp_path):
+    """자리가 곧 계약이다.
+
+    06·07은 정규 이름을 읽으므로, 루프백이 그 앞에서 끝나 있어야 06이
+    2차 결과를 검증한다. 뒤에 두면 06이 1차를 검증하고 07이 2차를 싣는다.
+    """
+    from types import SimpleNamespace
+
+    import live_check
+
+    runner = live_check.Runner(
+        SimpleNamespace(cases_dir=str(tmp_path), case_id="C-001", loop=True)
+    )
+    keys = [plan.key for plan in runner.plan]
+    assert keys.index("loopback") == keys.index("stage05") + 1
+    assert keys.index("loopback") == keys.index("stage06") - 1
+
+
+def test_without_the_flag_the_gate_is_not_in_the_table(tmp_path):
+    """"이 표가 곧 화면 출력이다. 여기 없는 판정은 하지 않는다"(live_check)."""
+    from types import SimpleNamespace
+
+    import live_check
+
+    runner = live_check.Runner(
+        SimpleNamespace(cases_dir=str(tmp_path), case_id="C-001", loop=False)
+    )
+    assert "loopback" not in [plan.key for plan in runner.plan]

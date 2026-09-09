@@ -637,3 +637,127 @@ def test_no_narrative_means_no_section(docs):
     """05단계가 서사를 내지 않으면 섹션 자체가 없다."""
     text = render(_context(docs))
     assert "사건 개요 서사" not in text
+
+
+# ================================================ 2차 조사 요청 (05→02 루프백)
+#
+# 이 절의 요지는 **기각된 요청**입니다. 모델이 "더 봐야 한다"고 했는데 보지
+# 않은 자리이므로 미확인 사항이고, 사유가 함께 실리지 않으면 분석가는 그런
+# 요청이 있었는지조차 모릅니다.
+
+
+def _requests_doc(*items):
+    return io.new_document(
+        "C-001",
+        "05_investigate",
+        "interpret.py / qwen2.5:latest",
+        round=1,
+        requests=list(items),
+    )
+
+
+def _accepted_technique():
+    return {
+        "type": "request_technique",
+        "based_on_ref": "EVTX-SEC#40912",
+        "rationale": "생성된 계정으로 데이터가 나갔는지 봐야 한다",
+        "technique_id": "T1041",
+        "disposition": {
+            "verdict": "accepted",
+            "reason": "applied",
+            "detail": "T1041 를 시나리오에 추가했습니다 (2차 조사 요청).",
+        },
+    }
+
+
+def _rejected_artifact():
+    return {
+        "type": "request_artifact",
+        "based_on_ref": "MFT#12345",
+        "rationale": "대화형 파워셸 입력 이력 확인",
+        "artifact": "psreadline_history",
+        "disposition": {
+            "verdict": "rejected",
+            "reason": "unsupported_artifact",
+            "detail": "psreadline_history: 본 버전 미지원 (전용 파서 없음)",
+        },
+    }
+
+
+def test_without_a_request_file_the_section_is_absent(docs):
+    """루프백을 안 돌린 케이스에까지 "돌리지 않았습니다"를 인쇄하면
+    그 문장이 곧 소음이 된다."""
+    assert "2차 조사 요청" not in render(_context(docs))
+
+
+def test_a_rejected_request_says_what_was_not_looked_at(docs):
+    context = build_context(
+        docs["verified"], docs["findings"], docs["selection"], docs["scenario"],
+        requests_doc=_requests_doc(_rejected_artifact()),
+    )
+    text = render(context)
+
+    assert "2차 조사 요청과 그 처리" in text
+    assert "확인하지 않음" in text
+    # 사유는 스키마의 어휘가 아니라 사람이 읽을 문장으로 나온다.
+    assert "이 버전이 읽지 못하는 아티팩트입니다" in text
+    # 모델이 왜 그것을 보자고 했는지도 남아야 한다. 사유만 있으면 그 요청이
+    # 무엇을 쫓고 있었는지가 사라진다.
+    assert "대화형 파워셸 입력 이력 확인" in text
+
+
+def test_an_accepted_request_says_what_changed(docs):
+    context = build_context(
+        docs["verified"], docs["findings"], docs["selection"], docs["scenario"],
+        requests_doc=_requests_doc(_accepted_technique()),
+    )
+    text = render(context)
+
+    assert "2차에서 확인" in text
+    assert "T1041" in text
+
+
+def test_a_time_request_prints_the_window_it_asked_for(docs):
+    context = build_context(
+        docs["verified"], docs["findings"], docs["selection"], docs["scenario"],
+        requests_doc=_requests_doc(
+            {
+                "type": "expand_time_range",
+                "based_on_ref": "MFT#12345",
+                "rationale": "유입 경로가 기간 밖일 수 있다",
+                "pivot_time": "2026-07-20T03:14:22Z",
+                "window_hours": 6,
+                "disposition": {
+                    "verdict": "rejected",
+                    "reason": "no_widening",
+                    "detail": "이미 1차 범위 안입니다.",
+                },
+            }
+        ),
+    )
+    text = render(context)
+    assert "2026-07-20T03:14:22Z ± 6시간" in text
+    assert "이미 분석 기간이 덮고 있습니다" in text
+
+
+def test_every_rejection_reason_has_a_sentence():
+    """스키마의 어휘가 늘었는데 보고서가 모르면, 그 사유는 코드값 그대로
+    인쇄되어 분석가가 읽을 수 없게 된다."""
+    from src.common import schema
+
+    document = schema.load_schema("investigation")
+    vocabulary = set(document["$defs"]["disposition"]["properties"]["reason"]["enum"])
+    # applied 는 수용이라 detail 을 그대로 싣는다. 나머지는 전부 문장이 있어야 한다.
+    assert vocabulary - {"applied"} == set(report_mod.REJECTION_LABELS)
+
+
+def test_every_request_kind_has_a_label():
+    """요청 종류가 늘었을 때도 같다."""
+    from src.common import schema
+
+    document = schema.load_schema("investigation")
+    kinds = {
+        branch["properties"]["type"]["const"]
+        for branch in document["properties"]["requests"]["items"]["oneOf"]
+    }
+    assert kinds == set(report_mod.REQUEST_LABELS)

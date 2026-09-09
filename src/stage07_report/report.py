@@ -59,6 +59,72 @@ STORY_KIND_LABELS = {
 }
 
 
+#: 05단계가 낸 조사 요청의 종류 → 보고서에 인쇄할 말.
+REQUEST_LABELS = {
+    "expand_time_range": "분석 기간 확장",
+    "request_technique": "기법 추가",
+    "request_artifact": "아티팩트 추가 수집",
+}
+
+#: 기각 사유 → 보고서에 인쇄할 말.
+#:
+#: **어휘의 출처는 ``schemas/investigation.schema.json``** 이고 여기 있는
+#: 것은 그 값을 사람이 읽을 문장으로 옮긴 표다. 04단계의 ``skipped`` 사유를
+#: 07이 옮겨 적는 것과 같은 규약 — 무엇을 셀 것인가는 스키마가 정하고,
+#: 분석가에게 무엇으로 읽히나는 이 단계가 정한다.
+REJECTION_LABELS = {
+    "ungrounded_ref": "근거로 든 레코드가 05단계에 전달된 적이 없습니다",
+    "unknown_technique": "실재하지 않는 ATT&CK ID입니다",
+    "unmapped_technique": "매핑 테이블이 없어 선별할 아티팩트가 정해지지 않습니다",
+    "already_selected": "이미 1차에서 보고 있습니다",
+    "unsupported_artifact": "이 버전이 읽지 못하는 아티팩트입니다",
+    "out_of_evidence": "증거 수집 시각 밖이라 볼 것이 없습니다",
+    "no_widening": "이미 분석 기간이 덮고 있습니다",
+}
+
+
+def _request_target(request: dict[str, Any]) -> str:
+    """무엇을 요청했는지 한 칸에 들어갈 말로."""
+    kind = request.get("type")
+    if kind == "expand_time_range":
+        return f"{request.get('pivot_time', '?')} ± {request.get('window_hours', '?')}시간"
+    if kind == "request_technique":
+        return str(request.get("technique_id", "?"))
+    if kind == "request_artifact":
+        return str(request.get("artifact", "?"))
+    return "?"
+
+
+def _investigation(requests_doc: dict[str, Any] | None) -> list[dict[str, str]]:
+    """05단계가 낸 추가 조사 요청과 그 처리.
+
+    **기각된 요청이 이 절의 요지다.** 모델이 "이것을 더 봐야 한다"고 했는데
+    보지 않은 것이므로 미확인 사항이고, 사유를 함께 적지 않으면 분석가는
+    그것이 있었는지조차 모른다. 수용된 것도 함께 싣는 것은, 2차에서 무엇이
+    늘었는지가 보고서의 나머지를 읽는 전제이기 때문이다.
+    """
+    rows = []
+    for request in (requests_doc or {}).get("requests", []):
+        disposition = request.get("disposition") or {}
+        reason = disposition.get("reason", "")
+        accepted = disposition.get("verdict") == "accepted"
+        rows.append(
+            {
+                "kind": REQUEST_LABELS.get(str(request.get("type")), str(request.get("type"))),
+                "target": _request_target(request),
+                "ref": request.get("based_on_ref", ""),
+                "rationale": request.get("rationale", ""),
+                "verdict": "2차에서 확인" if accepted else "확인하지 않음",
+                "reason": (
+                    disposition.get("detail", "")
+                    if accepted
+                    else REJECTION_LABELS.get(reason, reason or "판정 없음")
+                ),
+            }
+        )
+    return rows
+
+
 def build_context(
     verified: dict[str, Any],
     findings_doc: dict[str, Any],
@@ -66,6 +132,7 @@ def build_context(
     scenario: dict[str, Any] | None = None,
     records: dict[str, dict[str, Any]] | None = None,
     manifest: dict[str, Any] | None = None,
+    requests_doc: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """템플릿에 넘길 값을 만든다.
 
@@ -155,6 +222,10 @@ def build_context(
         # 02단계가 어느 서술도 기법으로 옮기지 못했다면 그 축은 조사에서
         # 통째로 빠진다. 인쇄하지 않으면 "증거 없음"과 구별되지 않는다.
         "unmapped_text": (scenario or {}).get("unmapped_text", []),
+        # 05→02 루프백이 돈 케이스에만 값이 있다. 안 돌았으면 빈 목록이고
+        # 템플릿이 절을 통째로 뺀다 — 매 보고서에 "루프백을 돌리지
+        # 않았습니다"를 인쇄하면 그 문장이 곧 소음이 된다.
+        "investigation": _investigation(requests_doc),
         "generated_at": io.utc_now(),
         "generator": io.make_generator("report.py"),
     }
@@ -540,6 +611,15 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
     parser.add_argument(
         "--parsed", default=None, help="04_parsed/ 디렉터리. 근거에 원본 오프셋을 적는다"
     )
+    parser.add_argument(
+        "--requests",
+        default=None,
+        help=(
+            "05_requests.json 경로. 05단계가 낸 추가 조사 요청과 그 처리를 "
+            "'미확인 사항'에 싣는다. **기각된 요청이 그 절의 요지다** — "
+            "모델이 더 보자고 했는데 보지 않은 것이므로"
+        ),
+    )
     parser.add_argument("--out", required=True, help="07_report.md 출력 경로")
     parser.add_argument("--errors", default=None)
     return parser.parse_args(argv)
@@ -555,6 +635,7 @@ def main(argv: "list[str] | None" = None) -> int:
     findings_doc = io.read_json(args.findings)
     selection = io.read_json(args.selection)
     scenario = io.read_json(args.scenario) if args.scenario else None
+    requests_doc = io.read_json(args.requests) if args.requests else None
 
     try:
         schema.validate(verified, "verified")
@@ -562,6 +643,8 @@ def main(argv: "list[str] | None" = None) -> int:
         schema.validate(selection, "selection")
         if scenario is not None:
             schema.validate(scenario, "scenario")
+        if requests_doc is not None:
+            schema.validate(requests_doc, "investigation")
     except schema.SchemaViolation as violation:
         log.abort(STAGE, "schema_violation", violation.as_detail())
 
@@ -589,7 +672,9 @@ def main(argv: "list[str] | None" = None) -> int:
             )
             print(f"[{STAGE}] 경고 — {manifest_path} 없음. 분석 범위가 불완전합니다.")
 
-    context = build_context(verified, findings_doc, selection, scenario, records, manifest)
+    context = build_context(
+        verified, findings_doc, selection, scenario, records, manifest, requests_doc
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render(context), encoding="utf-8", newline="\n")
 
