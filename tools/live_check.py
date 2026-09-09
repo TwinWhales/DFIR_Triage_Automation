@@ -195,7 +195,8 @@ LOOPBACK_PLAN = Plan(
     "loopback",
     "루프백 — 05가 요청한 것을 한 번 더 본다",
     "05가 낸 추가 조사 요청으로 02→03→04→05를 다시 돌린다. **넓히기만 했는가**를 본다",
-    "2차 input_refs ⊇ 1차 / 시간·기법이 1차의 상위집합 / 재사용 아티팩트의 record_count 가 1차와 동일 / "
+    "**1차 소견이 인용한 레코드가 2차에도 전달** / 시간·기법이 1차의 상위집합 / "
+    "재사용 아티팩트의 record_count 가 1차와 동일 / 총 레코드 감소 없음 / "
     "05_requests.json 이 정확히 한 번만 생김(2차는 재요청하지 않는다). "
     "요청이 없거나 전부 기각이면 종료 코드 3 이고 그것은 실패가 아니다",
     llm=True,
@@ -738,14 +739,43 @@ class Runner:
             "manifest": io.read_json(self.parsed_dir / "_manifest.json"),
         }
 
-        lost_refs = sorted(
-            set(before["findings"]["input_refs"]) - set(after["findings"]["input_refs"])
-        )
+        # **1차가 인용한 레코드**가 2차에도 전달됐는가. ``--pin-refs`` 가
+        # 약속하는 것이 이것이고, 1차 소견이 최종 보고서에서 사라지지 않는
+        # 근거도 이것뿐이다.
+        #
+        # **전달 목록 전체로 걸지 않는다.** 처음에 그렇게 걸었다가
+        # `K-LOOP-0909-on`(2026-09-09) 에서 걸렸는데, 잡힌 것이 결함이
+        # 아니었다 — 2차는 레코드가 늘어난 상태에서 **같은 자릿수 예산**으로
+        # 배분하므로, 아무도 인용하지 않은 레코드가 새 증거에 밀리는 것이
+        # 정상 동작이다(그 실행에서 61건 중 24건이 그렇게 바뀌었고 인용된
+        # 12건은 전부 남았다). 전달 목록의 단조 증가를 요구하면 새 증거가
+        # 옛 레코드를 대체할 수 없게 되어, 루프백이 가져온 것을 프롬프트에
+        # 실을 자리가 없어진다. 예산이 고정인 한 성립할 수 없는 불변식이다.
+        cited = {
+            ref
+            for finding in before["findings"]["findings"]
+            for ref in finding.get("refs", [])
+        } | {
+            ref
+            for moment in before["findings"].get("timeline", [])
+            for ref in moment.get("refs", [])
+        }
+        delivered = set(after["findings"]["input_refs"])
+        lost_refs = sorted(cited - delivered)
         if lost_refs:
             raise StepFailed(
-                f"1차에 전달한 레코드 {len(lost_refs)}건이 2차에 없다 "
-                f"({', '.join(lost_refs[:5])}) — --pin-refs 가 일을 못 했다"
+                f"1차 소견이 인용한 레코드 {len(lost_refs)}건이 2차에 전달되지 않았다 "
+                f"({', '.join(lost_refs[:5])}) — --pin-refs 가 일을 못 했다. "
+                "그 소견은 최종 보고서에서 사라진다"
             )
+        result.measures["pinned_refs"] = len(cited)
+        result.measures["delivered_before"] = len(before["findings"]["input_refs"])
+        result.measures["delivered_after"] = len(delivered)
+        # 인용되지 않은 레코드가 새 증거에 밀린 수. 판정이 아니라 측정이다 —
+        # 크면 2차가 1차와 다른 것을 보고 있다는 뜻이라 눈에 보여야 한다.
+        result.measures["displaced_uncited"] = len(
+            set(before["findings"]["input_refs"]) - delivered
+        )
 
         was = {t["id"] for t in before["scenario"]["techniques"]}
         now = {t["id"] for t in after["scenario"]["techniques"]}
@@ -785,6 +815,22 @@ class Runner:
             raise StepFailed(
                 "2차 질의 내역에 조사 요청 질의가 있다 — 재요청은 한 번뿐이어야 한다"
             )
+
+        # **06이 검증할 대상이 바뀌었다.** 05단계가 넘긴 값은 1차의 것이라
+        # 그대로 두면 06 관문이 "판정 합계 != findings" 로 걸린다 — 실제로
+        # 걸렸다(`K-LOOP-0909-on2`, 2026-09-09). 06 이후의 판정은 전부
+        # 최종 산출물을 봐야 하므로 여기서 2차 값으로 바꾼다.
+        after_findings = after["findings"]["findings"]
+        allowed = set(after["findings"]["input_refs"])
+        self.carry["findings_count"] = len(after_findings)
+        self.carry["stray_refs"] = sorted(
+            {
+                ref
+                for finding in after_findings
+                for ref in finding.get("refs", [])
+                if ref not in allowed
+            }
+        )
 
         accepted = [
             request
@@ -1222,7 +1268,7 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
             "05→02 자율 루프백을 켠다. 05가 소견을 낸 뒤 추가 조사를 요청하고 "
             "02→03→04→05를 **한 번만** 다시 돈다. 관문이 하나 늘어 "
             "'넓히기만 했는가'를 판정한다 (2차 input_refs ⊇ 1차, 시간·기법이 "
-            "상위집합, 재사용 아티팩트의 건수 동일). **끄고 한 번 켜고 한 번 "
+            "상위집합, 인용 레코드 유지, 재사용 아티팩트의 건수 동일). **끄고 한 번 켜고 한 번 "
             "돌려 나란히 놓는 것이 이 스위치의 쓰임이다**"
         ),
     )
