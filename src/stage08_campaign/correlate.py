@@ -19,7 +19,9 @@
 from __future__ import annotations
 
 import re
+from ipaddress import ip_address
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 from ..common.io import normalize_path, parse_timestamp
 from ..stage04_parse import canonical
@@ -47,6 +49,29 @@ UBIQUITOUS_ACCOUNTS = frozenset(
 #: 명령행에 박힌 IPv4. Sysmon EID 3 이 없는 채널에서도 다운로드 주소를 잡는다.
 _IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
+#: 명령행에 박힌 HTTP(S) URL. IP뿐 아니라 C2 도메인도 같은 축으로 잇는다.
+_HTTP_URL = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+
+#: 주소로 보아 어느 노드에나 나타날 수 있으므로 상관 키에서 제외한다.
+_LOCAL_HOSTS = frozenset({"localhost", "localhost.localdomain"})
+
+
+def _network_key(value: Any) -> "str | None":
+    """호스트/IP를 정규화하고 로컬·루프백·미지정 주소를 제외한다."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    key = value.strip().rstrip(".").casefold()
+    if not key or key in _LOCAL_HOSTS:
+        return None
+    try:
+        address = ip_address(key)
+    except ValueError:
+        # IPv4처럼 생겼지만 범위를 벗어난 값은 호스트명으로 되살리지 않는다.
+        return None if _IPV4.fullmatch(key) else key
+    if address.is_loopback or address.is_unspecified:
+        return None
+    return address.compressed.casefold()
+
 
 def _account_key(value: Any) -> "str | None":
     """``DOMAIN\\user`` 에서 사용자 이름만. 내장 계정이면 ``None``."""
@@ -65,14 +90,26 @@ def _network_keys(canon: dict[str, Any]) -> set[str]:
     **사설 대역을 빼지 않는다.** 내부망 횡적 이동이 바로 그 대역이다.
     """
     keys: set[str] = set()
-    remote = canon.get("remote_ip")
-    if isinstance(remote, str) and remote.strip():
-        keys.add(remote.strip().casefold())
+    remote = _network_key(canon.get("remote_ip"))
+    if remote:
+        keys.add(remote)
     command = canon.get("command_line")
     if isinstance(command, str):
-        keys.update(match.group(0) for match in _IPV4.finditer(command))
-    # 0.0.0.0 · 127.x 는 어느 기계에나 있어 이을 것이 없다.
-    return {key for key in keys if not key.startswith("127.") and key != "0.0.0.0"}
+        for match in _IPV4.finditer(command):
+            key = _network_key(match.group(0))
+            if key:
+                keys.add(key)
+        for match in _HTTP_URL.finditer(command):
+            # 닫는 괄호·문장부호는 명령행 설명에서 URL 바로 뒤에 붙을 수 있다.
+            candidate = match.group(0).rstrip(".,);]}")
+            try:
+                host = urlsplit(candidate).hostname
+            except ValueError:
+                continue
+            key = _network_key(host)
+            if key:
+                keys.add(key)
+    return keys
 
 
 def _keys_of(record: dict[str, Any]) -> dict[str, set[str]]:
