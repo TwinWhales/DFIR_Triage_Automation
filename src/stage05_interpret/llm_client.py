@@ -14,20 +14,27 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..common import schema
+from ..common import attack, schema
 from ..common.llm import Backend, MalformedOutput, extract_json, output_schema
 from ..stage04_parse.flagging import prompt_drop_fields
 from .allocation import MAX_LIST_ITEMS, for_prompt
 
 __all__ = [
+    "DEFAULT_MAPPINGS",
     "DEFAULT_MODEL",
     "FINDINGS_BODY_FIELDS",
     "INVESTIGATION_BODY_FIELD",
     "MAX_INVESTIGATION_REQUESTS",
     "InterpretClient",
+    "candidate_techniques",
     "constrained_schema",
     "investigation_schema",
 ]
+
+#: 라벨 어휘를 읽을 매핑 디렉터리의 기본값. ``interpret`` 의 ``--mappings``
+#: 기본값과 같아야 한다 — 어긋나면 03단계가 선별한 근거로 05단계가 붙일 수
+#: 없는 라벨이 생긴다.
+DEFAULT_MAPPINGS = "mappings"
 
 #: 해석은 정규화보다 무거운 작업이다. 같은 7B로 시작하되 모델별 비교
 #: 실험에서 이 단계만 키웠을 때의 효과를 따로 측정한다.
@@ -65,7 +72,10 @@ FINDINGS_BODY_FIELDS = ("findings", "timeline")
 
 
 def constrained_schema(
-    scenario: dict[str, Any], records: list[dict[str, Any]]
+    scenario: dict[str, Any],
+    records: list[dict[str, Any]],
+    *,
+    mappings: "str | None" = None,
 ) -> dict[str, Any]:
     """이 호출에 한정된 출력 스키마. **배치마다 다르다.**
 
@@ -81,8 +91,10 @@ def constrained_schema(
     ``findings[].claims[].ref``·``timeline[].refs`` 셋이 모두 이 정의를
     가리키므로, 자리마다 손대면 언젠가 하나를 빠뜨린다.
 
-    ``technique``도 시나리오가 든 기법으로 묶는다. 동결 스키마가 ``null``을
-    허용하므로("특정 기법에 귀속되지 않을 수 있다") enum에 ``None``을 남긴다.
+    ``technique``도 열거형으로 묶는다. 무엇으로 묶는지는
+    ``candidate_techniques`` 가 정한다 — 시나리오가 든 것이 아니라 매핑이
+    있는 것 전부다. 동결 스키마가 ``null``을 허용하므로("특정 기법에
+    귀속되지 않을 수 있다") enum에 ``None``을 남긴다.
     """
     built = output_schema(schema.load_schema("findings"), FINDINGS_BODY_FIELDS)
 
@@ -93,10 +105,10 @@ def constrained_schema(
         # 못 받았다"는 앞 단계의 문제를 05단계 환각으로 둔갑시킨다.
         built["$defs"]["ref"] = {"enum": sorted(set(refs))}
 
-    techniques = [t["id"] for t in scenario.get("techniques", []) if "id" in t]
+    techniques = [tid for tid, _name in candidate_techniques(scenario, mappings)]
     if techniques:
         built["properties"]["findings"]["items"]["properties"]["technique"] = {
-            "enum": [*sorted(set(techniques)), None]
+            "enum": [*techniques, None]
         }
     return built
 
@@ -107,6 +119,49 @@ SELECTION_BODY_FIELD = "suspicious_records"
 
 #: 소견의 ``severity`` 어휘. 동결 스키마와 같아야 조립이 그대로 통과한다.
 SEVERITIES = ("high", "medium", "low", "info")
+
+
+def candidate_techniques(
+    scenario: dict[str, Any], mappings: "str | None" = None
+) -> "list[tuple[str, str]]":
+    """모델이 소견에 붙일 수 있는 기법 라벨. ``(ID, 이름)`` 을 ID 순으로.
+
+    **시나리오가 든 기법이 아니라 매핑 테이블이 있는 기법 전부다.**
+
+    예전에는 ``scenario["techniques"]`` 로 묶었다. 시나리오에 다 적혀 있는
+    실행에서는 그것으로 충분했지만, 사건 서술이 짧으면 무너진다 —
+    **02단계가 좁게 읽으면 모델이 관측한 것에 맞는 라벨을 못 갖는다.**
+
+    실측(``K-2LINE-ANCHOR-LOOP``, 2026-09-09). 두 줄짜리 질문에서 02가 든
+    기법은 T1091·T1078.003 둘뿐이었다. 05는 fodhelper 로 UAC 를 우회하고
+    certutil 로 파일을 받는 것을 레코드에서 정확히 찾아냈지만, 붙일 이름이
+    그 둘뿐이라 T1091 을 골랐다. 06단계는 제 일을 해서 그 둘을
+    ``technique_unsupported`` 로 기각했고, **관측이 맞았는데 라벨이 없어서
+    보고서에서 사라졌다.** 검증기의 잘못이 아니라 이 열거형의 잘못이다.
+
+    그래서 그 기각은 세 번째 원인을 갖는다 —
+    ``stage06_verify/checkers/technique_supported.py`` 가 적어 둔 둘(모델이
+    잘못 붙였다 / 매핑이 좁다) 어느 쪽도 아니고, **모델에게 고를 것이
+    없었다**이다. 그 원인은 여기서만 없앨 수 있다.
+
+    넓혀도 지어내기는 막힌다. 여전히 열거형이고, ``KNOWN_TECHNIQUES`` 안이며,
+    06단계가 인용한 아티팩트까지 본다. 넓어지는 것은 모델의 자유도이고,
+    그래야 **06단계가 잴 것이 생긴다** — 선택지가 둘일 때 그 검사는 사실상
+    판정할 것이 없었다.
+
+    **03단계의 선별 범위는 바뀌지 않는다.** 무엇을 열지는 02단계가 정하고
+    이 목록은 05단계의 라벨 어휘일 뿐이라, 파싱 비용도 그대로다.
+
+    시나리오가 든 기법 중 매핑이 없는 것도 남긴다. 빼면 02가 옳게 읽은
+    기법을 모델이 못 쓰게 되고, 그때의 기각(매핑 결손)은 우리가 세고 싶은
+    쪽이다(``benchmark/rejections.yaml``).
+    """
+    listed = [t for t in scenario.get("techniques", []) if t.get("id")]
+    named = {str(t["id"]): t.get("name") for t in listed}
+    ids = set(named) | attack.mapped_techniques(mappings or DEFAULT_MAPPINGS)
+    return sorted(
+        (tid, str(named.get(tid) or attack.name_of(tid) or tid)) for tid in ids
+    )
 
 
 def evidence_field_names(
@@ -169,6 +224,8 @@ def selection_schema(
     records: list[dict[str, Any]],
     allowed_fields: "tuple[str, ...]",
     max_evidence_fields: int = 4,
+    *,
+    mappings: "str | None" = None,
 ) -> dict[str, Any]:
     """선별 질의의 출력 스키마. **레코드마다 갈래를 따로 둔다.**
 
@@ -193,7 +250,7 @@ def selection_schema(
     (변환기가 정규식을 못 삼킨다), 배열에는 상한을 건다(없으면 맴돈다),
     ``ref`` 를 맨 앞에 둔다(문법이 선언 순서대로 내보낸다).
     """
-    techniques = sorted({t["id"] for t in scenario.get("techniques", []) if "id" in t})
+    techniques = [tid for tid, _name in candidate_techniques(scenario, mappings)]
     technique_schema: dict[str, Any] = (
         {"enum": [*techniques, None]} if techniques else {"type": ["string", "null"]}
     )
@@ -341,6 +398,8 @@ def connection_schema(
     scenario: dict[str, Any],
     picked: list[dict[str, Any]],
     relation_catalog: list[dict[str, Any]] | None = None,
+    *,
+    mappings: "str | None" = None,
 ) -> dict[str, Any]:
     """Reduce 질의의 출력 스키마.
 
@@ -352,7 +411,7 @@ def connection_schema(
     이어지는 것이 없으면 그 항목은 단독 소견으로 그대로 실린다.
     """
     refs = sorted({item["ref"] for item in picked if item.get("ref")})
-    techniques = sorted({t["id"] for t in scenario.get("techniques", []) if "id" in t})
+    techniques = [tid for tid, _name in candidate_techniques(scenario, mappings)]
 
     relation_ids = [str(item["id"]) for item in relation_catalog or [] if item.get("id")]
 
@@ -547,8 +606,11 @@ class InterpretClient:
         *,
         max_list_items: int | None = MAX_LIST_ITEMS,
         constrain: bool = True,
+        mappings: "str | None" = None,
     ) -> None:
         self.backend = backend
+        #: 라벨 어휘를 읽을 매핑 디렉터리. ``candidate_techniques`` 가 쓴다.
+        self.mappings = mappings
         #: 출력 모양을 디코딩 단계에서 강제할 것인가. 02단계와 같은 규약이고
         #: **폴백이 아니라 측정용**이다 (``stage02_normalize/llm_client.py``).
         self.constrain = constrain
@@ -579,6 +641,23 @@ class InterpretClient:
     @property
     def name(self) -> str:
         return self.backend.name
+
+    def _technique_labels(self, scenario: dict[str, Any]) -> str:
+        """붙일 수 있는 기법 라벨 전체. **이름을 함께 보낸다.**
+
+        ID 만 보내면 모델이 ``T1548`` 이 무엇인지 모르는 채로 고른다
+        (``investigate_user_prompt`` 가 요청 목록에 대해 내린 것과 같은
+        판단). 열거형은 무엇을 낼 수 있는지만 정하고, 무엇을 골라야 하는지는
+        이 목록이 말한다.
+
+        시나리오가 든 기법은 프롬프트에서 **따로** 보여 준다. 어느 것이
+        사건 서술에서 나왔고 어느 것이 우리가 열어 둔 어휘인지는 다른
+        정보다 — 섞으면 모델이 사건 서술을 넓게 읽은 것으로 오해한다.
+        """
+        return ", ".join(
+            f"{tid}({name})"
+            for tid, name in candidate_techniques(scenario, self.mappings)
+        )
 
     def _note_prompt(self, chars: int) -> None:
         """방금 보낸 프롬프트의 크기를 기록한다. 가장 큰 것만 남긴다."""
@@ -616,7 +695,8 @@ class InterpretClient:
         parts = [
             "### 시나리오\n"
             f"- 대상 OS: {scenario.get('target_os', '?')}\n"
-            f"- 의심 기법: {techniques or '없음'}\n"
+            f"- 사건 서술에서 나온 기법: {techniques or '없음'}\n"
+            f"- 붙일 수 있는 기법 라벨(이 중에서만 고릅니다): {self._technique_labels(scenario)}\n"
             f"- 분석 기간: {time_range.get('start', '?')} ~ {time_range.get('end', '?')}",
             "### 레코드 ("
             f"{len(records)}건, 이 목록에 없는 ref 는 쓸 수 없습니다{self._trim_notice()})\n"
@@ -827,7 +907,8 @@ class InterpretClient:
         parts = [
                 "### 시나리오\n"
                 f"- 대상 OS: {scenario.get('target_os', '?')}\n"
-                f"- 의심 기법: {techniques or '없음'}",
+                f"- 사건 서술에서 나온 기법: {techniques or '없음'}\n"
+                f"- 붙일 수 있는 기법 라벨(이 중에서만 고릅니다): {self._technique_labels(scenario)}",
                 f"### 앞 단계가 고른 항목 ({len(picked)}건)\n"
                 + selection_digest(picked),
                 "### Python이 검증한 관계 후보\n"
@@ -875,7 +956,9 @@ class InterpretClient:
         raw = self.backend.complete(
             system,
             user,
-            fmt=connection_schema(scenario, picked, relation_catalog) if self.constrain else None,
+            fmt=connection_schema(
+                scenario, picked, relation_catalog, mappings=self.mappings
+            ) if self.constrain else None,
         )
         self.last_raw = raw
         self._note_prompt(len(system) + len(user))
@@ -972,7 +1055,9 @@ class InterpretClient:
         raw = self.backend.complete(
             system,
             user,
-            fmt=selection_schema(scenario, records, allowed) if self.constrain else None,
+            fmt=selection_schema(
+                scenario, records, allowed, mappings=self.mappings
+            ) if self.constrain else None,
         )
         self.last_raw = raw
         self._note_prompt(
@@ -1090,7 +1175,8 @@ class InterpretClient:
         parts = [
             "### 시나리오\n"
             f"- 대상 OS: {scenario.get('target_os', '?')}\n"
-            f"- 의심 기법: {techniques or '없음'}\n"
+            f"- 사건 서술에서 나온 기법: {techniques or '없음'}\n"
+            f"- 붙일 수 있는 기법 라벨(이 중에서만 고릅니다): {self._technique_labels(scenario)}\n"
             f"- 분석 기간: {time_range.get('start', '?')} ~ {time_range.get('end', '?')}",
             # 레코드를 JSONL로 준다. 한 줄이 한 레코드라 모델이 경계를
             # 헷갈리지 않고, 토큰도 들여쓰기 JSON보다 적게 든다.
@@ -1141,7 +1227,7 @@ class InterpretClient:
         raw = self.backend.complete(
             system,
             user,
-            fmt=constrained_schema(scenario, records) if self.constrain else None,
+            fmt=constrained_schema(scenario, records, mappings=self.mappings) if self.constrain else None,
         )
         self.last_raw = raw
         self._note_prompt(

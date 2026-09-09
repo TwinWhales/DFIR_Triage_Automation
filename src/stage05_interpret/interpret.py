@@ -1325,6 +1325,7 @@ def main(
         backend,
         max_list_items=max_list_items,
         constrain=not args.no_constrain,
+        mappings=args.mappings,
     )
     # 프롬프트의 고정 부분을 **실제로 조립해서** 잰다. 아래 요약에서 한 번
     # 더 쓰므로 이름을 붙여 둔다 — 두 번 재면 두 값이 갈라질 수 있다.
