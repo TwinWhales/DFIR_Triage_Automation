@@ -3,6 +3,33 @@ name: "Scheduled Task/Job: Scheduled Task"
 os: windows
 
 artifacts:
+  # **명령행이 작업 생성을 직접 말한다.** evtx:Security 4698 은 작업이
+  # 등록된 뒤의 기록이고, 이쪽은 등록하는 순간의 기록이다 — 어느 부모가
+  # 무엇을 어떤 권한으로 걸었는지가 여기에만 있다.
+  #
+  # 실측(`K-2LINE-WIDE-ENUM`·`-B`, 2026-09-10). 두 실행 모두 이 레코드를
+  # 골랐다:
+  #
+  #   SYSMON#22304  ParentImage  C:\Windows\System32\fodhelper.exe
+  #                 CommandLine  "schtasks.exe" /create /tn Autorun_s_ps1
+  #                              /tr 'powershell.exe -ExecutionPolicy Bypass
+  #                              -WindowStyle Hidden -File ...\Temp\s.ps1'
+  #                              /sc onlogon /rl highest /f
+  #
+  # 그런데 이 매핑에 evtx:Sysmon 이 없어서, 같은 레코드에 **T1053.005 를
+  # 옳게 붙였어도** 06단계가 기각할 자리였다(체커에 직접 넣어 확인).
+  # 모델은 두 번 다 T1547.001 을 붙였고 그것은 별개의 오배정이다.
+  #
+  # 41개 중 21개 매핑이 같은 이유로 이미 evtx:Sysmon 을 열고 있고
+  # (`T1569.002` 가 psexec.exe 명령행에 대해 쓴 것과 같은 모양이다),
+  # EID 1 은 `mappings/_baseline.yaml` 이 이미 무조건 여니 수집 비용도
+  # 늘지 않는다.
+  - name: evtx:Sysmon
+    tier: 1
+    scope_template:
+      event_ids: [1]
+    rationale: schtasks.exe 실행 — 명령행에 작업명·트리거·실행 권한이 들어 있다
+
   - name: evtx:Security
     tier: 1
     scope_template:
