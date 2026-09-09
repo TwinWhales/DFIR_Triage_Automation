@@ -43,7 +43,15 @@ from ..common import io, llm, schema
 from ..common.llm import DEFAULT_TIMEOUT
 from ..stage03_select import mapping_loader
 from ..stage06_verify import comparators
-from . import allocation, assembly, attention, incident_context, incident_packet, record_filter
+from . import (
+    allocation,
+    assembly,
+    attention,
+    incident_context,
+    incident_packet,
+    investigation,
+    record_filter,
+)
 from .llm_client import (
     ASSEMBLE_NUM_CTX,
     DEFAULT_MODEL,
@@ -1073,6 +1081,24 @@ def _parse_args(
     )
 
     parser.add_argument(
+        "--investigate",
+        action="store_true",
+        help=(
+            "소견을 낸 뒤 **무엇을 더 봐야 하는가**를 한 번 더 묻고 그 답을 "
+            "05_requests.json 으로 낸다. 05→02 루프백의 출발점이다. "
+            "**2차 실행에는 주지 않는다** — 묻지 않으므로 3차 요청이 생길 "
+            "자리가 없다. 무한 루프 방지를 카운터가 아니라 구조로 거는 자리다. "
+            "--selection 이 함께 있어야 한다(이미 수집한 아티팩트를 알아야 "
+            "요청 목록을 만든다)"
+        ),
+    )
+    parser.add_argument(
+        "--requests-out",
+        default=None,
+        help="05_requests.json 출력 경로. 생략하면 --out 옆",
+    )
+
+    parser.add_argument(
         "--queries",
         default=None,
         help=(
@@ -1101,6 +1127,17 @@ def main(
     # 답 쓸 자리가 소견 질의의 4분의 1이다. 큰 쪽에 맞춰 두면 작은 질의가
     # 쓰지도 않을 자리를 창에서 떼어 가고, 창이 좁을수록 그 낭비가 곧
     # 레코드 수다. 사용자가 직접 준 값은 그대로 존중한다.
+    # **요청 목록을 만들려면 이미 수집한 것을 알아야 한다.** 없이 물으면
+    # 모델이 이미 읽은 아티팩트를 다시 요청하고, 02단계 확장이 전부
+    # already_selected 로 기각한다 — 질의 한 번을 통째로 버리는 셈이다.
+    if args.investigate and not args.selection:
+        print(
+            f"[{STAGE}] --investigate 에는 --selection 이 필요하다 "
+            "(이미 수집한 아티팩트를 알아야 요청 목록을 만든다).",
+            file=sys.stderr,
+        )
+        return 2
+
     assembled = args.mode == "assemble"
     if args.num_ctx is None:
         # **창도 질의 종류를 따라간다.** 단일 질의는 창이 곧 커버리지라 넓어야
@@ -1183,6 +1220,7 @@ def main(
     # priority는 이 케이스의 판단이므로
     # 03단계 산출물에서 읽는다.
     priorities: dict[str, int] = {}
+    selection: dict[str, Any] = {}
 
     if args.selection:
         selection = io.read_json(
@@ -1393,6 +1431,39 @@ def main(
         out_path,
         findings,
     )
+
+    # **findings 를 쓴 뒤에 묻는다.** 이 질의가 실패해도 1차 결과는 이미
+    # 파일에 있다. 두 --mode 가 여기서 다시 만나므로 경로가 갈라지지 않는다.
+    if args.investigate:
+        requests_doc = investigation.collect(
+            client,
+            scenario,
+            findings,
+            records,
+            log,
+            selection=selection,
+            catalog=catalog,
+            mappings_dir=args.mappings,
+            queries=queries,
+        )
+        if requests_doc is not None:
+            try:
+                schema.validate(requests_doc, "investigation")
+            except schema.SchemaViolation as violation:
+                # 우리가 조립한 문서다. 어긋났으면 02단계 확장이 읽을 수
+                # 없으므로 쓰지 않고 사유만 남긴다 — 못 읽는 파일을 남기면
+                # 2차가 그것을 스키마 위반으로 다시 발견한다.
+                log.record(STAGE, "schema_violation", violation.as_detail(), action="skip")
+            else:
+                requests_path = (
+                    Path(args.requests_out)
+                    if args.requests_out
+                    else out_path.parent / "05_requests.json"
+                )
+                io.write_json(requests_path, requests_doc)
+                print(
+                    f"  추가 조사 요청 {len(requests_doc['requests'])}건: {requests_path}"
+                )
 
     # 배분 내역 출력
     for quota in quotas:

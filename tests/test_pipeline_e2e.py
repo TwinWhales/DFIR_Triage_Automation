@@ -539,6 +539,60 @@ def run_pipeline(case_dir: Path) -> None:
     ) == 0
 
 
+def test_the_loopback_runs_from_the_request_to_the_second_selection(case):
+    """05가 요청을 내고 → 02가 넓히고 → 03이 더 고른다. 스텁 관통.
+
+    ``StubBackend`` 는 호출마다 같은 파일을 돌려주므로, 조립 경로가
+    ``05_selection.json`` 하나에 선별·종합을 같이 담은 것과 **똑같은
+    방식으로** ``investigation_requests`` 를 얹어 두었다.
+
+    여기서 확인하는 것은 **배선**이다 — 05가 낸 요청이 02단계 확장이 읽는
+    형식 그대로이고, 그 결과가 03단계에서 실제로 아티팩트를 더 열어야 한다.
+    한 자리라도 어긋나면 루프백은 조용히 아무 일도 하지 않는다.
+    """
+    from src.stage02_normalize import expand as expand_mod
+
+    c = str(case)
+    assert normalize_mod.main(
+        ["--in", f"{c}/01_input.json", "--out", f"{c}/02_scenario.json",
+         "--llm", "stub", "--replay", str(FIXTURES / "02_scenario.json")]
+    ) == 0
+    assert select_mod.main(
+        ["--in", f"{c}/02_scenario.json", "--out", f"{c}/03_selection.json",
+         "--mappings", str(MAPPINGS)]
+    ) == 0
+    # 05는 조립 경로(기본)로 돈다. --investigate 는 1차에만 붙는다.
+    assert interpret_mod.main(
+        ["--in", f"{c}/04_parsed", "--scenario", f"{c}/02_scenario.json",
+         "--selection", f"{c}/03_selection.json", "--mappings", str(MAPPINGS),
+         "--out", f"{c}/05_findings.json",
+         "--llm", "stub", "--replay", str(FIXTURES / "05_selection.json"),
+         "--investigate"]
+    ) == 0
+
+    requests_doc = io.read_json(case / "05_requests.json")
+    schema.validate(requests_doc, "investigation")
+    assert requests_doc["round"] == 1
+    # 05가 pivot_time 을 채웠는가. 모델은 근거 레코드만 고른다.
+    widen = [r for r in requests_doc["requests"] if r["type"] == "expand_time_range"]
+    assert widen and widen[0]["pivot_time"].endswith("Z")
+
+    assert expand_mod.main(
+        ["--scenario", f"{c}/02_scenario.json", "--requests", f"{c}/05_requests.json",
+         "--findings", f"{c}/05_findings.json", "--selection", f"{c}/03_selection.json",
+         "--out", f"{c}/02_scenario.round2.json", "--mappings", str(MAPPINGS)]
+    ) == 0
+    assert select_mod.main(
+        ["--in", f"{c}/02_scenario.round2.json", "--out", f"{c}/03_selection.round2.json",
+         "--mappings", str(MAPPINGS)]
+    ) == 0
+
+    first = {e["artifact"] for e in io.read_json(case / "03_selection.json")["selected"]}
+    second = {e["artifact"] for e in io.read_json(case / "03_selection.round2.json")["selected"]}
+    # **루프백이 실제로 무언가를 열었는가.** 그리고 1차가 본 것을 잃지 않았는가.
+    assert first < second
+
+
 def test_the_whole_pipeline_runs_and_every_stage_validates(case):
     run_pipeline(case)
 

@@ -40,12 +40,16 @@
   - [x] `tests/test_pipeline_e2e.py` — CLI 관통 1건. **재사용한 파일이 한 바이트도 안 바뀐다**를 증거 없는 디렉터리로 증명한다
   - **재사용 조건은 셋 다 만족해야 한다**: 1차가 실제로 읽었고(매니페스트 `files`), 범위가 그대로이며, `.jsonl`이 실재한다. 1차 `skipped`는 재시도한다 — 파일을 못 연 것이라 파싱 비용이 없고 그 사이 증거를 다시 뽑았을 수 있다.
   - **관통 확인**: 2차 선별(=1차 + `srum:NetworkUsage`)로 돌리니 `$MFT`·`evtx:Security`는 재사용, 나머지 둘만 다시 읽었고 `tools/inspect_jsonl.py` 네 대조가 전부 통과했다.
-- [ ] **3단계 — 05 후속 질의**
-  - `src/stage05_interpret/llm_client.py`에 `investigation_schema()` + `propose_investigation()`
-  - `src/stage05_interpret/prompts/investigate_system.txt` 신설
-  - `src/stage05_interpret/interpret.py`에 `--investigate` — findings를 쓴 **직후** 한 곳이라 `--mode` 두 경로가 갈라지지 않는다
-  - 픽스처에 `investigation_requests` 키를 얹는다 (`StubBackend`가 호출마다 같은 파일을 돌려주는 성질을 조립 경로와 똑같이 이용)
-  - `tests/test_pipeline_e2e.py`에 스텁 관통 루프
+- [x] **3단계 — 05 후속 질의** (2026-09-09)
+  - [x] `src/stage05_interpret/llm_client.py`에 `investigation_schema()` + `propose_investigation()`
+  - [x] `src/stage05_interpret/investigation.py` 신설 — 요청 가능 목록·축(pivot) 표·문서 조립
+  - [x] `src/stage05_interpret/prompts/investigate_system.txt` 신설
+  - [x] `src/stage05_interpret/interpret.py`에 `--investigate` / `--requests-out` — findings를 쓴 **직후** 한 곳이라 `--mode` 두 경로가 갈라지지 않는다
+  - [x] 픽스처 `05_selection.json`에 `investigation_requests` 키 (`StubBackend`가 호출마다 같은 파일을 돌려주는 성질을 조립 경로와 똑같이 이용). **`05_findings.json`에는 넣지 않았다** — 그 픽스처는 findings 스키마(`additionalProperties: false`)로 검증되는 자리가 여럿이라 키 하나가 그것들을 깬다
+  - [x] `tests/test_investigation_query.py` 16건 + `tests/test_pipeline_e2e.py`에 스텁 관통 루프 1건
+  - **`pivot_time`을 모델에게 묻지 않기로 했다**(설계서와 달라진 점). 근거 레코드만 받으면 그 시각은 우리가 안다 — `input_refs`를 묻지 않는 것과 같은 규약이고, 타임스탬프를 지어낼 토큰 경로가 사라진다. 그래서 `expand_time_range`의 `based_on_ref` 열거형만 다르다(시각을 뽑을 수 있는 레코드만). 파일 형식은 설계 그대로다.
+  - **질의가 실패해도 05단계는 성공이다.** findings는 이미 쓰였고, 요청은 그 위에 얹는 것이라 사유를 남기고 2차 없이 끝낸다(내러티브 critic과 같은 처리).
+  - **관통 확인**: 스텁으로 05 → `05_requests.json`(요청 2건, `pivot_time` 채워짐) → `expand` → 03 재선별에서 아티팩트가 늘었다. 질의 내역은 `05_llm_queries/03_investigation.txt`에 남는다.
 - [ ] **4단계 — 오케스트레이터**
   - `tools/react_loop.py` 신설 — expand → 03 → 04(`--reuse-from`) → 05(`--pin-refs`, `--investigate` 없이)
   - `src/stage05_interpret/allocation.py`에 `pinned_refs` (기존 `must_review` 보장 레인에 합류)

@@ -22,8 +22,11 @@ from .allocation import MAX_LIST_ITEMS, for_prompt
 __all__ = [
     "DEFAULT_MODEL",
     "FINDINGS_BODY_FIELDS",
+    "INVESTIGATION_BODY_FIELD",
+    "MAX_INVESTIGATION_REQUESTS",
     "InterpretClient",
     "constrained_schema",
+    "investigation_schema",
 ]
 
 #: 해석은 정규화보다 무거운 작업이다. 같은 7B로 시작하되 모델별 비교
@@ -429,6 +432,83 @@ def connection_schema(
     }
 
 
+#: 조사 요청 질의에서 모델이 낼 필드.
+INVESTIGATION_BODY_FIELD = "investigation_requests"
+
+#: 한 번에 받을 요청의 상한. ``schemas/investigation.schema.json`` 의
+#: ``maxItems`` 와 **같아야 한다** — 여기서 더 받으면 문서가 스키마를 못
+#: 맞춰 요청 전체가 버려진다.
+MAX_INVESTIGATION_REQUESTS = 3
+
+
+def investigation_schema(
+    timed_refs: list[str],
+    refs: list[str],
+    techniques: list[str],
+    artifacts: list[str],
+) -> dict[str, Any]:
+    """조사 요청 질의의 출력 스키마. **요청할 수 있는 것만 열거한다.**
+
+    ``constrained_schema`` 가 ``ref`` 에 대해 내린 것과 같은 판단이다 —
+    걸러 낼 것이 아니라 나오지 않게 한다. 매핑 없는 기법이나 파서 없는
+    아티팩트를 요청받아 봐야 02단계 확장이 기각할 뿐이고, 그 왕복은
+    모델의 자리와 우리의 시간을 함께 쓴다.
+
+    **``pivot_time`` 은 묻지 않는다.** 어느 레코드를 근거로 들었는지만
+    받으면 그 레코드의 시각은 우리가 안다(``input_refs`` 를 묻지 않는 것과
+    같은 이유). 모델이 타임스탬프를 지어낼 자리를 아예 없앤다.
+
+    그래서 ``expand_time_range`` 의 ``based_on_ref`` 만 목록이 다르다 —
+    **시각을 뽑을 수 있는 레코드**여야 축이 성립한다. 그런 레코드가 하나도
+    없으면 그 갈래를 아예 넣지 않는다.
+    """
+
+    def branch(kind: str, allowed_refs: list[str], **extra: Any) -> dict[str, Any]:
+        properties: dict[str, Any] = {
+            "type": {"const": kind},
+            "based_on_ref": {"enum": sorted(set(allowed_refs))},
+            "rationale": {"type": "string"},
+            **extra,
+        }
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": list(properties),
+            "additionalProperties": False,
+        }
+
+    branches: list[dict[str, Any]] = []
+    if timed_refs:
+        branches.append(
+            branch(
+                "expand_time_range",
+                timed_refs,
+                window_hours={"type": "integer", "minimum": 1, "maximum": 24},
+            )
+        )
+    if techniques:
+        branches.append(
+            branch("request_technique", refs, technique_id={"enum": sorted(set(techniques))})
+        )
+    if artifacts:
+        branches.append(
+            branch("request_artifact", refs, artifact={"enum": sorted(set(artifacts))})
+        )
+
+    return {
+        "type": "object",
+        "properties": {
+            INVESTIGATION_BODY_FIELD: {
+                "type": "array",
+                "maxItems": MAX_INVESTIGATION_REQUESTS,
+                "items": branches[0] if len(branches) == 1 else {"oneOf": branches},
+            }
+        },
+        "required": [INVESTIGATION_BODY_FIELD],
+        "additionalProperties": False,
+    }
+
+
 def selection_digest(picked: list[dict[str, Any]]) -> str:
     """Map 이 고른 것을 Reduce 프롬프트에 실을 한 줄씩.
 
@@ -563,6 +643,148 @@ class InterpretClient:
         return len(self.select_system_prompt()) + len(
             self.select_user_prompt(scenario, [])
         )
+
+    def investigate_system_prompt(self) -> str:
+        return (PROMPT_DIR / "investigate_system.txt").read_text(encoding="utf-8")
+
+    def investigate_user_prompt(
+        self,
+        scenario: dict[str, Any],
+        findings: dict[str, Any],
+        *,
+        pivots: dict[str, str],
+        techniques: list[tuple[str, str]],
+        artifacts: list[tuple[str, str]],
+    ) -> str:
+        """조사 요청 질의의 사용자 프롬프트.
+
+        **원본 레코드를 다시 싣지 않는다.** 1차 소견의 문장과 근거로 쓸 수
+        있는 ``ref`` 목록만 보낸다 — 이 질의가 싼 이유가 그것이다
+        (``selection_digest`` 와 같은 판단).
+
+        요청 가능한 기법·아티팩트에는 **이름을 붙여 보낸다.** ID 만 보내면
+        모델이 ``T1041`` 이 무엇인지 모르는 채로 고르게 된다. 열거형은
+        무엇을 낼 수 있는지만 정하고, 무엇을 골라야 하는지는 이 목록이
+        말한다.
+        """
+        time_range = scenario.get("time_range", {})
+        identified = ", ".join(
+            f"{t['id']}({t['name']})" for t in scenario.get("techniques", [])
+        )
+        story = (findings.get("incident_story") or {}).get("summary") or ""
+        statements = "\n".join(
+            f"- [{item.get('severity', 'info')}] {item.get('statement', '')}"
+            for item in findings.get("findings", [])
+        )
+
+        parts = [
+            "### 1차 분석 상태\n"
+            f"- 분석 기간: {time_range.get('start', '?')} ~ {time_range.get('end', '?')}\n"
+            f"- 이미 식별된 기법: {identified or '없음'}"
+            + (f"\n- 사건 요약: {story}" if story else ""),
+            f"### 1차 소견 ({len(findings.get('findings', []))}건)\n{statements or '없음'}",
+            "### 근거로 들 수 있는 레코드 (based_on_ref)\n"
+            + "\n".join(f"- {ref} ({when})" for ref, when in sorted(pivots.items()))
+            + (
+                "\n"
+                + "\n".join(
+                    f"- {ref} (시각 없음 — expand_time_range 의 근거로는 쓸 수 없음)"
+                    for ref in sorted(set(findings.get("input_refs", [])) - set(pivots))
+                )
+                if set(findings.get("input_refs", [])) - set(pivots)
+                else ""
+            ),
+            "### 추가할 수 있는 기법\n"
+            + ("\n".join(f"- {tid}({name})" for tid, name in techniques) or "- 없음"),
+            "### 추가로 수집할 수 있는 아티팩트\n"
+            + ("\n".join(f"- {name}: {desc}" for name, desc in artifacts) or "- 없음"),
+            "### 출력",
+        ]
+        return "\n\n".join(parts)
+
+    def propose_investigation(
+        self,
+        scenario: dict[str, Any],
+        findings: dict[str, Any],
+        *,
+        pivots: dict[str, str],
+        techniques: list[tuple[str, str]],
+        artifacts: list[tuple[str, str]],
+    ) -> list[dict[str, Any]]:
+        """모델에게 "무엇을 더 봐야 하는가"를 묻는다.
+
+        돌려주는 것은 ``schemas/investigation.schema.json`` 의 ``requests``
+        항목들이다. ``expand_time_range`` 에는 근거 레코드의 시각을
+        ``pivot_time`` 으로 **우리가 채워서** 넣는다.
+        """
+        refs = sorted(set(findings.get("input_refs", [])))
+        system = self.investigate_system_prompt()
+        user = self.investigate_user_prompt(
+            scenario, findings, pivots=pivots, techniques=techniques, artifacts=artifacts
+        )
+        self.last_system, self.last_user = system, user
+        raw = self.backend.complete(
+            system,
+            user,
+            fmt=(
+                investigation_schema(
+                    sorted(pivots),
+                    refs,
+                    [tid for tid, _ in techniques],
+                    [name for name, _ in artifacts],
+                )
+                if self.constrain
+                else None
+            ),
+        )
+        self.last_raw = raw
+        self._note_prompt(len(system) + len(user))
+
+        items = extract_json(raw).get(INVESTIGATION_BODY_FIELD)
+        if not isinstance(items, list):
+            raise MalformedOutput(
+                f"{INVESTIGATION_BODY_FIELD} 가 목록이 아님: {type(items).__name__}"
+            )
+        if len(items) > MAX_INVESTIGATION_REQUESTS:
+            # 자르지 않는다. 상한을 넘겼다는 것은 제약이 안 걸렸다는 뜻이고,
+            # 그런 응답의 앞 세 건만 믿을 근거가 없다.
+            raise MalformedOutput(
+                f"요청이 {len(items)}건으로 상한 {MAX_INVESTIGATION_REQUESTS}건을 넘음"
+            )
+
+        required = {
+            "expand_time_range": ("window_hours",),
+            "request_technique": ("technique_id",),
+            "request_artifact": ("artifact",),
+        }
+        requests: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                raise MalformedOutput(f"요청이 객체가 아님: {type(item).__name__}")
+            kind = item.get("type")
+            if kind not in required:
+                raise MalformedOutput(f"알 수 없는 요청 종류: {kind!r}")
+            missing = [
+                key
+                for key in ("based_on_ref", "rationale", *required[kind])
+                if not item.get(key)
+            ]
+            if missing:
+                raise MalformedOutput(f"{kind} 에 필수 필드 없음: {', '.join(missing)}")
+
+            request = {key: item[key] for key in ("type", "based_on_ref", "rationale", *required[kind])}
+            if kind == "expand_time_range":
+                # **시각은 우리가 채운다.** 모델은 어느 레코드를 근거로
+                # 들었는지만 고르고, 그 레코드가 언제인지는 우리가 안다.
+                pivot = pivots.get(request["based_on_ref"])
+                if pivot is None:
+                    raise MalformedOutput(
+                        f"{request['based_on_ref']} 는 시각이 없어 "
+                        "expand_time_range 의 근거가 될 수 없음"
+                    )
+                request["pivot_time"] = pivot
+            requests.append(request)
+        return requests
 
     def reduce_system_prompt(self) -> str:
         return (PROMPT_DIR / "reduce_system.txt").read_text(encoding="utf-8")
