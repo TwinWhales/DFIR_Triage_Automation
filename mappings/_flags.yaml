@@ -597,6 +597,21 @@ flags:
             - '\users\public\'
             - '\$recycle.bin\'
             - '\perflogs\'
+            # **볼륨 루트의 temp.** 2026-09-09 에 더했다 — 위 두 temp 는
+            # 시스템·사용자 temp 라 `C:\Temp` 처럼 사람이 만든 최상위
+            # 폴더를 못 잡았다. 실측(`IR-20260908-KIOSK`)에서 공격자가
+            # `C:\Temp\nmap\Nmap\nmap.exe` 로 포트 스캐너를 돌렸는데 이
+            # 룰이 아무것도 붙이지 않았다.
+            #
+            # **`\temp\` 가 아니라 `:\temp\` 인 이유가 측정에 있다.** 앞을
+            # 열어 두면 `C:\Program Files (x86)\Microsoft\Temp\...\
+            # MicrosoftEdgeUpdate.exe` 가 걸린다(세 노드에서 2건). 그 자리는
+            # 권한이 있어야 쓰는 곳이라 이 룰의 취지가 아니다. 드라이브
+            # 문자를 안 박고 `:` 로 여는 것은 D: 볼륨에서도 같게 걸리라고.
+            #
+            # 적중 실측(세 노드, Sysmon EID 1 15,605건): 이 조각으로 3건이
+            # 늘고 전부 위 nmap 이다. 오탐 0건.
+            - ':\temp\'
 
   unexpected_parent_process:
     artifacts: [evtx:Sysmon]

@@ -12,9 +12,30 @@ discard it.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime, timedelta
 from typing import Any
 
 from ..common import attention_policy
+
+#: 사건 앵커를 찾을 창의 폭.
+#:
+#: **서로 다른 신호가 가장 많이 겹치는 창의 시작**을 그 실행의 사건 시각으로
+#: 본다. 한 신호가 여러 번 나는 것은 흔하지만(설치 관리자가 임시 폴더에서
+#: 여러 번 실행된다), **성격이 다른 신호 예닐곱이 한 시간 안에 겹치는 것**은
+#: 배경에서 잘 일어나지 않는다.
+#:
+#: 실측(`K-2LINE-FIX`, 2026-09-09): 12일치 증거에서 이 창이 짚은 곳이
+#: 2026-09-07 12:57 이고 거기 신호 7종이 겹쳤다 — 실제 공격 시각이다.
+#: 같은 데이터에서 **신호 시각의 중앙값은 09-04 02:41 로 배경 한가운데**를
+#: 짚었다. 중앙값이 아니라 밀집도를 보는 이유가 그것이다.
+#:
+#: ``allocation.DEFAULT_BURST_SECONDS``(120초)와 뜻이 다르다. 저쪽은 한
+#: 프로세스 연쇄의 폭이고 이쪽은 사건 국면의 폭이다.
+ANCHOR_WINDOW_SECONDS = 3600.0
+
+#: 시각이 없는 레코드의 앵커 거리. 정렬에서 맨 뒤로 보내되 후보에서
+#: 빼지는 않는다 — 레지스트리 키처럼 시각이 없어도 볼 것은 볼 것이다.
+_NO_TIME_DISTANCE = float("inf")
 
 
 def _text(record: dict[str, Any]) -> str:
@@ -162,6 +183,48 @@ def _score(record: dict[str, Any], signal: str, policy: Any) -> int:
     return token_rank * 10 + image_rank
 
 
+def _moment(record: dict[str, Any]) -> "datetime | None":
+    value = record.get("timestamp")
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.strptime(value.split(".")[0].rstrip("Z"), "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+
+
+def burst_anchor(
+    observed: "list[tuple[datetime, frozenset[str]]]", exclude: "str | None" = None
+) -> "datetime | None":
+    """서로 다른 신호가 가장 많이 겹치는 창의 시작. 없으면 ``None``.
+
+    ``exclude`` 는 지금 순위를 매기는 신호다. **자기 자신은 앵커 계산에서
+    뺀다** — 안 빼면 그 신호가 많이 난 자리가 곧 앵커가 되어, 무엇을
+    고르든 자기가 정당화된다.
+
+    동점이면 **이른 창**이다. 밀집도가 같다면 먼저 시작한 국면을 사건의
+    시작으로 본다.
+    """
+    points = sorted(
+        (moment, signals - {exclude} if exclude else signals) for moment, signals in observed
+    )
+    points = [(moment, signals) for moment, signals in points if signals]
+    if not points:
+        return None
+
+    window = timedelta(seconds=ANCHOR_WINDOW_SECONDS)
+    best_count, best_at = 0, None
+    for index, (start, _) in enumerate(points):
+        kinds: set[str] = set()
+        for moment, signals in points[index:]:
+            if moment - start > window:
+                break
+            kinds |= signals
+        if len(kinds) > best_count:
+            best_count, best_at = len(kinds), start
+    return best_at
+
+
 def apply(records: Iterable[dict[str, Any]], *, mappings: str | None = None) -> list[dict[str, Any]]:
     enriched: list[dict[str, Any]] = [dict(record) for record in records]
     policy = attention_policy.load(mappings)
@@ -177,28 +240,56 @@ def apply(records: Iterable[dict[str, Any]], *, mappings: str | None = None) -> 
             if matches:
                 record.setdefault("attention_evidence", {})[signal] = matches
 
-    def order(signal: str, record: dict[str, Any]) -> tuple[int, str, str]:
-        # 동점이면 먼저 관측된 것이 대표다. ref 문자열 비교로 가르면
-        # SYSMON#99 가 SYSMON#1000 보다 커져 순서가 사실과 무관해진다.
+    # 신호가 붙은 레코드의 (시각, 신호들). 앵커를 여기서 뽑는다.
+    observed = [
+        (moment, frozenset(signals))
+        for record, signals in (
+            (record, signal_ids(record, mappings=mappings)) for record in enriched
+        )
+        if signals and (moment := _moment(record)) is not None
+    ]
+    anchors = {signal: burst_anchor(observed, exclude=signal) for signal in candidates}
+
+    def order(signal: str, record: dict[str, Any]) -> tuple[int, float, str, str]:
+        # **사건 앵커에 가까운 것이 대표다.**
+        #
+        # 예전에는 동점이면 "먼저 관측된 것"이었다. 결정론적이지만 편향이
+        # 있었다 — 배경 잡음은 하루 종일 쌓이고 공격은 한 번 늦게 일어나므로,
+        # 이 규칙이 **체계적으로 잡음을 대표로 만든다.** 실측(`K-2LINE-FIX`):
+        # execution_from_unusual_path 19건의 대표가 아침의 DismHost 였고,
+        # 공격자가 돌린 `C:\Temp\nmap` 은 206시간 밖으로 밀렸다.
+        #
+        # 앵커가 없으면(시각이 없거나 신호가 하나뿐) 거리가 전부 같아져
+        # 예전 순서 그대로다.
+        anchor = anchors.get(signal)
+        moment = _moment(record)
+        distance = (
+            abs((moment - anchor).total_seconds())
+            if anchor is not None and moment is not None
+            else _NO_TIME_DISTANCE if anchor is not None else 0.0
+        )
         return (
             -_score(record, signal, policy),
+            distance,
             str(record.get("timestamp") or ""),
             str(record.get("ref") or ""),
         )
 
-    representatives = {
-        signal: min(group, key=lambda record: order(signal, record))
-        for signal, group in candidates.items()
-    }
-    for signal, record in representatives.items():
-        record.setdefault("attention_signals", []).append(signal)
-        record["must_review"] = True
-        context = _signal_context(record, signal, policy)
-        if context:
-            record.setdefault("attention_context", {})[signal] = context
-        requirement = _signal_requirement(record, signal, policy)
-        if requirement:
-            record.setdefault("attention_requirements", {})[signal] = requirement
+    limits = {rule.name: rule.max_representatives for rule in policy.signals}
+    limits.update(
+        {group.signal: group.max_representatives for group in policy.path_groups if group.signal}
+    )
+    for signal, group in candidates.items():
+        chosen = sorted(group, key=lambda record: order(signal, record))[: limits.get(signal, 1)]
+        for record in chosen:
+            record.setdefault("attention_signals", []).append(signal)
+            record["must_review"] = True
+            context = _signal_context(record, signal, policy)
+            if context:
+                record.setdefault("attention_context", {})[signal] = context
+            requirement = _signal_requirement(record, signal, policy)
+            if requirement:
+                record.setdefault("attention_requirements", {})[signal] = requirement
 
     # Related duplicates remain ordinary context.  A single disposition covers
     # the observable signal family and keeps a 1,024-token local-model response

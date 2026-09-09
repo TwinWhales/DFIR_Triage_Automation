@@ -23,6 +23,8 @@ class PathGroup:
     attack: str | None = None
     #: 대표 레코드 선택 우선순위. 선언 순서가 곧 우선순위다.
     representative_images: tuple[str, ...] = ()
+    #: 이 신호가 보장 레인에 올릴 레코드 수의 상한.
+    max_representatives: int = 1
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,17 @@ class SignalRule:
     #: 비면 레코드의 모든 문자열을 본다. 적으면 그 필드(점 표기)만 본다 —
     #: 좁히지 않으면 시각 어휘가 경로에 걸리는 식의 오적중이 생긴다.
     match_fields: tuple[str, ...] = ()
+    #: 이 신호가 보장 레인에 올릴 레코드 수의 상한.
+    #:
+    #: **기본은 1이다.** 같은 관측이 수십 건 쌓여도 모델이 판단할 것은
+    #: 하나이고, 1,024 토큰 응답을 같은 말로 채우면 다른 신호가 밀린다
+    #: (`docs/limitations.md` 3-2).
+    #:
+    #: 올리는 것은 **개체 수가 적고 자리로 고른 신호**에 한한다. 이름이
+    #: 아니라 자리로 고르면 어느 것이 그 자리의 대표인지 우리가 모르므로,
+    #: 하나만 보내면 배경이 뽑힐 수 있다 — 실측이 그랬다
+    #: (`K-2LINE-FIX`: 19건 중 대표가 DismHost, nmap 은 3등).
+    max_representatives: int = 1
 
     def matches(self, text: str, record_flags: tuple[str, ...] = ()) -> bool:
         return bool(
@@ -55,6 +68,19 @@ class AttentionPolicy:
     @property
     def keep_contains(self) -> tuple[str, ...]:
         return tuple(token for group in self.path_groups for token in group.contains)
+
+
+def _positive_int(value: Any, label: str) -> int:
+    """대표 수 상한. 생략하면 1.
+
+    **0 을 받지 않는다.** 0 은 "이 신호를 보장 레인에서 뺀다"는 뜻이 되는데,
+    그것은 ``must_review: false`` 로 적어야 읽는 사람이 안다.
+    """
+    if value is None:
+        return 1
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise PolicyError(f"{label}: must be a positive integer (got {value!r})")
+    return value
 
 
 def _strings(value: Any, label: str) -> tuple[str, ...]:
@@ -105,6 +131,7 @@ def load(directory: str | None = None) -> AttentionPolicy:
             str(name), _strings(spec.get("contains"), f"{name}.contains"), signal,
             bool(spec.get("must_review", False)), spec.get("attack"),
             _strings(spec.get("representative_images"), f"{name}.representative_images"),
+            _positive_int(spec.get("max_representatives"), f"{name}.max_representatives"),
         ))
     rules_raw = data.get("attention_signals") or {}
     if not isinstance(rules_raw, dict):
@@ -115,7 +142,8 @@ def load(directory: str | None = None) -> AttentionPolicy:
                    _strings(spec.get("flags"), f"{name}.flags"),
                    bool(spec.get("must_review", True)),
                    _strings(spec.get("representative_images"), f"{name}.representative_images"),
-                   _field_names(spec.get("match_fields"), f"{name}.match_fields"))
+                   _field_names(spec.get("match_fields"), f"{name}.match_fields"),
+                   _positive_int(spec.get("max_representatives"), f"{name}.max_representatives"))
         for name, spec in rules_raw.items()
         if isinstance(spec, dict)
     )
