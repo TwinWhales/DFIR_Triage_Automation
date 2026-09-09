@@ -26,6 +26,14 @@ Win7 이미지의 ``Amcache.hve``가 그렇다. 판정에 실패하면 아무것
 증거 없이 배선만 확인하려면 목업 ``04_parsed/``를 미리 넣어 두고
 ``--skip-existing``으로 건너뛴다.
 
+**``--reuse-from``은 그것과 다른 일을 한다.** 직전 실행의
+``03_selection.json``을 주면 **범위가 그대로인 아티팩트만** 1차 산출물을
+재사용하고 나머지는 다시 읽는다. 05→02 루프백의 2차가 쓰는 자리다 —
+시나리오가 넓어져도 대개 한두 아티팩트만 바뀌는데, 전부 다시 읽으면 60GB
+이미지에서 4~5분을 통째로 다시 쓴다. 재사용한 항목은 매니페스트에
+``"reused": true``로 남는다. 이 단계는 자기가 **한 일**을 적는 곳이므로
+안 읽은 것을 읽은 것처럼 적지 않는다. 둘은 함께 쓸 수 없다.
+
 **시간 범위는 기본적으로 소프트 필터다** — ``outside_time_range``만 붙이고
 전부 내보낸다(``flagging.py``). 다만 파일이 ``--large-artifact-mb``(기본
 100MB)를 넘으면 그 판정을 하드 컷으로 바꿔 아예 뺀다(``_should_prune_outside_range``).
@@ -41,6 +49,7 @@ Win7 이미지의 ``Amcache.hve``가 그렇다. 판정에 실패하면 아무것
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -54,6 +63,8 @@ __all__ = [
     "STAGE",
     "group_by_artifact",
     "merge_scopes",
+    "reusable_entries",
+    "scope_key",
     "write_manifest",
     "parse_artifact",
     "main",
@@ -172,6 +183,76 @@ def merge_scopes(scopes: list[dict[str, Any]]) -> dict[str, Any]:
         merged["time_range"] = {"start": min(starts), "end": max(ends)}
 
     return merged
+
+
+def scope_key(scope: "dict[str, Any] | None") -> str:
+    """범위를 **순서에 무관한** 비교용 문자열로 만든다.
+
+    ``--reuse-from``이 "이 아티팩트를 다시 읽어야 하는가"를 이 값으로
+    가른다. 같으면 1차 산출물이 이번 요청을 그대로 만족한다.
+
+    **정렬한 뒤에 비교하는 이유가 있다.** ``merge_scopes``는 값의 등장
+    순서를 보존하므로(``dict.fromkeys``), 2차에 기법이 하나 늘기만 해도
+    같은 ``path_prefix``가 다른 순서로 나온다. 그대로 비교하면 안 바뀐
+    아티팩트를 바뀐 것으로 보고 재사용이 영영 걸리지 않는다.
+
+    정렬해도 되는 근거는 이 키들이 전부 **"이 중 아무거나"** 조건이기
+    때문이다 — ``path_prefix``·``extensions``·``event_ids`` 어느 것도
+    순서에 뜻이 없다. 순서가 뜻을 갖는 범위 키가 생기면 이 함수부터
+    고쳐야 한다.
+
+    아는 키만 보지 않고 **범위 전체**를 재귀로 정규화한다. 새 범위 키가
+    생겼을 때 여기 빠뜨리면 "범위가 같다"고 잘못 판정하는데, 그것은
+    조용히 틀리는 쪽이다.
+    """
+
+    def normalize(value: Any) -> Any:
+        if isinstance(value, list):
+            return sorted((normalize(item) for item in value), key=repr)
+        if isinstance(value, dict):
+            return {key: normalize(value[key]) for key in sorted(value)}
+        return value
+
+    return json.dumps(normalize(scope or {}), sort_keys=True, ensure_ascii=False, default=str)
+
+
+def reusable_entries(
+    targets: dict[str, dict[str, Any]],
+    previous: dict[str, dict[str, Any]],
+    manifest: "dict[str, Any] | None",
+    out_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    """1차 산출물을 그대로 쓸 수 있는 아티팩트. ``{이름: 매니페스트 항목}``.
+
+    셋을 모두 만족해야 한다 — 1차가 **실제로 읽었고**(매니페스트의
+    ``files``에 있고), 범위가 **그대로이며**, ``.jsonl``이 아직 **실재**한다.
+
+    1차에서 ``skipped``였던 것은 여기 들지 않는다. 파일을 못 열어 실패한
+    것이라 다시 시도해도 파싱 비용이 없고, 재시도가 더 정직하다 — 그 사이에
+    증거를 다시 뽑아 넣었을 수도 있다.
+    """
+    if not manifest:
+        return {}
+
+    prior = {
+        entry["artifact"]: entry
+        for entry in manifest.get("files") or []
+        if entry.get("artifact") and entry.get("path")
+    }
+
+    reusable: dict[str, dict[str, Any]] = {}
+    for artifact, scope_dict in targets.items():
+        entry = prior.get(artifact)
+        if entry is None:
+            continue
+        if artifact not in previous:
+            continue
+        if scope_key(previous[artifact]) != scope_key(scope_dict):
+            continue
+        if not (out_dir / entry["path"]).is_file():
+            continue
+        reusable[artifact] = entry
+    return reusable
 
 
 def group_by_artifact(selection: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -450,6 +531,18 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         help="산출물이 이미 있으면 건너뛴다. 파싱이 가장 오래 걸리므로 실험 반복에 필수",
     )
     parser.add_argument(
+        "--reuse-from",
+        default=None,
+        metavar="SELECTION",
+        help=(
+            "직전 실행의 03_selection.json. **범위가 그대로인 아티팩트만** "
+            "1차 산출물을 재사용하고 나머지는 다시 읽는다. 루프백 2차가 쓰는 "
+            "자리다 — 시나리오가 넓어져도 대개 한두 아티팩트만 바뀌는데, "
+            "전부 다시 읽으면 60GB 이미지에서 4~5분을 통째로 다시 쓴다. "
+            "--skip-existing 과 함께 쓸 수 없다"
+        ),
+    )
+    parser.add_argument(
         "--parser",
         choices=parsers.IMPLEMENTATIONS,
         default="native",
@@ -474,7 +567,18 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         action="store_true",
         help="크기와 무관하게 항상 소프트 방식(outside_time_range 플래그만)을 쓴다",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    # **둘 다 "건너뛴다"지만 뜻이 다르다.** 앞은 "산출물이 있으면 통째로
+    # 안 읽는다"(목업·리플레이용)이고 뒤는 "범위가 같은 것만 안 읽는다"이다.
+    # 한 실행에서 두 뜻이 섞이면 무엇을 읽었는지 말할 수 없다.
+    if args.skip_existing and args.reuse_from:
+        parser.error(
+            "--skip-existing 과 --reuse-from 은 함께 쓸 수 없다. "
+            "앞은 산출물이 있으면 통째로 건너뛰고, 뒤는 범위가 같은 아티팩트만 "
+            "재사용한다 — 무엇을 읽었는지가 달라진다"
+        )
+    return args
 
 
 def main(argv: "list[str] | None" = None) -> int:
@@ -500,6 +604,49 @@ def main(argv: "list[str] | None" = None) -> int:
             f"({', '.join(sorted(targets))} 요청됨, --skip-existing)"
         )
         return 0
+
+    # **범위가 그대로인 아티팩트는 다시 읽지 않는다.** 무엇을 재사용할지는
+    # 선별 두 개와 1차 매니페스트만 보면 정해지므로 증거를 열기 전에 끝낸다.
+    # (증거 자체는 아래에서 그대로 연다 — 버전 판정이 매니페스트에 들어가고,
+    # 재사용하지 않는 아티팩트가 하나라도 있으면 어차피 필요하다.)
+    reusable: dict[str, dict[str, Any]] = {}
+    if args.reuse_from:
+        previous_selection = io.read_json(args.reuse_from)
+        try:
+            io.check_header(previous_selection, expected_stage="03_select")
+            schema.validate(previous_selection, "selection")
+        except schema.SchemaViolation as violation:
+            # 이 파일은 우리가(오케스트레이터가) 쓴 것이다. 어긋났다면 우리
+            # 결함이고, 못 믿는 파일로 "다시 읽을지"를 정하면 안 된다.
+            log.abort(STAGE, "schema_violation", violation.as_detail())
+        except io.HeaderError as e:
+            log.abort(STAGE, "schema_violation", {"field": "<header>", "message": str(e)})
+
+        previous_manifest = (
+            io.read_json(out_dir / "_manifest.json")
+            if (out_dir / "_manifest.json").is_file()
+            else None
+        )
+        reusable = reusable_entries(
+            targets, group_by_artifact(previous_selection), previous_manifest, out_dir
+        )
+
+        # 이번에 요청하지 않은 산출물이 디렉터리에 남아 있으면 매니페스트와
+        # 파일이 어긋나 ``tools/inspect_jsonl.py`` 가 종료 코드 1을 낸다.
+        # **지우지는 않는다** — 파싱 산출물을 자동으로 지우는 것은 되돌릴 수
+        # 없다. 루프백 2차는 1차의 상위집합이라 정상 경로에서는 안 생긴다.
+        orphans = sorted(
+            entry["artifact"]
+            for entry in (previous_manifest or {}).get("files") or []
+            if entry.get("artifact") not in targets
+        )
+        if orphans:
+            print(
+                f"[{STAGE}] 이번 선별에 없는 1차 산출물이 남아 있습니다: "
+                f"{', '.join(orphans)}. 매니페스트와 파일이 어긋나므로 "
+                f"tools/inspect_jsonl.py 가 실패합니다 — 확인 후 손으로 지우십시오.",
+                file=sys.stderr,
+            )
 
     unsupported = sorted(set(targets) - set(OUTPUT_FILENAMES))
     if unsupported:
@@ -652,6 +799,20 @@ def main(argv: "list[str] | None" = None) -> int:
 
     large_artifact_bytes = int(args.large_artifact_mb * 1024 * 1024)
     for artifact, scope_dict in sorted(targets.items()):
+        cached = reusable.get(artifact)
+        if cached is not None:
+            # **이번 실행이 읽지 않았다는 사실을 매니페스트에 적는다.**
+            # 매니페스트는 04단계가 자기가 한 일을 적는 곳이므로, 안 읽은
+            # 것을 읽은 것처럼 적으면 안 된다. record_count 는 1차 값을
+            # 그대로 옮기므로 total_records 합계와 tools/inspect_jsonl.py
+            # 대조는 그대로 성립한다.
+            files.append({**cached, "reused": True})
+            print(
+                f"  {artifact}: {cached['record_count']}건 "
+                f"(범위 그대로 — 1차 산출물 재사용) → {cached['path']}"
+            )
+            continue
+
         # **증거를 열기 전에** 판정한다. 이 버전에 존재할 수 없는
         # 아티팩트를 찾아 헤매다 artifact_not_found 로 적으면, 보고서가
         # "수집 누락"이라고 말하게 된다 — 분석가는 있지도 않은 파일을

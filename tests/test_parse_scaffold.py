@@ -769,3 +769,147 @@ def test_every_mapping_wildcard_can_actually_match_something():
                 assert Scope.from_selection({"path_prefix": [prefix]}).matches_prefix(filled), (
                     f"{mapping.technique} {request.artifact}: {prefix!r} 가 아무것도 맞히지 못한다"
                 )
+
+
+# ── 04단계 부분 재사용 (`--reuse-from`) ────────────────────────────────
+#
+# 루프백 2차는 시나리오가 넓어진 만큼만 다시 읽어야 합니다. 전부 다시
+# 읽으면 60GB 이미지에서 4~5분을 통째로 다시 쓰고, 반대로 너무 널널하게
+# 재사용하면 **넓힌 범위가 반영되지 않은 산출물**로 2차 해석이 돕니다.
+# 뒤쪽이 더 위험합니다 — 조용히 틀리기 때문입니다.
+#
+# 설계는 docs/proposals/stage05-investigation-loopback.md 6장.
+
+
+def _scope(**kwargs):
+    return dict(kwargs)
+
+
+def _target(artifact, scope):
+    return {artifact: scope}
+
+
+def test_scope_key_ignores_the_order_of_values():
+    """정렬 없이 비교하면 재사용이 **영영 안 걸린다.**
+
+    ``merge_scopes`` 가 값의 등장 순서를 보존하므로(``dict.fromkeys``),
+    2차에 기법이 하나 늘기만 해도 같은 경로 목록이 다른 순서로 나온다.
+    """
+    from src.stage04_parse.parse import scope_key
+
+    first = _scope(path_prefix=["C:\\web", "C:\\tasks"], extensions=[".aspx", ".asp"])
+    second = _scope(extensions=[".asp", ".aspx"], path_prefix=["C:\\tasks", "C:\\web"])
+    assert scope_key(first) == scope_key(second)
+
+
+def test_scope_key_still_separates_different_ranges():
+    """반대 방향. 1초라도 다르면 다시 읽어야 한다."""
+    from src.stage04_parse.parse import scope_key
+
+    base = {"start": "2026-07-18T00:00:00Z", "end": "2026-07-22T23:59:59Z"}
+    wider = {"start": "2026-07-16T00:00:00Z", "end": "2026-07-22T23:59:59Z"}
+    assert scope_key(_scope(time_range=base)) != scope_key(_scope(time_range=wider))
+    assert scope_key(_scope(event_ids=[4624])) != scope_key(_scope(event_ids=[4624, 4625]))
+
+
+def test_scope_key_sees_keys_it_was_never_told_about():
+    """새 범위 키가 생겼을 때 빠뜨리면 "범위가 같다"고 잘못 판정한다.
+
+    아는 키만 훑지 않고 범위 전체를 정규화하는 이유다.
+    """
+    from src.stage04_parse.parse import scope_key
+
+    assert scope_key(_scope(future_key=["a"])) != scope_key(_scope(future_key=["b"]))
+
+
+@pytest.fixture
+def parsed_dir(tmp_path):
+    """1차 산출물이 놓인 ``04_parsed/``."""
+    import shutil
+
+    from casepaths import FIXTURES
+
+    out = tmp_path / "04_parsed"
+    shutil.copytree(FIXTURES / "04_parsed", out)
+    return out
+
+
+def _manifest_of(parsed_dir):
+    return io.read_json(parsed_dir / "_manifest.json")
+
+
+def test_an_unchanged_scope_is_reused(parsed_dir):
+    from src.stage04_parse.parse import reusable_entries
+
+    scope = _scope(event_ids=[4720, 4728])
+    reusable = reusable_entries(
+        _target("evtx:Security", scope),
+        _target("evtx:Security", _scope(event_ids=[4728, 4720])),
+        _manifest_of(parsed_dir),
+        parsed_dir,
+    )
+    assert list(reusable) == ["evtx:Security"]
+    assert reusable["evtx:Security"]["record_count"] == 2
+
+
+def test_a_widened_scope_is_read_again(parsed_dir):
+    from src.stage04_parse.parse import reusable_entries
+
+    reusable = reusable_entries(
+        _target("evtx:Security", _scope(event_ids=[4720, 4728, 4732])),
+        _target("evtx:Security", _scope(event_ids=[4720, 4728])),
+        _manifest_of(parsed_dir),
+        parsed_dir,
+    )
+    assert reusable == {}
+
+
+def test_an_artifact_the_first_round_never_had_is_read(parsed_dir):
+    from src.stage04_parse.parse import reusable_entries
+
+    reusable = reusable_entries(
+        _target("prefetch", _scope()),
+        {},
+        _manifest_of(parsed_dir),
+        parsed_dir,
+    )
+    assert reusable == {}
+
+
+def test_an_artifact_the_first_round_skipped_is_retried(parsed_dir):
+    """1차에서 못 읽은 것은 ``files`` 가 아니라 ``skipped`` 에 있다.
+
+    파일을 못 열어 실패한 것이라 다시 시도해도 파싱 비용이 없고, 그 사이에
+    증거를 다시 뽑아 넣었을 수도 있다 — 재시도가 더 정직하다.
+    """
+    from src.stage04_parse.parse import reusable_entries
+
+    manifest = _manifest_of(parsed_dir)
+    manifest["skipped"] = [
+        {"artifact": "$UsnJrnl", "reason": "empty_artifact", "message": "0바이트"}
+    ]
+    reusable = reusable_entries(
+        _target("$UsnJrnl", _scope()),
+        _target("$UsnJrnl", _scope()),
+        manifest,
+        parsed_dir,
+    )
+    assert reusable == {}
+
+
+def test_a_missing_output_file_is_never_reused(parsed_dir):
+    """매니페스트가 있다고 파일이 있는 것은 아니다.
+
+    없는 파일을 재사용하면 매니페스트는 3건이라고 말하는데 파일이 없어
+    ``tools/inspect_jsonl.py`` 가 실패한다.
+    """
+    from src.stage04_parse.parse import reusable_entries
+
+    (parsed_dir / "mft.jsonl").unlink()
+    reusable = reusable_entries(
+        _target("$MFT", _scope()),
+        _target("$MFT", _scope()),
+        _manifest_of(parsed_dir),
+        parsed_dir,
+    )
+    assert reusable == {}

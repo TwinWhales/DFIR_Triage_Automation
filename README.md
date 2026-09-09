@@ -26,16 +26,16 @@
 [01 입력] 자연어 서술 / EDR 알럿 / Wazuh SIEM JSON
    ↓
 [02 시나리오 정규화]       ← sLLM + 고정 스키마 검증
-   ↓
-[03 아티팩트 선별]         ← 결정론적 (매핑 테이블 기반 타겟팅)
-   ↓
-[04 결정론적 파싱]         ← 결정론적 (바이트 레벨, 오프셋 보존)
-   ↓
-[05 sLLM 해석]             ← sLLM (의심 레코드 추출 및 삼중항 청구)
-   ↓
+   ↓                       ↑
+[03 아티팩트 선별]         │ (05단계의 2차 조사 요청: LOOP=1 시 활성화)
+   ↓                       │ [시간창 확장 · 기법 추가 · 아티팩트 강제 선별]
+[04 결정론적 파싱]         │ (--reuse-from 으로 동일 범위 증거 캐시 재사용)
+   ↓                       │
+[05 sLLM 해석]             └─── 1차 해석 후 추가 조사 요청(05_requests.json) 발행
+   ↓                            (--pin-refs 로 1차 인용 레코드 보장 레인 고정)
 [06 근거 검증 (신호등)]     ← 결정론적 (🟢Passed / 🟡Warning / 🔴Rejected)
    ↓
-[07 단일 결과 보고]         ← 결정론적 (Jinja2 마크다운 리포트 생성)
+[07 단일 결과 보고]         ← 결정론적 (Jinja2 마크다운 리포트 생성, 2차 조사 처리 내역 포함)
    ↓
 [08 캠페인 상관분석]       ← 100% 파이썬 결정론 (노드 간 횡적이동 공격 체인 및 Mermaid 복원)
 ```
@@ -54,7 +54,7 @@
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
 # source .venv/bin/activate && pip install -r requirements.txt  # Linux/macOS
-.venv/Scripts/python.exe -m pytest -q                        # 1,591건 테스트 검증
+.venv/Scripts/python.exe -m pytest -q                        # 1,637건 전체 테스트 통과
 ```
 
 ### 2. Ollama 로컬 sLLM 모델 준비
@@ -63,13 +63,27 @@ ollama pull qwen2.5:latest   # 또는 qwen2.5:7b
 ```
 
 ### 3. 단일 케이스 실행
+
+#### 기본 실행 (1차 단발 분석)
 ```bash
-# 1) 케이스 생성 (자연어 입력 또는 추출 증거 폴더)
+# 1) 케이스 생성
 .venv/Scripts/python.exe tools/make_case.py --case-id C-001 --evidence evidence/WEB01
 
 # 2) 01~07 파이프라인 관통 실행
 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 evidence/WEB01
 ```
+
+#### 루프백 실행 (ReAct 피드백 활성화 — 심층 2차 조사)
+1차 분석 후 모델이 스스로 단서를 되짚어 유예된 증거(`$MFT` 등)를 추가 수집하고 소견을 심화합니다:
+```bash
+# bash 환경
+LOOP=1 PYTHON=.venv/Scripts/python.exe ./run_pipeline.sh C-001 evidence/WEB01
+
+# 또는 live_check 도구에서
+.venv/Scripts/python.exe tools/live_check.py --case-id C-001 --evidence evidence/WEB01 --loop
+```
+> [!TIP]
+> **실무 권장 (Opt-in 원칙)**: 루프백은 2차 LLM 심층 해석을 거치므로 실행 시간이 약 2배 소요됩니다 (실측 215초 ➔ 495초). 모든 단말에 무조건 켜기보다는, **1차 분석에서 공격 축을 놓친 것으로 의심되거나 증거가 부족한 단말에 선택적(Opt-in)으로 적용**하는 것이 시간과 분석 품질 면에서 가장 효율적입니다.
 
 ### 4. Wazuh SIEM 실시간 알럿 연동
 ```bash

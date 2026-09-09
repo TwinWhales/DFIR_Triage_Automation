@@ -55,6 +55,7 @@ STAGE_SCHEMA: dict[str, str] = {
     "02_normalize": "scenario",
     "03_select": "selection",
     "05_interpret": "findings",
+    "05_investigate": "investigation",
     "06_verify": "verified",
     "08_campaign": "campaign",
 }

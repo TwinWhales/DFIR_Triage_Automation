@@ -17,13 +17,15 @@ cases/
     │   ├── evtx_security.jsonl
     │   └── _manifest.json
     ├── 05_findings.json
+    ├── 05_requests.json          # 루프백 활성화(LOOP=1) 시 생성
     ├── 06_verified.json
     ├── 07_report.md
     └── errors.jsonl
 schemas/
 ├── scenario.schema.json
 ├── selection.schema.json
-└── findings.schema.json
+├── findings.schema.json
+└── investigation.schema.json
 ```
 
 ### 공통 헤더
@@ -426,6 +428,73 @@ sLLM 해석 결과. 모든 문장에 `refs` 필수입니다.
 `statement`는 자연어라 기계 검증이 불가능합니다. 그래서 문장이 주장하는 사실을 `(ref, field, value)` 삼중항으로 별도 분해하게 합니다. 검증기는 `claims`만 대조하면 됩니다.
 
 `F3`처럼 종합 판단은 `claims`가 비어 있으며, 다음 단계에서 `unverifiable`로 분류됩니다.
+
+---
+
+## 05_requests.json — 2차 조사 요청 및 처리 내역
+
+루프백 모드(`LOOP=1` 또는 `live_check.py --loop`)에서만 생성됩니다. 05단계 해석 모델이 1차 소견을 도출한 후 추가로 확인해야 할 단서를 최대 3건까지 발행하며, 파이썬(`expand.py`)이 이를 검증하여 2차 시나리오 및 03단계 강제 선별로 반영합니다.
+
+```json
+{
+  "case_id": "C-001",
+  "stage": "05_investigate",
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T04:20:15Z",
+  "generator": "interpret.py / qwen2.5:latest",
+  "round": 1,
+  "requests": [
+    {
+      "type": "request_artifact",
+      "based_on_ref": "MFT#12345",
+      "rationale": "웹셸 생성 전후의 프로세스 실행 흔적을 확인하기 위해 프리패치가 필요합니다",
+      "target_artifact": "prefetch",
+      "disposition": {
+        "verdict": "accepted",
+        "reason": "applied",
+        "detail": "prefetch 를 03단계 강제 선별 목록에 추가했습니다."
+      }
+    },
+    {
+      "type": "request_technique",
+      "based_on_ref": "EVTX-SEC#40912",
+      "rationale": "계정 생성 이후 권한 상승 및 원격 로그인 시도가 있었는지 RDP 채널 확인 필요",
+      "technique_id": "T1021.001",
+      "disposition": {
+        "verdict": "accepted",
+        "reason": "applied",
+        "detail": "T1021.001 를 시나리오에 추가했습니다 (2차 조사 요청)."
+      }
+    },
+    {
+      "type": "expand_time_range",
+      "based_on_ref": "MFT#12345",
+      "rationale": "웹셸 생성 이전의 최초 침투 정황을 확인하기 위해 4시간 확장",
+      "pivot_time": "2026-07-20T03:14:22Z",
+      "window_hours": 4,
+      "disposition": {
+        "verdict": "rejected",
+        "reason": "no_widening",
+        "detail": "이미 1차 범위(2026-07-19T12:00:00Z~2026-07-20T12:00:00Z) 안입니다."
+      }
+    }
+  ],
+  "applied": {
+    "time_range": {
+      "start": "2026-07-19T12:00:00Z",
+      "end": "2026-07-20T12:00:00Z"
+    },
+    "techniques": ["T1021.001"],
+    "artifacts": ["prefetch"]
+  }
+}
+```
+
+### 요청과 판정이 한 파일에 머뭅니다
+- `requests[*]` 배열의 요청 본문(`type`, `based_on_ref`, `rationale` 등)은 **LLM이 작성**합니다.
+- 각 요청의 `disposition` 객체와 문서 하단의 `applied` 블록은 **`expand.py`가 채웁니다.**
+- 수용된 기법은 2차 `02_scenario.json`에 합집합으로 들어가고, 수용된 아티팩트는 03단계 오케스트레이터의 `--force-artifacts` 인자로 전달되어 Tier 1으로 강제 승격됩니다.
+- 거절된 요청(`rejected`)은 사유(`ungrounded_ref`, `unknown_technique`, `already_selected`, `out_of_evidence`, `no_widening` 등)와 함께 기록되며, `errors.jsonl`의 `investigation_rejected` 이벤트로 집계됩니다.
 
 ---
 

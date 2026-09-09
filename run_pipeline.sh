@@ -68,6 +68,21 @@
 #   LIMIT       05단계가 모델에 보낼 레코드 수의 **상한**. 토큰 예산이
 #               더 낮으면 그쪽이 이긴다
 #   OLLAMA_HOST 기본 http://localhost:11434
+#   LOOP        1 이면 05→02 자율 루프백을 켠다. 기본 0(끔)
+#
+# ## LOOP=1 — 05단계가 스스로 증거를 더 요청한다
+#
+# 05가 소견을 낸 뒤 "무엇을 더 봐야 하는가"를 한 번 더 묻고(05_requests.json),
+# 그 요청으로 02(확장)→03→04→05를 **한 번만** 다시 돈다. 끝나면 정규 이름이
+# 2차 결과를 가리키고 1차는 .round1 으로 남는다.
+#
+#   LOOP=1 MODEL=qwen2.5:latest VOLUME=1 PYTHON=.venv/Scripts/python.exe \
+#       ./run_pipeline.sh K-001 evidence/x.001
+#
+# **기본이 꺼져 있는 것은 측정용 스위치이기 때문이다**(--mode·--no-constrain
+# 과 같은 규약). 같은 케이스를 켜고 끄고 돌려야 루프백이 무엇을 바꿨는지
+# 말할 수 있다. 켜면 질의가 한 번 늘고, 2차가 돌면 04를 부분 재파싱한다
+# (범위가 바뀐 아티팩트만 — tools/react_loop.py).
 
 set -euo pipefail
 
@@ -94,6 +109,14 @@ fi
 
 # --mode 는 05단계에만 있다. 02단계에 붙이면 argparse 가 거부한다.
 INTERPRET_MODE=(--mode "$MODE")
+
+# **1차에만 묻는다.** 2차 05는 react_loop.py 가 --investigate 없이 부르므로
+# 3차 요청이 생길 자리가 없다 — 무한 루프 방지를 카운터가 아니라 구조로
+# 거는 자리다. LOOP=0 이면 아예 묻지 않아 질의 한 번이 절약된다.
+INVESTIGATE=()
+if [[ "${LOOP:-0}" == "1" ]]; then
+  INVESTIGATE=(--investigate)
+fi
 
 if [[ -n "$REPLAY" ]]; then
   NORMALIZE_LLM=(--llm stub --replay "$REPLAY/02_scenario.json")
@@ -159,18 +182,59 @@ echo "== 05 해석 =="
 $PY -m src.stage05_interpret.interpret \
     --in "$C/04_parsed/" --scenario "$C/02_scenario.json" \
     --selection "$C/03_selection.json" \
-    --out "$C/05_findings.json" "${INTERPRET_MODE[@]}" "${INTERPRET_LLM[@]}"
+    --out "$C/05_findings.json" "${INTERPRET_MODE[@]}" "${INTERPRET_LLM[@]}" \
+    "${INVESTIGATE[@]+"${INVESTIGATE[@]}"}"
+
+# 05단계가 낸 추가 조사 요청으로 02→03→04→05를 한 번 더 돈다. 끝나면 정규
+# 이름이 2차 결과를 가리키고 1차는 .round1 으로 남으므로, 아래 06·07은
+# 루프가 돌았는지 몰라도 된다.
+#
+# **종료 코드 3은 실패가 아니다** — 요청이 없었거나 전부 기각됐거나 2차
+# 선별이 1차와 같아서 돌릴 이유가 없었다는 뜻이고, 케이스는 1차 결과로
+# 완결돼 있다.
+if [[ "${LOOP:-0}" == "1" ]]; then
+  echo "== 루프백 (05 → 02, 최대 1회) =="
+  LOOP_ARGS=(--case "$C" --evidence "$EVIDENCE" --python "$PY" --mode "$MODE")
+  [[ -n "${VOLUME:-}" ]] && LOOP_ARGS+=(--volume "$VOLUME")
+  if [[ -n "$REPLAY" ]]; then
+    LOOP_ARGS+=(--replay "$REPLAY_05")
+  else
+    LOOP_ARGS+=(--model "$MODEL")
+    [[ -n "${NUM_CTX:-}" ]] && LOOP_ARGS+=(--num-ctx "$NUM_CTX")
+    [[ -n "${TIMEOUT:-}" ]] && LOOP_ARGS+=(--timeout "$TIMEOUT")
+    [[ -n "${TEMPERATURE:-}" ]] && LOOP_ARGS+=(--temperature "$TEMPERATURE")
+    [[ -n "${OLLAMA_HOST:-}" ]] && LOOP_ARGS+=(--host "$OLLAMA_HOST")
+    [[ -n "${LIMIT:-}" ]] && LOOP_ARGS+=(--limit "$LIMIT")
+    [[ -n "${MAX_CHUNKS:-}" ]] && LOOP_ARGS+=(--max-chunks "$MAX_CHUNKS")
+  fi
+
+  set +e
+  $PY tools/react_loop.py "${LOOP_ARGS[@]}"
+  LOOP_CODE=$?
+  set -e
+  if [[ "$LOOP_CODE" != "0" && "$LOOP_CODE" != "3" ]]; then
+    echo "루프백이 실패했다 (종료 코드 $LOOP_CODE). 1차 결과는 .round1 에 있다." >&2
+    exit "$LOOP_CODE"
+  fi
+fi
 
 echo "== 06 검증 =="
 $PY -m src.stage06_verify.verify \
     --findings "$C/05_findings.json" --parsed "$C/04_parsed/" \
     --out "$C/06_verified.json"
 
+# 루프백이 돌았으면 요청과 처리를 보고서의 "미확인 사항"에 싣는다.
+# **기각된 요청이 그 절의 요지다** — 모델이 더 보자고 했는데 보지 않은
+# 자리이므로. 파일이 없으면(LOOP=0) 절 자체가 안 실린다.
+REPORT_REQUESTS=()
+[[ -f "$C/05_requests.json" ]] && REPORT_REQUESTS=(--requests "$C/05_requests.json")
+
 echo "== 07 보고 =="
 $PY -m src.stage07_report.report \
     --in "$C/06_verified.json" --findings "$C/05_findings.json" \
     --selection "$C/03_selection.json" --scenario "$C/02_scenario.json" \
-    --parsed "$C/04_parsed/" --out "$C/07_report.md"
+    --parsed "$C/04_parsed/" --out "$C/07_report.md" \
+    "${REPORT_REQUESTS[@]+"${REPORT_REQUESTS[@]}"}"
 
 echo
 echo "done: $C/07_report.md"

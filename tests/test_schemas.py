@@ -256,9 +256,19 @@ def test_the_schemas_that_constrain_refs_are_the_ones_we_expect():
     않는다** — 접두어를 적는 자리가 하나 더 느는 것이 걱정이지만,
     ``_ref_patterns()`` 가 ``schemas/*.json`` 을 훑으므로 새 스키마는 아래 두
     대조에 자동으로 들어온다. 빠뜨릴 자리가 아니라 지켜지는 자리다.
+
+    ``investigation`` 이 넷째다. 05단계의 추가 조사 요청은 ``based_on_ref`` 로
+    **자기 근거가 된 레코드**를 가리키므로 같은 제약을 받는다. 여기 접두어가
+    빠지면 그 아티팩트를 근거로 든 요청이 통째로 기각되고, 그것은 위 프리패치
+    사고와 같은 종류다 — 모델이 옳게 요청했는데 우리 스키마가 거부한다.
     """
     names = [name for name, _ in _ref_patterns()]
-    assert names == ["campaign.schema.json", "findings.schema.json", "parsed_record.schema.json"]
+    assert names == [
+        "campaign.schema.json",
+        "findings.schema.json",
+        "investigation.schema.json",
+        "parsed_record.schema.json",
+    ]
 
 
 @pytest.mark.parametrize("name,pattern", _ref_patterns())

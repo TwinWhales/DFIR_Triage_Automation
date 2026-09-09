@@ -188,6 +188,21 @@ PLAN: list[Plan] = [
 ]
 
 
+#: ``--loop`` 일 때만 표에 끼는 단계. 05와 06 **사이**에 들어간다 —
+#: 루프백이 끝나면 정규 이름이 2차를 가리키므로, 06·07은 자기가 무엇을
+#: 읽는지 몰라도 되고 이 도구의 나머지 판정도 그대로 성립한다.
+LOOPBACK_PLAN = Plan(
+    "loopback",
+    "루프백 — 05가 요청한 것을 한 번 더 본다",
+    "05가 낸 추가 조사 요청으로 02→03→04→05를 다시 돌린다. **넓히기만 했는가**를 본다",
+    "**1차 소견이 인용한 레코드가 2차에도 전달** / 시간·기법이 1차의 상위집합 / "
+    "재사용 아티팩트의 record_count 가 1차와 동일 / 총 레코드 감소 없음 / "
+    "05_requests.json 이 정확히 한 번만 생김(2차는 재요청하지 않는다). "
+    "요청이 없거나 전부 기각이면 종료 코드 3 이고 그것은 실패가 아니다",
+    llm=True,
+)
+
+
 @dataclass
 class Result:
     """단계 하나의 결과. ``verdict``는 PASS·FAIL·건너뜀 셋뿐이다."""
@@ -212,6 +227,12 @@ class Runner:
         self.parsed_dir = self.case_dir / "04_parsed"
         self.errors_path = self.case_dir / "errors.jsonl"
         self.results: dict[str, Result] = {}
+        self.plan = list(PLAN)
+        if args.loop:
+            self.plan.insert(
+                next(i for i, p in enumerate(self.plan) if p.key == "stage06"),
+                LOOPBACK_PLAN,
+            )
         self.started_at = datetime.now(timezone.utc)
         # 단계 간에 넘기는 값. 뒤 단계의 판정이 앞 단계의 사실에 기대는 곳이
         # 있다 (05의 흘린 참조를 06이 잡았는지 등).
@@ -222,7 +243,7 @@ class Runner:
     def echo_plan(self, index: int, plan: Plan) -> None:
         print(BAR)
         tag = " (LLM)" if plan.llm else ""
-        print(f"[{index}/{len(PLAN)}] {plan.title}{tag}")
+        print(f"[{index}/{len(self.plan)}] {plan.title}{tag}")
         print(f"  확인: {plan.what}")
         print(f"  기대: {plan.expect}")
 
@@ -273,7 +294,7 @@ class Runner:
         print()
 
         stopped = False
-        for index, plan in enumerate(PLAN, start=1):
+        for index, plan in enumerate(self.plan, start=1):
             result = Result(plan, used_llm=plan.llm)
             self.results[plan.key] = result
             if stopped:
@@ -648,6 +669,189 @@ class Runner:
             len(f.get("claims", [])) for f in findings
         )
 
+    def do_loopback(self, result: Result) -> str:
+        """05가 요청한 것을 한 번 더 본다. **넓히기만 했는가**를 판정한다.
+
+        내용이 맞는지는 보지 않는다 — 모델이 무엇을 요청했든 성립해야 하는
+        구조 불변식만 본다. 깨지면 모델 사정이 아니라 우리 회귀다.
+        """
+        requests_path = self.case_dir / "05_requests.json"
+        if not requests_path.is_file():
+            # 05가 --investigate 로 돌았는데 파일이 없다. 질의가 실패했거나
+            # 물어볼 것이 없었다는 뜻이고, 사유는 errors.jsonl 에 있다.
+            result.used_llm = False
+            result.measures["requests"] = 0
+            return "05가 조사 요청을 내지 않았다 — 루프백 없이 1차로 끝난다"
+
+        requests_doc = io.read_json(requests_path)
+        if requests_doc.get("round") != 1:
+            raise StepFailed(
+                f"05_requests.json 의 round 가 {requests_doc.get('round')} — "
+                "재요청은 한 번뿐이어야 한다"
+            )
+        result.measures["requests"] = len(requests_doc.get("requests", []))
+
+        before = {
+            "scenario": io.read_json(self.case_dir / "02_scenario.json"),
+            "findings": io.read_json(self.case_dir / "05_findings.json"),
+            "manifest": io.read_json(self.parsed_dir / "_manifest.json"),
+        }
+
+        cmd = self.py(
+            "tools/react_loop.py",
+            "--case", str(self.case_dir),
+            "--evidence", str(self.args.evidence),
+            "--python", sys.executable,
+            "--model", self.model_interpret,
+            "--mode", self.args.mode,
+            "--host", self.args.host,
+            "--num-ctx", str(self.args.num_ctx),
+            "--timeout", str(self.args.timeout),
+            "--limit", str(self.args.limit),
+        )
+        if self.args.volume is not None:
+            cmd += ["--volume", str(self.args.volume)]
+        if self.args.mode == "assemble":
+            cmd += ["--max-chunks", str(self.args.max_chunks)]
+
+        code, out, _ = self.run_cmd(cmd)
+        for line in out.splitlines():
+            if line.strip():
+                print(f"        {line.rstrip()}")
+
+        if code == 3:
+            # 돌릴 이유가 없었다. **실패가 아니다** — 요청이 전부 기각됐거나
+            # 2차 선별이 1차와 같았다는 뜻이고, 케이스는 1차로 완결돼 있다.
+            result.used_llm = False
+            if (self.case_dir / "05_findings.round1.json").exists():
+                raise StepFailed(
+                    "2차를 돌지 않았는데 .round1 파일이 남아 있다 — "
+                    "사람도 도구도 '2차가 돌았다'로 읽는다"
+                )
+            return "수용된 요청이 없어 1차로 끝났다 (실패 아님)"
+        if code != 0:
+            raise StepFailed(f"루프백 실패 (코드 {code}). {self.errors_path} 를 본다")
+
+        # ── 넓히기만 했는가 ────────────────────────────────────────────
+        after = {
+            "scenario": io.read_json(self.case_dir / "02_scenario.json"),
+            "findings": io.read_json(self.case_dir / "05_findings.json"),
+            "manifest": io.read_json(self.parsed_dir / "_manifest.json"),
+        }
+
+        # **1차가 인용한 레코드**가 2차에도 전달됐는가. ``--pin-refs`` 가
+        # 약속하는 것이 이것이고, 1차 소견이 최종 보고서에서 사라지지 않는
+        # 근거도 이것뿐이다.
+        #
+        # **전달 목록 전체로 걸지 않는다.** 처음에 그렇게 걸었다가
+        # `K-LOOP-0909-on`(2026-09-09) 에서 걸렸는데, 잡힌 것이 결함이
+        # 아니었다 — 2차는 레코드가 늘어난 상태에서 **같은 자릿수 예산**으로
+        # 배분하므로, 아무도 인용하지 않은 레코드가 새 증거에 밀리는 것이
+        # 정상 동작이다(그 실행에서 61건 중 24건이 그렇게 바뀌었고 인용된
+        # 12건은 전부 남았다). 전달 목록의 단조 증가를 요구하면 새 증거가
+        # 옛 레코드를 대체할 수 없게 되어, 루프백이 가져온 것을 프롬프트에
+        # 실을 자리가 없어진다. 예산이 고정인 한 성립할 수 없는 불변식이다.
+        cited = {
+            ref
+            for finding in before["findings"]["findings"]
+            for ref in finding.get("refs", [])
+        } | {
+            ref
+            for moment in before["findings"].get("timeline", [])
+            for ref in moment.get("refs", [])
+        }
+        delivered = set(after["findings"]["input_refs"])
+        lost_refs = sorted(cited - delivered)
+        if lost_refs:
+            raise StepFailed(
+                f"1차 소견이 인용한 레코드 {len(lost_refs)}건이 2차에 전달되지 않았다 "
+                f"({', '.join(lost_refs[:5])}) — --pin-refs 가 일을 못 했다. "
+                "그 소견은 최종 보고서에서 사라진다"
+            )
+        result.measures["pinned_refs"] = len(cited)
+        result.measures["delivered_before"] = len(before["findings"]["input_refs"])
+        result.measures["delivered_after"] = len(delivered)
+        # 인용되지 않은 레코드가 새 증거에 밀린 수. 판정이 아니라 측정이다 —
+        # 크면 2차가 1차와 다른 것을 보고 있다는 뜻이라 눈에 보여야 한다.
+        result.measures["displaced_uncited"] = len(
+            set(before["findings"]["input_refs"]) - delivered
+        )
+
+        was = {t["id"] for t in before["scenario"]["techniques"]}
+        now = {t["id"] for t in after["scenario"]["techniques"]}
+        if not was <= now:
+            raise StepFailed(f"2차 시나리오가 기법을 잃었다: {sorted(was - now)}")
+
+        old_range, new_range = before["scenario"]["time_range"], after["scenario"]["time_range"]
+        if new_range["start"] > old_range["start"] or new_range["end"] < old_range["end"]:
+            raise StepFailed(
+                f"2차 분석 기간이 1차보다 좁다 "
+                f"({old_range['start']}~{old_range['end']} → "
+                f"{new_range['start']}~{new_range['end']})"
+            )
+
+        # 재사용은 **다시 안 읽었다**는 뜻이므로 건수가 1차와 같아야 한다.
+        # 다르면 재사용 판정이 범위가 바뀐 아티팩트를 그냥 넘긴 것이다.
+        counts_before = {e["artifact"]: e["record_count"] for e in before["manifest"]["files"]}
+        reused = [e for e in after["manifest"]["files"] if e.get("reused")]
+        for entry in reused:
+            if counts_before.get(entry["artifact"]) != entry["record_count"]:
+                raise StepFailed(
+                    f"{entry['artifact']} 를 재사용했다는데 건수가 다르다 "
+                    f"({counts_before.get(entry['artifact'])} → {entry['record_count']})"
+                )
+
+        if before["manifest"]["total_records"] > after["manifest"]["total_records"]:
+            raise StepFailed(
+                f"2차 파싱이 1차보다 적다 "
+                f"({before['manifest']['total_records']} → {after['manifest']['total_records']})"
+            )
+
+        # 2차가 재요청하지 않았는가. 구조로 걸어 둔 가드레일의 확인이다.
+        round2_queries = sorted(
+            path.name for path in (self.case_dir / "05_llm_queries_round2").glob("*.txt")
+        )
+        if any("investigation" in name for name in round2_queries):
+            raise StepFailed(
+                "2차 질의 내역에 조사 요청 질의가 있다 — 재요청은 한 번뿐이어야 한다"
+            )
+
+        # **06이 검증할 대상이 바뀌었다.** 05단계가 넘긴 값은 1차의 것이라
+        # 그대로 두면 06 관문이 "판정 합계 != findings" 로 걸린다 — 실제로
+        # 걸렸다(`K-LOOP-0909-on2`, 2026-09-09). 06 이후의 판정은 전부
+        # 최종 산출물을 봐야 하므로 여기서 2차 값으로 바꾼다.
+        after_findings = after["findings"]["findings"]
+        allowed = set(after["findings"]["input_refs"])
+        self.carry["findings_count"] = len(after_findings)
+        self.carry["stray_refs"] = sorted(
+            {
+                ref
+                for finding in after_findings
+                for ref in finding.get("refs", [])
+                if ref not in allowed
+            }
+        )
+
+        accepted = [
+            request
+            for request in io.read_json(requests_path).get("requests", [])
+            if (request.get("disposition") or {}).get("verdict") == "accepted"
+        ]
+        result.measures["requests_accepted"] = len(accepted)
+        result.measures["reused_artifacts"] = [e["artifact"] for e in reused]
+        result.measures["records_before"] = before["manifest"]["total_records"]
+        result.measures["records_after"] = after["manifest"]["total_records"]
+        result.measures["findings_before"] = len(before["findings"]["findings"])
+        result.measures["findings_after"] = len(after["findings"]["findings"])
+
+        return (
+            f"요청 {len(requests_doc.get('requests', []))}건 중 {len(accepted)}건 수용 / "
+            f"레코드 {before['manifest']['total_records']}→"
+            f"{after['manifest']['total_records']}건 "
+            f"(재사용 {len(reused)}개 아티팩트) / "
+            f"소견 {len(before['findings']['findings'])}→{len(after['findings']['findings'])}건"
+        )
+
     def do_stage05(self, result: Result) -> str:
         cmd = self.py(
             "-m", "src.stage05_interpret.interpret",
@@ -666,6 +870,10 @@ class Runner:
         )
         if self.args.mode == "assemble":
             cmd += ["--max-chunks", str(self.args.max_chunks)]
+        if self.args.loop:
+            # **1차에만 묻는다.** 2차 05는 react_loop.py 가 이 인자 없이
+            # 부르므로 3차 요청이 생길 자리가 없다(구조로 거는 가드레일).
+            cmd += ["--investigate"]
         code, out, _ = self.run_cmd(cmd)
         if code != 0:
             raise StepFailed(
@@ -814,6 +1022,11 @@ class Runner:
                 "--findings", str(self.case_dir / "05_findings.json"),
                 "--selection", str(self.case_dir / "03_selection.json"),
                 "--scenario", str(self.case_dir / "02_scenario.json"),
+                *(
+                    ["--requests", str(self.case_dir / "05_requests.json")]
+                    if (self.case_dir / "05_requests.json").is_file()
+                    else []
+                ),
                 "--parsed", str(self.parsed_dir),
                 "--out", str(self.case_dir / "07_report.md"),
             )
@@ -1046,6 +1259,17 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         help=(
             "--mode assemble 에서 질의를 몇 번까지 나눌 것인가. 기본 %(default)s. "
             "**이 값이 커버리지의 상한이다** — --limit 과 함께 올려야 는다"
+        ),
+    )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help=(
+            "05→02 자율 루프백을 켠다. 05가 소견을 낸 뒤 추가 조사를 요청하고 "
+            "02→03→04→05를 **한 번만** 다시 돈다. 관문이 하나 늘어 "
+            "'넓히기만 했는가'를 판정한다 (2차 input_refs ⊇ 1차, 시간·기법이 "
+            "상위집합, 인용 레코드 유지, 재사용 아티팩트의 건수 동일). **끄고 한 번 켜고 한 번 "
+            "돌려 나란히 놓는 것이 이 스위치의 쓰임이다**"
         ),
     )
     parser.add_argument(

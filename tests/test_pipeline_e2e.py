@@ -118,7 +118,9 @@ def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
     assert "--skip-existing" in logged[-1]["detail"]["message"]
 
 
-def _selection_for(tmp_path: Path, artifacts: "list[str]") -> Path:
+def _selection_for(
+    tmp_path: Path, artifacts: "list[str]", name: str = "03_selection.json"
+) -> Path:
     """아티팩트 몇 개만 요청하는 최소 선별 문서를 쓴다."""
     document = io.new_document(
         "C-999",
@@ -140,9 +142,52 @@ def _selection_for(tmp_path: Path, artifacts: "list[str]") -> Path:
         stats={"selected_count": len(artifacts), "deferred_count": 0, "excluded_count": 0},
     )
     schema.validate(document, "selection")
-    path = tmp_path / "03_selection.json"
+    path = tmp_path / name
     io.write_json(path, document)
     return path
+
+
+def test_parse_reuses_the_artifacts_whose_scope_did_not_change(tmp_path, capsys):
+    """루프백 2차 — 넓어진 것만 다시 읽는다(``--reuse-from``).
+
+    1차가 ``$MFT``·``evtx:Security`` 를 읽었고 2차가 거기에 ``prefetch`` 를
+    더한다. 증거 디렉터리는 비어 있으므로 **다시 읽으려 하면 반드시
+    실패한다** — 앞의 둘이 살아남는다는 것이 곧 다시 읽지 않았다는 증거다.
+
+    실패해야 할 것도 확인한다. ``prefetch`` 는 1차에 없었으므로 재사용 대상이
+    아니고, 증거가 없어 ``artifact_not_found`` 로 건너뛴다.
+    """
+    out = tmp_path / "04_parsed"
+    shutil.copytree(FIXTURES / "04_parsed", out)
+    before = (out / "mft.jsonl").read_bytes()
+
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+
+    round1 = _selection_for(tmp_path, ["$MFT", "evtx:Security"], "03_selection.round1.json")
+    round2 = _selection_for(tmp_path, ["$MFT", "evtx:Security", "prefetch"])
+
+    code = parse_mod.main(
+        [
+            "--in", str(round2),
+            "--out", str(out),
+            "--evidence", str(evidence_dir),
+            "--reuse-from", str(round1),
+        ]
+    )
+    assert code == 0
+
+    # 재사용한 파일은 **한 바이트도 바뀌지 않는다.**
+    assert (out / "mft.jsonl").read_bytes() == before
+
+    manifest = io.read_json(out / "_manifest.json")
+    reused = {entry["artifact"] for entry in manifest["files"] if entry.get("reused")}
+    assert reused == {"$MFT", "evtx:Security"}
+    # 매니페스트는 04단계가 **자기가 한 일**을 적는 곳이다. 안 읽은 것을
+    # 읽은 것처럼 적으면 안 되고, 그래도 합계는 파일과 맞아야 한다.
+    assert manifest["total_records"] == sum(e["record_count"] for e in manifest["files"])
+    assert {entry["artifact"] for entry in manifest["skipped"]} == {"prefetch"}
+    assert "재사용" in capsys.readouterr().out
 
 
 def test_parse_separates_not_applicable_from_not_collected(tmp_path, monkeypatch):
@@ -492,6 +537,60 @@ def run_pipeline(case_dir: Path) -> None:
          "--selection", f"{c}/03_selection.json", "--scenario", f"{c}/02_scenario.json",
          "--parsed", f"{c}/04_parsed", "--out", f"{c}/07_report.md"]
     ) == 0
+
+
+def test_the_loopback_runs_from_the_request_to_the_second_selection(case):
+    """05가 요청을 내고 → 02가 넓히고 → 03이 더 고른다. 스텁 관통.
+
+    ``StubBackend`` 는 호출마다 같은 파일을 돌려주므로, 조립 경로가
+    ``05_selection.json`` 하나에 선별·종합을 같이 담은 것과 **똑같은
+    방식으로** ``investigation_requests`` 를 얹어 두었다.
+
+    여기서 확인하는 것은 **배선**이다 — 05가 낸 요청이 02단계 확장이 읽는
+    형식 그대로이고, 그 결과가 03단계에서 실제로 아티팩트를 더 열어야 한다.
+    한 자리라도 어긋나면 루프백은 조용히 아무 일도 하지 않는다.
+    """
+    from src.stage02_normalize import expand as expand_mod
+
+    c = str(case)
+    assert normalize_mod.main(
+        ["--in", f"{c}/01_input.json", "--out", f"{c}/02_scenario.json",
+         "--llm", "stub", "--replay", str(FIXTURES / "02_scenario.json")]
+    ) == 0
+    assert select_mod.main(
+        ["--in", f"{c}/02_scenario.json", "--out", f"{c}/03_selection.json",
+         "--mappings", str(MAPPINGS)]
+    ) == 0
+    # 05는 조립 경로(기본)로 돈다. --investigate 는 1차에만 붙는다.
+    assert interpret_mod.main(
+        ["--in", f"{c}/04_parsed", "--scenario", f"{c}/02_scenario.json",
+         "--selection", f"{c}/03_selection.json", "--mappings", str(MAPPINGS),
+         "--out", f"{c}/05_findings.json",
+         "--llm", "stub", "--replay", str(FIXTURES / "05_selection.json"),
+         "--investigate"]
+    ) == 0
+
+    requests_doc = io.read_json(case / "05_requests.json")
+    schema.validate(requests_doc, "investigation")
+    assert requests_doc["round"] == 1
+    # 05가 pivot_time 을 채웠는가. 모델은 근거 레코드만 고른다.
+    widen = [r for r in requests_doc["requests"] if r["type"] == "expand_time_range"]
+    assert widen and widen[0]["pivot_time"].endswith("Z")
+
+    assert expand_mod.main(
+        ["--scenario", f"{c}/02_scenario.json", "--requests", f"{c}/05_requests.json",
+         "--findings", f"{c}/05_findings.json", "--selection", f"{c}/03_selection.json",
+         "--out", f"{c}/02_scenario.round2.json", "--mappings", str(MAPPINGS)]
+    ) == 0
+    assert select_mod.main(
+        ["--in", f"{c}/02_scenario.round2.json", "--out", f"{c}/03_selection.round2.json",
+         "--mappings", str(MAPPINGS)]
+    ) == 0
+
+    first = {e["artifact"] for e in io.read_json(case / "03_selection.json")["selected"]}
+    second = {e["artifact"] for e in io.read_json(case / "03_selection.round2.json")["selected"]}
+    # **루프백이 실제로 무언가를 열었는가.** 그리고 1차가 본 것을 잃지 않았는가.
+    assert first < second
 
 
 def test_the_whole_pipeline_runs_and_every_stage_validates(case):

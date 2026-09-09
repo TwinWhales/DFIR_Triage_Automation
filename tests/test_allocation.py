@@ -1264,3 +1264,41 @@ def test_packet_members_are_kept_in_the_same_chunk_when_the_packet_fits():
     chunks = allocation.chunk_records([first, noise, mate], packet_size)
 
     assert [record["ref"] for record in chunks[0]] == ["SYSMON#1", "PF#1"]
+
+
+# ============================================================ 핀 고정 (루프백 2차)
+#
+# 2차는 레코드가 늘어난 상태에서 **같은 토큰 예산**으로 다시 배분한다.
+# 1차가 인용한 레코드가 자리를 잃으면 최종 보고서가 1차보다 얇아지고,
+# 그것은 "증거를 더 봤더니 소견이 사라졌다"가 된다.
+
+
+def test_a_pinned_record_is_delivered_even_when_it_is_not_a_candidate():
+    # 플래그도 없고 시간창에도 안 걸려 평소라면 탈락하는 레코드다.
+    # 1차가 그것을 인용했다면 2차도 봐야 한다.
+    quiet = _usn(1, seconds=0, flags=())
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [quiet], signal_sources=SCOPE_SOURCES, limit=60, pinned_refs={"USN#1"}
+    )
+    assert [r["ref"] for r in chosen] == ["USN#1"]
+
+
+def test_a_pinned_record_survives_a_budget_that_leaves_no_ordinary_seat():
+    # 예산이 한 건도 못 담을 만큼 좁아도 보장 레인은 남는다. 자릿수 상한을
+    # 받지 않기 때문이고(must_review 와 같은 레인), 초과분은 Map 조각으로
+    # 나뉜다. 여기서 잃으면 뒤에서 되찾을 방법이 없다.
+    records = [_evtx(i, seconds=i) for i in range(20)]
+    chosen, _quotas, budget = allocation.allocate_records(
+        records, limit=60, char_budget=1, pinned_refs={"EVTX-SEC#7"}
+    )
+    assert "EVTX-SEC#7" in {r["ref"] for r in chosen}
+    assert budget.over_budget
+
+
+def test_pinning_a_ref_that_is_gone_is_not_an_error():
+    # 04를 다시 읽었는데 그 레코드가 없어진 경우다. 배분은 조용히 지나가고,
+    # 사람에게 알리는 것은 05단계가 한다(interpret.main 의 경고).
+    chosen, _quotas, _budget = allocation.allocate_records(
+        [_evtx(1)], limit=60, pinned_refs={"MFT#99999"}
+    )
+    assert [r["ref"] for r in chosen] == ["EVTX-SEC#1"]

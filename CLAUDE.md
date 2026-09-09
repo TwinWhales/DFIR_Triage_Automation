@@ -164,14 +164,12 @@ Remove-Item Env:DFIR_LIVE_MODEL, Env:DFIR_LIVE_TIMEOUT
 테스트·리플레이용 백엔드다.
 
 **모델 태그를 먼저 확인한다.** 지금 이 기계에 있는 것은 `qwen2.5:latest`
-(4.7GB, 7B)·`qwen2.5:14b`·`nomic-embed-text:latest` 다
-(2026-09-08 `ollama list` 확인). **`qwen2.5:7b` 는 없다** — `live_check.py`
-기본값 `qwen2.5:7b-instruct-q4_K_M` 도 없으므로 `--model qwen2.5:latest` 를
-명시해야 02단계에서 안 멈춘다. `start.bat` 74~89줄의
-`findstr /I "qwen2.5:7b"` 관문은 지금 상태로는 통과하지 못한다.
+(4.7GB, 7B)·`qwen2.5:7b`·`qwen2.5:14b`·`nomic-embed-text:latest` 다
+(2026-09-09 `ollama list` 확인). 기본 태그로 `qwen2.5:latest` 또는 `qwen2.5:7b`를
+사용할 수 있다.
 
-**이 줄은 기계 상태이므로 낡는다.** 2026-09-07 에는 정반대였다 — `7b` 하나만
-있었다. 그 전 2026-09-04 에는 지금과 같았다. 없는 태그를 넘기면 02단계에서
+**이 줄은 기계 상태이므로 낡는다.** 2026-09-07 에는 `7b`만 있었고, 09-08에는
+`latest`만 있었으며, 09-09에는 둘 다 설치되었다. 없는 태그를 넘기면 02단계에서
 멈추므로, 적혀 있는 것을 믿지 말고 `ollama list` 로 먼저 보고 부른다.
 
 **목표 시나리오는 키오스크다.** `C-001-webshell`은 지금 있는 유일한 벤치마크
