@@ -30,7 +30,19 @@ from ..stage05_interpret.incident_packet import _hash_keys
 __all__ = ["AXES", "UBIQUITOUS_ACCOUNTS", "observations_of", "build_links"]
 
 #: 상관 축. 순서가 곧 보고서에 실리는 순서다 — 지어내기 어려운 것부터.
-AXES = ("hash", "network", "filename", "path", "account")
+#:
+#: ``peer`` 는 다른 축과 **조인 방식이 다르다.** 나머지는 "같은 값이 두 노드에
+#: 있었다"인데, 이쪽은 **"A 가 기록한 원격 주소 == B 의 자기 주소"** 다.
+#: 그래서 방향이 값에서 나온다 — 시각 순서가 아니라 A 의 레코드가 "나는 B 로
+#: 붙었다"고 말한다. 횡적 이동의 유일한 직접 증거이고, 같은 외부 C2 를 공유한
+#: 것(``network``)과는 뜻이 다르다.
+AXES = ("hash", "peer", "network", "filename", "path", "account")
+
+#: Sysmon 네트워크 연결(EID 3)에서 **자기 주소**를 읽을 때 쓰는 필드.
+#: ``Initiated`` 가 참이면 이 기계가 건 연결이므로 ``SourceIp`` 가 자기 것이다.
+#: 거짓(수신)이면 ``SourceIp`` 는 상대 주소이고, 실측에서 그쪽에는 멀티캐스트·
+#: 브로드캐스트가 모인다(224.0.0.251·ff02::fb·x.x.x.255).
+_NETWORK_EVENT_ID = 3
 
 #: 계정 축에서 뺄 이름. 모든 윈도우 기계에 있으므로 노드를 이어도 뜻이 없다.
 #: **이것은 베이스라인이 아니다** — 어느 기계에나 있는 내장 계정만 뺀다.
@@ -112,6 +124,26 @@ def _network_keys(canon: dict[str, Any]) -> set[str]:
     return keys
 
 
+def _self_address(record: dict[str, Any]) -> "str | None":
+    """이 레코드가 드러내는 **이 노드 자신의** 주소. 없으면 ``None``.
+
+    질문에 IP 가 없어도 노드를 이으려면 각 노드의 주소를 알아야 하는데,
+    ``02_scenario`` 의 ``entities.hosts`` 는 사람이 적어 준 것이라 두 줄짜리
+    신고에는 없다(``키오스크`` 처럼 이름만 온다). 그래서 증거에서 읽는다.
+
+    **아웃바운드만 본다.** ``Initiated`` 가 거짓인 수신 연결의 ``SourceIp`` 는
+    상대 주소이고, 실측에서 그쪽에는 멀티캐스트·브로드캐스트가 모인다.
+    """
+    if record.get("event_id") != _NETWORK_EVENT_ID:
+        return None
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        return None
+    if str(fields.get("Initiated")).strip().lower() != "true":
+        return None
+    return _network_key(fields.get("SourceIp"))
+
+
 def _keys_of(record: dict[str, Any]) -> dict[str, set[str]]:
     """레코드 하나가 각 축에 내놓는 값."""
     canon = record.get("canonical")
@@ -133,6 +165,10 @@ def _keys_of(record: dict[str, Any]) -> dict[str, set[str]]:
     account = _account_key(canon.get("user"))
     if account:
         keys["account"].add(account)
+
+    self_address = _self_address(record)
+    if self_address:
+        keys["peer"].add(self_address)
     return keys
 
 
@@ -242,9 +278,59 @@ def build_links(per_node: dict[str, dict], node_count: int) -> dict[str, Any]:
             entry["grade"] = "warning" if worst == _GRADE_ORDER["warning"] else "passed"
             links.append(entry)
 
+    links.extend(_peer_links(per_node))
+
     links.sort(key=_chain_order)
     context.sort(key=_chain_order)
     return {"links": links, "context_links": context, "ubiquitous_values": ubiquitous}
+
+
+def _peer_links(per_node: dict[str, dict]) -> list[dict[str, Any]]:
+    """**A 가 기록한 원격 주소가 B 의 자기 주소인** 연결. 방향이 있다.
+
+    다른 축과 조인이 다르다 — 같은 값을 두 노드가 **각자 다른 자격으로**
+    내놓는다. B 는 ``peer``(내 주소가 이것이다), A 는 ``network``(나는 이
+    주소로 붙었다). 그래서 화살표가 시각이 아니라 **레코드에서** 나온다.
+
+    **인용 여부로 내리지 않는다.** 다른 축은 흔한 값이 배경일 수 있어
+    소견이 인용한 것만 체인에 올리지만(``whoami.exe`` 가 그랬다), 이 축의
+    값은 **이 캠페인의 다른 노드가 자기 주소라고 말한 것**이라 배경일 수
+    없다. 판정은 ``observed`` 로 따로 둔다 — 파이썬이 레코드에서 읽은
+    사실이지 모델의 주장이 아니므로, 06 을 통과한 소견과 같은 딱지를 달면
+    보고서가 두 가지를 같은 말로 인쇄한다.
+
+    한 노드가 주소를 여럿 갖는 것은 정상이다(사내망 + 오버레이). 주소마다
+    링크를 따로 내되, 같은 (A, B) 쌍이 여러 주소로 이어지면 각각 남긴다 —
+    어느 경로로 붙었는지가 조사에 쓸모 있다.
+    """
+    peer_links: list[dict[str, Any]] = []
+    for destination, observations in per_node.items():
+        for (axis, address), landing in observations.items():
+            if axis != "peer":
+                continue
+            for source, other in per_node.items():
+                if source == destination:
+                    continue
+                departure = other.get(("network", address))
+                if departure is None:
+                    continue
+                # 순서가 곧 방향이다. 시각으로 다시 정렬하지 않는다 —
+                # 시계가 어긋난 두 노드에서 화살표가 뒤집힌다.
+                pair = [
+                    {k: v for k, v in departure.items() if k != "_moment"},
+                    {k: v for k, v in landing.items() if k != "_moment"},
+                ]
+                entry: dict[str, Any] = {
+                    "axis": "peer",
+                    "value": address,
+                    "grade": "observed",
+                    "observations": pair,
+                }
+                span = _span_seconds([departure, landing])
+                if span is not None:
+                    entry["span_seconds"] = span
+                peer_links.append(entry)
+    return peer_links
 
 
 def _span_seconds(observations: list[dict[str, Any]]) -> "float | None":

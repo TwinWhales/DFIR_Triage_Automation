@@ -201,14 +201,19 @@ def build(campaign: dict[str, Any], nodes: list[dict[str, Any]], *, generator: s
             "links": len(links),
             "links_passed": sum(1 for link in links if link["grade"] == "passed"),
             "links_warning": sum(1 for link in links if link["grade"] == "warning"),
+            "links_observed": sum(1 for link in links if link["grade"] == "observed"),
             "context_links": len(result["context_links"]),
             "ubiquitous_values": result["ubiquitous_values"],
         },
     )
 
 
+#: 등급 → 보고서 딱지. observed 는 소견 인용과 무관한 관측이다.
+_BADGES = {"passed": "🟢", "warning": "🟡", "observed": "🔵"}
+
 AXIS_LABELS = {
     "hash": "해시",
+    "peer": "노드 간 접속",
     "network": "네트워크",
     "filename": "파일명",
     "path": "경로",
@@ -223,7 +228,10 @@ def build_context(document: dict[str, Any]) -> dict[str, Any]:
         return {
             **link,
             "axis_label": AXIS_LABELS.get(link["axis"], link["axis"]),
-            "badge": "\U0001F7E2" if link.get("grade") == "passed" else "\U0001F7E1",
+            # peer 축은 모델이 아니라 파이썬이 레코드에서 읽은 사실이라
+            # 딱지를 따로 둔다. 같은 딱지를 달면 06 을 통과한 소견과
+            # 구별되지 않는다.
+            "badge": _BADGES.get(str(link.get("grade")), _BADGES["warning"]),
             "hops": " → ".join(item["node"] for item in observations),
             "at": observations[0].get("at", "미상"),
         }
@@ -318,7 +326,8 @@ def main(argv: "list[str] | None" = None) -> int:
     stats = document["stats"]
     print(
         f"{json_path}: 노드 {stats['nodes_ok']}/{stats['nodes_total']} / "
-        f"링크 {stats['links']}건 (통과 {stats['links_passed']} / 주의 {stats['links_warning']}) / "
+        f"링크 {stats['links']}건 (통과 {stats['links_passed']} / 주의 {stats['links_warning']}"
+        f" / 노드 간 접속 {stats['links_observed']}) / "
         f"참고 {stats['context_links']}건"
     )
     skipped = [node for node in document["nodes"] if node["status"] != "ok"]
