@@ -89,8 +89,18 @@ def _verdicts(case_dir: Path) -> "tuple[dict[str, str], str | None]":
     if not findings_path.is_file():
         return {}, "05_findings.json 없음"
 
-    verified = io.read_json(verified_path)
-    findings = io.read_json(findings_path)
+    try:
+        verified = io.read_json(verified_path)
+    except Exception as exc:  # noqa: BLE001 — 노드만 제외하고 캠페인은 계속 간다
+        return {}, f"06_verified.json 을 읽지 못했습니다: {exc}"
+    if not isinstance(verified, dict):
+        return {}, "06_verified.json 의 최상위 값이 JSON 객체가 아닙니다"
+    try:
+        findings = io.read_json(findings_path)
+    except Exception as exc:  # noqa: BLE001 — 노드만 제외하고 캠페인은 계속 간다
+        return {}, f"05_findings.json 을 읽지 못했습니다: {exc}"
+    if not isinstance(findings, dict):
+        return {}, "05_findings.json 의 최상위 값이 JSON 객체가 아닙니다"
     refs_by_id = {
         item["id"]: item.get("refs") or []
         for item in findings.get("findings", [])
@@ -149,7 +159,13 @@ def read_node(entry: dict[str, Any], cases_dir: Path) -> dict[str, Any]:
 
     scenario_path = case_dir / "02_scenario.json"
     if scenario_path.is_file():
-        hosts = (io.read_json(scenario_path).get("entities") or {}).get("hosts") or []
+        try:
+            scenario = io.read_json(scenario_path)
+            hosts = (scenario.get("entities") or {}).get("hosts") or []
+        except Exception as exc:  # noqa: BLE001 — 노드만 제외하고 캠페인은 계속 간다
+            node["status"] = "incomplete"
+            node["reason"] = f"02_scenario.json 을 읽지 못했습니다: {exc}"
+            return node
         if hosts:
             node["host"] = str(hosts[0])
 
@@ -237,6 +253,10 @@ def _mermaid(links: list[dict[str, Any]]) -> list[str]:
         observations = link["observations"]
         for left, right in zip(observations, observations[1:]):
             if left["node"] == right["node"]:
+                continue
+            if io.parse_timestamp(left.get("at")) is None or io.parse_timestamp(right.get("at")) is None:
+                # 시각이 없는 쪽을 뒤로 정렬했다는 이유만으로 이동 방향을
+                # 주장하지 않는다. 표에는 링크를 남기되 다이어그램에서 뺀다.
                 continue
             edges.setdefault((left["node"], right["node"]), set()).add(
                 AXIS_LABELS.get(link["axis"], link["axis"])

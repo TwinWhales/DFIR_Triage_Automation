@@ -176,6 +176,51 @@ def test_the_network_axis_reads_both_the_field_and_the_command_line():
     assert [(link["axis"], link["value"]) for link in document["links"]] == [("network", "192.168.0.153")]
 
 
+def test_the_network_axis_extracts_domain_hosts_from_command_line_urls():
+    """명령행 URL은 경로·포트가 달라도 같은 도메인 호스트로 이어진다."""
+    document = build(
+        node(
+            "kiosk",
+            [record("SYSMON#1", at="2026-09-10T01:00:00Z", CommandLine="curl https://C2.Example.Test:8443/a")],
+            {"SYSMON#1": "passed"},
+        ),
+        node(
+            "pos",
+            [record("SYSMON#9", at="2026-09-10T02:00:00Z", CommandLine="wget http://c2.example.test/b")],
+            {"SYSMON#9": "passed"},
+        ),
+    )
+    assert [(link["axis"], link["value"]) for link in document["links"]] == [
+        ("network", "c2.example.test")
+    ]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:8000/a",
+        "https://localhost.localdomain/b",
+        "http://127.23.45.67/c",
+        "http://[::1]/d",
+    ],
+)
+def test_command_line_loopback_urls_do_not_link_nodes(url):
+    """URL에서 뽑은 로컬 호스트와 루프백 주소는 노드 사이를 잇지 않는다."""
+    document = build(
+        node(
+            "kiosk",
+            [record("SYSMON#1", at="2026-09-10T01:00:00Z", CommandLine=f"curl {url}")],
+            {"SYSMON#1": "passed"},
+        ),
+        node(
+            "pos",
+            [record("SYSMON#9", at="2026-09-10T02:00:00Z", CommandLine=f"wget {url}")],
+            {"SYSMON#9": "passed"},
+        ),
+    )
+    assert document["links"] == []
+
+
 @pytest.mark.parametrize("account", ["SYSTEM", "DOM\\SYSTEM", "KIOSK01$", "Local Service"])
 def test_builtin_accounts_never_link_nodes(account):
     """어느 윈도우 기계에나 있는 계정으로 이으면 모든 노드가 이어진다."""
@@ -213,6 +258,60 @@ def test_a_missing_node_is_reported_not_skipped_silently():
     assert "보지 못한 것입니다" in text
 
 
+@pytest.mark.parametrize(
+    "broken_name",
+    ["05_findings.json", "06_verified.json", "02_scenario.json"],
+)
+def test_a_malformed_node_json_is_reported_as_incomplete(tmp_path, broken_name):
+    """한 노드의 JSON이 깨져도 예외를 전파하지 않고 그 노드만 제외한다."""
+    case = tmp_path / "C-broken"
+    (case / "04_parsed").mkdir(parents=True)
+    io.write_json(case / "05_findings.json", {"findings": []})
+    io.write_json(
+        case / "06_verified.json",
+        {"passed": [], "rejected": [], "unverifiable": []},
+    )
+    io.write_json(case / "02_scenario.json", {"entities": {"hosts": ["BROKEN01"]}})
+    (case / broken_name).write_text("{broken", encoding="utf-8")
+
+    result = campaign.read_node(
+        {"node": "broken", "case_id": "C-broken"},
+        tmp_path,
+    )
+
+    assert result["status"] == "incomplete"
+    assert broken_name in result["reason"]
+    assert "JSON 파싱 실패" in result["reason"]
+
+    document = build(node("healthy", [], {}), result)
+    assert document["stats"]["nodes_total"] == 2
+    assert document["stats"]["nodes_ok"] == 1
+    assert result["reason"] in campaign.render(campaign.build_context(document))
+
+
+@pytest.mark.parametrize("broken_name", ["05_findings.json", "06_verified.json"])
+@pytest.mark.parametrize("root", [[], "not-an-object", None])
+def test_a_non_object_node_json_is_reported_as_incomplete(tmp_path, broken_name, root):
+    """JSON 문법이 맞아도 최상위 값이 객체가 아니면 해당 노드만 제외한다."""
+    case = tmp_path / "C-broken"
+    (case / "04_parsed").mkdir(parents=True)
+    io.write_json(case / "05_findings.json", {"findings": []})
+    io.write_json(
+        case / "06_verified.json",
+        {"passed": [], "rejected": [], "unverifiable": []},
+    )
+    (case / broken_name).write_text(json.dumps(root), encoding="utf-8")
+
+    result = campaign.read_node(
+        {"node": "broken", "case_id": "C-broken"},
+        tmp_path,
+    )
+
+    assert result["status"] == "incomplete"
+    assert broken_name in result["reason"]
+    assert "JSON 객체가 아닙니다" in result["reason"]
+
+
 def test_no_links_reads_differently_when_there_is_nothing_to_compare():
     """'연결이 없다'와 '비교할 상대가 없다'는 다른 사실이다."""
     alone = campaign.render(
@@ -229,6 +328,31 @@ def test_no_links_reads_differently_when_there_is_nothing_to_compare():
         )
     )
     assert "공유된 값을 찾지 못했습니다" in pair
+
+
+def test_mermaid_omits_an_edge_when_an_observation_has_no_time():
+    """시각이 없는 관측을 뒤쪽 노드로 간주해 방향을 지어내지 않는다."""
+    document = build(
+        node(
+            "timed",
+            [record("SYSMON#1", at="2026-09-10T01:00:00Z", Hashes=f"SHA256={HASH}")],
+            {"SYSMON#1": "passed"},
+        ),
+        node(
+            "unknown",
+            [record("SYSMON#9", Hashes=f"SHA256={HASH}")],
+            {"SYSMON#9": "passed"},
+        ),
+    )
+
+    assert len(document["links"]) == 1
+    assert campaign._mermaid(document["links"]) == ["graph LR"]
+
+    document["links"][0]["observations"][1]["at"] = "2026-09-10T02:00:00Z"
+    assert campaign._mermaid(document["links"]) == [
+        "graph LR",
+        "  timed[timed] -->|해시| unknown[unknown]",
+    ]
 
 
 # ============================================================ 문서와 CLI
