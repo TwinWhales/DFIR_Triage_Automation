@@ -1,5 +1,14 @@
 # limitations-log.md — 해결된 것의 기록
 
+## 2026-09-09 — 05단계 조사 피드백 루프백(Investigation Loopback) 완성
+
+- 03단계에서 조건부 유예(Tier 2)되거나 시간창 밖으로 밀려난 아티팩트가 1차 분석 누락 시 영구 결손되던 한계(`limitations.md` 종전 3-1)를 해결했다.
+- 05단계 LLM이 1차 소견 도출 후 추가 조사 필요성을 판단하여 `05_requests.json`(`investigation.schema.json`)을 발행한다.
+- 02단계 확장(`expand.py`)이 피벗 시각 기준 시간창 확장, 기법 추가, 아티팩트 강제 선별(`--force-artifacts`)을 결정론적으로 적용한다.
+- 04단계 파서는 1차와 범위·기법이 동일한 아티팩트는 캐시를 그대로 재사용(`--reuse-from`)하여 중복 파싱 비용을 배제하고, 확장된 아티팩트만 증분 파싱한다.
+- 05단계 2차 배분은 1차가 인용한 핵심 레코드를 보장 레인(`--pin-refs`)에 고정하여 예산 초과로 인한 핵심 증거 방출을 방어한다.
+- 실물 관통 검증(`snapshot1/C`, `qwen2.5:latest`)에서 `$MFT` 유예 해제(4.8만 건 신규 파싱) 및 소견 4건 ➔ 17건(Passed 4 ➔ 14건) 확장을 실측 증명했다.
+
 ## 2026-09-08 — Incident packet 및 교차 corroboration 완성
 
 - Sysmon EID 1을 anchor로 시작/종료, 수명, 직접 자식, 2초 이내 fan-out을

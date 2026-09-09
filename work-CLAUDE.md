@@ -85,11 +85,15 @@
   - **`--reuse-from`이 세 갈래를 실물로 다 보여 줬다**: `$UsnJrnl`(41,207) · `registry:SYSTEM`(303)은 범위가 같아 **재사용**, `evtx:Sysmon`은 새 기법이 다른 `event_id`를 요청해 **다시 읽었고**(3,627→3,732), `$MFT`(48,330)·`evtx:PowerShell`(425)은 **새로** 읽었다.
   - **환각률 0%→12.5%를 개선 실패로 읽지 않는다.** 기준선의 0%는 소견이 4건뿐이라 나온 수다(`limitations.md` 3-5). 소견이 17건으로 늘자 `technique_unsupported` 2건이 걸렸다 — 검증기가 넓어진 표면에서 일한 것이다.
   - **실물이 관문 결함 둘을 잡았다. 스텁으로는 나올 수 없는 종류였다** (아래 별도 항목)
-- [ ] **7단계 — 문서**
-  - `docs/pipeline-io-spec.md` — `05_requests.json` 계약, `.round1` 이름 규약, 매니페스트 `reused`
-  - `README.md` — 05 ➔ 02 루프백(Tier 2 아티팩트 재수집) 기능 명시 (work-guide.md는 이미 삭제됨)
-  - `docs/limitations.md` 3-1 — **범위 축소.** 닫힌 것은 "2차에 열 수단이 없다"이고, 남는 것은 "`trigger` 문자열의 자동 재평가"다. 통째로 `limitations-log.md`로 옮기지 않는다
-  - `docs/llm-handover.md`(네 번째 질의), `CLAUDE.md`(`LOOP=1` 실행 예·새 어휘), `benchmark/README.md`
+- [x] **7단계 — 문서 완성** (2026-09-09)
+  - [x] `docs/pipeline-io-spec.md` — `05_requests.json` 계약, 디렉터리 트리, `investigation.schema.json`
+  - [x] `README.md` — 05 ➔ 02 루프백 ReAct 피드백 경로 다이어그램, `LOOP=1` / `--loop` 실행법, Opt-in 실무 권장 가이드
+  - [x] `docs/limitations.md` 3-1 — **범위 축소 및 신규 트레이드오프 기록.** 영구 결손 해소 + 서사(`incident_story`) 스킵 현상 및 기법 라벨 오배정 위험 구조적 증가 명시
+  - [x] `docs/limitations-log.md` — 05단계 조사 피드백 루프백 완성 기록 이전
+  - [x] `docs/llm-handover.md` — `investigate_system.txt` 4번째 질의 프롬프트 명세 반영
+  - [x] `CLAUDE.md` — 모델 태그 최신화 (`qwen2.5:7b` 및 `qwen2.5:latest` 사용 가능 반영)
+  - [x] `benchmark/README.md` — 루프백 관측 지표(소견 4➔17건, 환각률 12.5%, 소요 시간 ~495초) 반영
+
 
 ### 실물이 잡은 관문 결함 둘 (2026-09-09)
 

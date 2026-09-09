@@ -273,6 +273,7 @@ def _add_artifact(
     catalog: mapping_loader.Catalog,
     target_os: str,
     already_selected: "set[str]",
+    claimed: "set[str]",
 ) -> "str | None":
     """03단계에 강제 선별로 넘길 아티팩트를 고른다. 골랐으면 그 이름.
 
@@ -280,6 +281,12 @@ def _add_artifact(
     ``supported: false``인 아티팩트는 요청해도 03단계 ``_force_select``가
     ``unusable_reason``을 보고 올리지 않는다. 그대로 통과시키면 2차가
     아무것도 못 가져오면서 재파싱 시간만 쓴다.
+
+    ``claimed``는 **이 요청 묶음에서 이미 수용한 이름**이다. 같은 아티팩트를
+    두 번 요청하면 둘 다 수용돼 ``applied.artifacts``에 중복이 생기는데,
+    스키마가 그 배열에 ``uniqueItems``를 걸어 두었으므로 문서가 무효가 된다.
+    기법 쪽은 이 문제가 없다 — ``_add_technique``가 시나리오의
+    ``techniques``를 직접 보고, 그 목록은 수용할 때마다 자란다.
     """
     name = request["artifact"]
 
@@ -296,6 +303,18 @@ def _add_artifact(
         _reject(request, "already_selected", f"{name} 은 1차에서 이미 읽었습니다.")
         return None
 
+    # **어휘는 같고 문장이 다르다.** 스키마의 기각 사유에 "중복 요청"을
+    # 새로 만들지 않는다 — 두 경우 모두 "이미 볼 예정"이라는 같은 사실이고,
+    # 무엇 때문에 그런지는 detail 이 말한다.
+    if name in claimed:
+        _reject(
+            request,
+            "already_selected",
+            f"{name} 은 이 요청 묶음에서 이미 수용했습니다.",
+        )
+        return None
+
+    claimed.add(name)
     _accept(request, f"{name} 을 2차에 Tier 1 로 강제 선별합니다.")
     return name
 
@@ -318,6 +337,8 @@ def expand(
     """
     working = copy.deepcopy(scenario)
     outcome = Outcome(scenario=working, requests=requests)
+    #: 이 묶음에서 이미 수용한 아티팩트. 요청을 훑으며 자란다.
+    claimed: set[str] = set()
 
     for request in requests:
         # **근거가 먼저다.** 요청의 내용이 아무리 그럴듯해도 근거로 든
@@ -346,6 +367,7 @@ def expand(
                 catalog=catalog,
                 target_os=working["target_os"],
                 already_selected=already_selected,
+                claimed=claimed,
             )
             if added:
                 outcome.artifacts.append(added)
@@ -503,6 +525,23 @@ def main(argv: "list[str] | None" = None) -> int:
         # 다시 돌린 실행이 이전의 applied 를 물려받으면, 아무것도 반영하지
         # 않은 파일이 반영했다고 말한다.
         requests_doc.pop("applied", None)
+    # **쓰기 전에 본다.** 들어올 때 이미 검증한 문서지만 그 뒤에 우리가
+    # disposition 과 applied 를 얹었다. 그 손질이 스키마를 깨면 무효한 파일이
+    # 조용히 남고, 07 보고서와 관문이 한참 뒤에 그것을 발견한다 — 원인에서
+    # 멀어질수록 되짚기 어려워지는 자리다.
+    #
+    # 실제로 그런 적이 있다: 같은 아티팩트를 두 번 요청하면 둘 다 수용되어
+    # applied.artifacts 에 중복이 생겼는데, 스키마가 그 배열에 uniqueItems 를
+    # 걸어 두었는데도 검증이 없어 그대로 쓰였다(`_add_artifact` 의 claimed).
+    #
+    # **우리 결함이므로 즉시 멈춘다.** 재시도해도 같은 결과다 — 아래 2차
+    # 시나리오를 검증하는 자리와 같은 판단이고, log.abort 가 errors.jsonl 에
+    # 남기고 사유를 출력한 뒤 끝낸다.
+    try:
+        schema.validate(requests_doc, "investigation")
+    except schema.SchemaViolation as violation:
+        log.abort(STAGE, "schema_violation", violation.as_detail())
+
     io.write_json(args.requests, requests_doc)
 
     accepted = sum(

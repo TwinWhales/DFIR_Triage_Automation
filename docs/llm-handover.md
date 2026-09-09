@@ -549,6 +549,7 @@ Ollama 호출은 `src/common/llm.py`의 `OllamaBackend`에 있습니다.
 | `src/stage02_normalize/prompts/normalize_fewshot.json` | few-shot 예시 2개 |
 | `src/stage05_interpret/prompts/interpret_system.txt` | 해석 시스템 프롬프트 |
 | `src/stage05_interpret/prompts/claims_extract.txt` | 2회 호출용 (**미배선**) |
+| `src/stage05_interpret/prompts/investigate_system.txt` | 2차 조사 요청 시스템 프롬프트 (`--investigate` 활성화 시 4번째 질의) |
 
 `--no-fewshot` 옵션이 있어 few-shot 유무 비교를 바로 할 수 있습니다.
 
