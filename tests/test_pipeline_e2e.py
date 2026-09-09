@@ -118,7 +118,9 @@ def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
     assert "--skip-existing" in logged[-1]["detail"]["message"]
 
 
-def _selection_for(tmp_path: Path, artifacts: "list[str]") -> Path:
+def _selection_for(
+    tmp_path: Path, artifacts: "list[str]", name: str = "03_selection.json"
+) -> Path:
     """아티팩트 몇 개만 요청하는 최소 선별 문서를 쓴다."""
     document = io.new_document(
         "C-999",
@@ -140,9 +142,52 @@ def _selection_for(tmp_path: Path, artifacts: "list[str]") -> Path:
         stats={"selected_count": len(artifacts), "deferred_count": 0, "excluded_count": 0},
     )
     schema.validate(document, "selection")
-    path = tmp_path / "03_selection.json"
+    path = tmp_path / name
     io.write_json(path, document)
     return path
+
+
+def test_parse_reuses_the_artifacts_whose_scope_did_not_change(tmp_path, capsys):
+    """루프백 2차 — 넓어진 것만 다시 읽는다(``--reuse-from``).
+
+    1차가 ``$MFT``·``evtx:Security`` 를 읽었고 2차가 거기에 ``prefetch`` 를
+    더한다. 증거 디렉터리는 비어 있으므로 **다시 읽으려 하면 반드시
+    실패한다** — 앞의 둘이 살아남는다는 것이 곧 다시 읽지 않았다는 증거다.
+
+    실패해야 할 것도 확인한다. ``prefetch`` 는 1차에 없었으므로 재사용 대상이
+    아니고, 증거가 없어 ``artifact_not_found`` 로 건너뛴다.
+    """
+    out = tmp_path / "04_parsed"
+    shutil.copytree(FIXTURES / "04_parsed", out)
+    before = (out / "mft.jsonl").read_bytes()
+
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+
+    round1 = _selection_for(tmp_path, ["$MFT", "evtx:Security"], "03_selection.round1.json")
+    round2 = _selection_for(tmp_path, ["$MFT", "evtx:Security", "prefetch"])
+
+    code = parse_mod.main(
+        [
+            "--in", str(round2),
+            "--out", str(out),
+            "--evidence", str(evidence_dir),
+            "--reuse-from", str(round1),
+        ]
+    )
+    assert code == 0
+
+    # 재사용한 파일은 **한 바이트도 바뀌지 않는다.**
+    assert (out / "mft.jsonl").read_bytes() == before
+
+    manifest = io.read_json(out / "_manifest.json")
+    reused = {entry["artifact"] for entry in manifest["files"] if entry.get("reused")}
+    assert reused == {"$MFT", "evtx:Security"}
+    # 매니페스트는 04단계가 **자기가 한 일**을 적는 곳이다. 안 읽은 것을
+    # 읽은 것처럼 적으면 안 되고, 그래도 합계는 파일과 맞아야 한다.
+    assert manifest["total_records"] == sum(e["record_count"] for e in manifest["files"])
+    assert {entry["artifact"] for entry in manifest["skipped"]} == {"prefetch"}
+    assert "재사용" in capsys.readouterr().out
 
 
 def test_parse_separates_not_applicable_from_not_collected(tmp_path, monkeypatch):

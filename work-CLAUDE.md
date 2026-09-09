@@ -33,10 +33,13 @@
   - [x] `tests/test_schemas.py` — `ref`를 제약하는 스키마 목록에 `investigation` 추가 (기존 시험이 새 스키마를 잡아냈다)
   - **구현하며 하나 더 막았다**: 수집 시각 **뒤**를 축(`pivot_time`)으로 잡은 요청. 상한 클램프만으로는 1차의 끝과 수집 시각 사이 몇 초를 얻자고 재파싱을 통째로 돌리게 된다. 축이 증거 밖이면 `out_of_evidence`로 기각한다.
   - **관통 확인**: `T1041` 요청 하나가 03단계에서 `srum:NetworkUsage`를 새로 열었고 1차가 고른 셋은 그대로다. `psreadline_history` 요청은 `unsupported_artifact`로 기각됐다.
-- [ ] **2단계 — 04 부분 재사용** (1단계와 독립)
-  - `src/stage04_parse/parse.py`에 `--reuse-from`, `scope_key()`(정렬 후 비교), 매니페스트 항목 `"reused": true`
-  - `--skip-existing`과 동시 사용은 argparse 단계에서 거부 (두 "건너뛰기"의 뜻이 다르다)
-  - `tests/test_parse_scaffold.py` — 판정 네 갈래(같음/넓어짐/신규/1차 스킵)
+- [x] **2단계 — 04 부분 재사용** (2026-09-09)
+  - [x] `src/stage04_parse/parse.py`에 `--reuse-from`, `scope_key()`(재귀 정규화 후 비교), `reusable_entries()`, 매니페스트 항목 `"reused": true`
+  - [x] `--skip-existing`과 동시 사용은 argparse 단계에서 거부 (두 "건너뛰기"의 뜻이 다르다)
+  - [x] `tests/test_parse_scaffold.py` 9건 — `scope_key` 순서 무관·구분 유지·모르는 키, 판정 네 갈래(같음/넓어짐/신규/1차 스킵) + 산출물 유실
+  - [x] `tests/test_pipeline_e2e.py` — CLI 관통 1건. **재사용한 파일이 한 바이트도 안 바뀐다**를 증거 없는 디렉터리로 증명한다
+  - **재사용 조건은 셋 다 만족해야 한다**: 1차가 실제로 읽었고(매니페스트 `files`), 범위가 그대로이며, `.jsonl`이 실재한다. 1차 `skipped`는 재시도한다 — 파일을 못 연 것이라 파싱 비용이 없고 그 사이 증거를 다시 뽑았을 수 있다.
+  - **관통 확인**: 2차 선별(=1차 + `srum:NetworkUsage`)로 돌리니 `$MFT`·`evtx:Security`는 재사용, 나머지 둘만 다시 읽었고 `tools/inspect_jsonl.py` 네 대조가 전부 통과했다.
 - [ ] **3단계 — 05 후속 질의**
   - `src/stage05_interpret/llm_client.py`에 `investigation_schema()` + `propose_investigation()`
   - `src/stage05_interpret/prompts/investigate_system.txt` 신설
