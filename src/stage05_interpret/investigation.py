@@ -40,6 +40,8 @@ __all__ = [
     "pivots",
     "requestable_artifacts",
     "requestable_techniques",
+    "unavailable_artifacts",
+    "UNAVAILABLE_SKIP_REASONS",
 ]
 
 #: ``errors.jsonl`` 에 적을 단계. 이 질의는 05단계의 것이다.
@@ -88,10 +90,39 @@ def requestable_techniques(
     ]
 
 
+#: 1차 04단계가 남긴 스킵 사유 중 **이 증거에는 없다**는 뜻인 것.
+#:
+#: 그런 아티팩트를 2차에 요청해 봐야 04단계가 같은 자리에서 같은 사유로
+#: 다시 건너뛴다. 모델의 요청 한 자리와 2차 재파싱 시간을 함께 버리는 것이라
+#: 목록에서 미리 뺀다 — ``psreadline_history`` 를 파서가 없다고 빼는 것과
+#: 같은 판단이고, 다른 점은 **이번 증거에 한정된 사실**이라는 것뿐이다.
+#:
+#: 나머지 사유는 넣지 않았다. ``parser_missing`` 은 카탈로그의 ``supported``
+#: 가 이미 거르고, ``empty_artifact``(0바이트)와 ``version_not_applicable``
+#: (이 Windows 버전엔 없다)은 같은 부류로 보이지만 아직 실측으로 확인한
+#: 자리가 아니다. 넓히려면 그때 여기 한 줄을 더한다.
+UNAVAILABLE_SKIP_REASONS = frozenset({"artifact_not_found"})
+
+
+def unavailable_artifacts(manifest: "dict[str, Any] | None") -> set[str]:
+    """1차가 **증거에서 찾지 못한** 아티팩트 이름.
+
+    04단계 매니페스트의 ``skipped`` 를 읽는다. 그 목록은 이 단계가 "안 한
+    일"을 적는 곳이므로(``stage04_parse.parse.note_skip``), 무엇이 없었는지를
+    아는 유일한 산출물이다.
+    """
+    return {
+        str(entry["artifact"])
+        for entry in (manifest or {}).get("skipped") or []
+        if entry.get("artifact") and entry.get("reason") in UNAVAILABLE_SKIP_REASONS
+    }
+
+
 def requestable_artifacts(
     scenario: dict[str, Any],
     selection: dict[str, Any],
     catalog: mapping_loader.Catalog,
+    unavailable: "set[str] | None" = None,
 ) -> list[tuple[str, str]]:
     """추가로 수집할 수 있는 아티팩트. ``(이름, 설명)``.
 
@@ -103,13 +134,22 @@ def requestable_artifacts(
     설명을 함께 보내는 이유는 이름만으로는 ``srum:NetworkConnectivity`` 가
     무엇인지 모델이 알 수 없기 때문이다. 열거형은 무엇을 낼 수 있는지만
     정하고, 무엇을 골라야 하는지는 이 설명이 말한다.
+
+    ``unavailable`` 은 1차가 **증거에서 찾지 못한** 이름이다
+    (``unavailable_artifacts``). 카탈로그와 OS 로는 읽을 수 있는 아티팩트지만
+    이번 증거에 없으므로, 요청받아도 04단계가 같은 사유로 다시 건너뛴다.
+    실측에서 이 수집에 없는 ``evtx:AssignedAccess`` 3종과
+    ``evtx:DriverFrameworks`` 가 목록에 올라 있었다(`K-LOOP-0909-on`).
     """
     target_os = scenario.get("target_os", "windows")
     already = {entry["artifact"] for entry in selection.get("selected", [])}
+    missing = unavailable or set()
     return [
         (name, spec.description or "")
         for name, spec in sorted(catalog.artifacts.items())
-        if name not in already and spec.unusable_reason(target_os) is None
+        if name not in already
+        and name not in missing
+        and spec.unusable_reason(target_os) is None
     ]
 
 
@@ -123,6 +163,7 @@ def collect(
     selection: dict[str, Any],
     catalog: mapping_loader.Catalog,
     mappings_dir: str,
+    manifest: "dict[str, Any] | None" = None,
     queries: Any = None,
 ) -> "dict[str, Any] | None":
     """모델에게 묻고 ``05_requests.json`` 문서를 만든다.
@@ -134,7 +175,9 @@ def collect(
     """
     table = pivots(records)
     techniques = requestable_techniques(scenario, mappings_dir)
-    artifacts = requestable_artifacts(scenario, selection, catalog)
+    artifacts = requestable_artifacts(
+        scenario, selection, catalog, unavailable_artifacts(manifest)
+    )
 
     if not (table or techniques or artifacts):
         # 열거형이 전부 비면 모델이 낼 수 있는 요청이 없다. 빈 enum 을 주고

@@ -337,3 +337,75 @@ def test_investigate_without_a_selection_stops_before_asking(tmp_path, capsys):
     )
     assert code == 2
     assert "--selection 이 필요하다" in capsys.readouterr().err
+
+
+# ==================================================== 증거에 없는 것은 안 묻는다
+#
+# 카탈로그와 OS 로는 읽을 수 있지만 **이번 증거에 없는** 아티팩트가 있습니다.
+# 요청받아도 04단계가 같은 사유로 다시 건너뛰므로, 모델의 요청 한 자리와
+# 2차 재파싱 시간을 함께 버립니다. 실측(K-LOOP-0909-on)에서 이 수집에 없는
+# evtx:AssignedAccess 3종과 evtx:DriverFrameworks 가 목록에 올라 있었습니다.
+
+
+def _manifest(*skipped):
+    return {
+        "files": [{"artifact": "$MFT", "path": "mft.jsonl", "record_count": 3}],
+        "skipped": list(skipped),
+    }
+
+
+def test_what_the_first_round_could_not_find_is_read_from_the_manifest():
+    manifest = _manifest(
+        {"artifact": "evtx:DriverFrameworks", "reason": "artifact_not_found", "message": "없음"},
+        {"artifact": "evtx:BITS", "reason": "empty_artifact", "message": "0바이트"},
+    )
+    assert investigation.unavailable_artifacts(manifest) == {"evtx:DriverFrameworks"}
+
+
+def test_no_manifest_filters_nothing():
+    """못 찾았다는 사실과 모른다는 것은 다르다. 04를 안 돌렸으면 거르지 않는다."""
+    assert investigation.unavailable_artifacts(None) == set()
+    assert investigation.unavailable_artifacts({}) == set()
+
+
+def test_an_artifact_the_evidence_does_not_have_is_not_offered(scenario, catalog):
+    manifest = _manifest(
+        {"artifact": "evtx:AssignedAccess", "reason": "artifact_not_found", "message": "없음"}
+    )
+    offered = dict(
+        investigation.requestable_artifacts(
+            scenario,
+            {"selected": []},
+            catalog,
+            investigation.unavailable_artifacts(manifest),
+        )
+    )
+
+    assert "evtx:AssignedAccess" not in offered
+    # 나머지는 그대로다 — 하나가 없다고 목록이 좁아지면 안 된다.
+    assert "prefetch" in offered and "evtx:AssignedAccessAdmin" in offered
+
+
+def test_collect_passes_the_manifest_through(tmp_path, scenario, catalog):
+    """배선이 끊기면 조용히 예전대로 돈다 — 목록에 그대로 오른다."""
+    backend = _FakeBackend(_answer())
+    client = InterpretClient(backend)
+    manifest = _manifest(
+        {"artifact": "prefetch", "reason": "artifact_not_found", "message": "없음"}
+    )
+
+    investigation.collect(
+        client,
+        scenario,
+        _findings(),
+        _records(),
+        errlog.ErrorLog(tmp_path / "errors.jsonl"),
+        selection={"selected": []},
+        catalog=catalog,
+        mappings_dir=str(MAPPINGS),
+        manifest=manifest,
+    )
+
+    _system, user = backend.calls[0]
+    assert "prefetch" not in user
+    assert "registry:SOFTWARE" in user

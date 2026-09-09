@@ -487,3 +487,97 @@ def test_rejections_are_counted_as_measurements_not_failures(tmp_path):
     assert rejected[0]["stage"] == "05_interpret"
     assert rejected[0]["detail"]["value"] == "unknown_technique"
     assert rejected[0]["type"] in errlog.ERROR_TYPES
+
+
+# ==================================================== 한 묶음 안의 중복
+#
+# 두 결함이 서로를 가리고 있던 자리입니다. `_add_artifact` 가 1차 선별만
+# 보느라 같은 아티팩트를 두 번 수용했고, 저장 전 검증이 없어 `uniqueItems` 를
+# 어긴 문서가 조용히 쓰였습니다.
+
+
+def test_the_same_artifact_asked_twice_is_accepted_once(scenario, catalog, mapped):
+    outcome = run(
+        scenario,
+        [request_artifact("prefetch"), request_artifact("prefetch")],
+        catalog=catalog,
+        mapped=mapped,
+    )
+
+    assert verdicts(outcome) == ["accepted", "rejected"]
+    assert reasons(outcome) == ["applied", "already_selected"]
+    assert outcome.artifacts == ["prefetch"]
+    # 어휘는 1차 중복과 같고 문장이 다르다 — 무엇 때문에 기각인지는 detail 이 말한다.
+    assert "이 요청 묶음" in outcome.requests[1]["disposition"]["detail"]
+
+
+def test_the_same_technique_asked_twice_is_added_once(scenario, catalog, mapped):
+    """기법 쪽은 원래 안전하다 — 시나리오의 목록을 직접 보기 때문이다.
+
+    그 성질에 기대고 있으므로 시험으로 못 박는다.
+    """
+    outcome = run(
+        scenario,
+        [request_technique("T1041"), request_technique("T1041")],
+        catalog=catalog,
+        mapped=mapped,
+    )
+
+    assert reasons(outcome) == ["applied", "already_selected"]
+    assert outcome.techniques == ["T1041"]
+    assert [t["id"] for t in outcome.scenario["techniques"]].count("T1041") == 1
+
+
+def test_applied_never_repeats_an_artifact(scenario, catalog, mapped):
+    """``applied.artifacts`` 는 03단계에 ``--force-artifacts`` 로 그대로 나간다.
+
+    중복이 남으면 같은 이름이 두 번 넘어가고, 스키마의 ``uniqueItems`` 도
+    어겨 문서가 무효가 된다.
+    """
+    outcome = run(
+        scenario,
+        [request_artifact("prefetch"), request_artifact("prefetch")],
+        catalog=catalog,
+        mapped=mapped,
+    )
+    applied = outcome.applied()
+    assert applied["artifacts"] == ["prefetch"]
+    assert len(applied["artifacts"]) == len(set(applied["artifacts"]))
+
+
+def test_the_cli_writes_a_document_that_validates_after_duplicates(tmp_path):
+    """저장된 파일이 스키마를 만족해야 한다. 뒤 단계가 그것을 읽는다."""
+    case = _case(tmp_path, [request_artifact("prefetch"), request_artifact("prefetch")])
+    assert _run_cli(case) == 0
+
+    document = io.read_json(case / "05_requests.json")
+    schema.validate(document, "investigation")
+    assert document["applied"]["artifacts"] == ["prefetch"]
+
+
+def test_an_invalid_request_document_is_never_written(tmp_path, monkeypatch):
+    """쓰기 전 검증이 실제로 막는가.
+
+    우리 손질이 스키마를 깨는 상황을 억지로 만든다. 무효한 파일을 남기면
+    07 보고서와 관문이 한참 뒤에 그것을 발견하고, 그때는 원인에서 멀다.
+    **우리 결함이므로 멈춘다** — errors.jsonl 에 사유가 남는다.
+    """
+    case = _case(tmp_path, [request_artifact("prefetch")])
+    original = expand_mod.expand
+
+    def duplicated(*args, **kwargs):
+        outcome = original(*args, **kwargs)
+        outcome.artifacts.append("prefetch")  # uniqueItems 위반
+        return outcome
+
+    monkeypatch.setattr(expand_mod, "expand", duplicated)
+
+    with pytest.raises(SystemExit) as stop:
+        _run_cli(case)
+    assert stop.value.code == 1
+
+    # 파일은 1차가 낸 그대로다 — disposition 도 applied 도 없다.
+    assert "applied" not in io.read_json(case / "05_requests.json")
+    logged = [json.loads(line) for line in (case / "errors.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert logged[-1]["type"] == "schema_violation"
+    assert logged[-1]["action"] == "abort"

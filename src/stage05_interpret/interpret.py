@@ -1492,6 +1492,13 @@ def main(
             selection=selection,
             catalog=catalog,
             mappings_dir=args.mappings,
+            # **1차가 증거에서 못 찾은 것은 요청 목록에서 뺀다.** 매니페스트가
+            # 없으면 거르지 않는다 — 못 찾았다는 사실과 모른다는 것은 다르다.
+            manifest=(
+                io.read_json(manifest_path)
+                if (manifest_path := Path(args.in_path) / "_manifest.json").is_file()
+                else None
+            ),
             queries=queries,
         )
         if requests_doc is not None:
