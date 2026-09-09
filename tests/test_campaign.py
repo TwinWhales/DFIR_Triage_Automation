@@ -499,3 +499,180 @@ def test_the_three_node_fixture_recovers_the_whole_chain(tmp_path):
     text = (out / "08_campaign.md").read_text(encoding="utf-8")
     assert "backup" in text
     assert "보지 못한 것입니다" in text
+
+
+def test_two_nodes_that_pick_the_same_host_name_get_none(tmp_path):
+    """같은 이름을 두 노드가 집으면 그 이름은 어느 쪽도 특정하지 못한다.
+
+    한 사건을 **한 질문으로** 조사하면 노드마다 시나리오가 같아져
+    `entities.hosts[0]` 이 셋 다 같아진다. 그때 표에 그 이름을 적으면
+    POS 를 키오스크라고 부르게 된다 (`K2L-20260908` 실측).
+    """
+    nodes = [
+        {"node": "kiosk", "case_id": "A", "status": "ok", "host": "키오스크"},
+        {"node": "pos", "case_id": "B", "status": "ok", "host": "키오스크"},
+        {"node": "mgmt", "case_id": "C", "status": "ok", "host": "관리서버"},
+    ]
+    campaign.drop_ambiguous_hosts(nodes)
+
+    assert "host" not in nodes[0]
+    assert "host" not in nodes[1]
+    # 혼자 집은 이름은 남는다 — 노드마다 다른 신고문을 받은 실행이 그렇다.
+    assert nodes[2]["host"] == "관리서버"
+
+
+# ============ OS 자리의 값은 노드를 잇지 않는다 — K2L2 가 드러낸 자리 (2026-09-10)
+
+
+def test_a_windows_binary_does_not_link_two_nodes():
+    """두 기계가 같은 윈도우를 깔았다는 말이지 파일이 옮겨졌다는 말이 아니다.
+
+    실측(`K2L2-20260908`): 체인에 오른 🟢 5건이 전부
+    `c:/windows/system32/schtasks.exe`·`.../whoami.exe` 였다. 앞선
+    실행에서는 같은 자리에 `dismhost.exe` 가 있었다.
+    """
+    from src.stage08_campaign import correlate
+
+    def node(name, ref):
+        return correlate.observations_of(
+            name,
+            [{
+                "ref": ref, "artifact": "evtx:Sysmon", "event_id": 1,
+                "timestamp": "2026-09-07T13:38:59Z",
+                "canonical": {"subject_path": r"C:\Windows\System32\schtasks.exe"},
+            }],
+            {ref: "passed"},
+        )
+
+    result = correlate.build_links(
+        {"kiosk": node("kiosk", "SYSMON#1"), "mgmt": node("mgmt", "SYSMON#2")}, 2
+    )
+    assert result["links"] == []
+    assert result["os_background_values"] > 0
+    # 지우지 않는다 — 참고 표에 남아야 무엇을 왜 뺐는지 되짚을 수 있다.
+    assert result["context_links"]
+
+
+def test_a_file_outside_the_os_directories_still_links():
+    """공격자가 옮긴 파일은 그대로 이어져야 한다."""
+    from src.stage08_campaign import correlate
+
+    def node(name, ref):
+        return correlate.observations_of(
+            name,
+            [{
+                "ref": ref, "artifact": "evtx:Sysmon", "event_id": 1,
+                "timestamp": "2026-09-08T07:46:38Z",
+                "canonical": {"subject_path": r"C:\exfil\tool.exe"},
+            }],
+            {ref: "passed"},
+        )
+
+    result = correlate.build_links(
+        {"kiosk": node("kiosk", "SYSMON#1"), "mgmt": node("mgmt", "SYSMON#2")}, 2
+    )
+    assert [link["axis"] for link in result["links"]] == ["filename", "path"]
+    assert result["os_background_values"] == 0
+
+
+def test_an_unreadable_path_is_not_treated_as_background():
+    """모르는 것을 배경으로 내리면 증거가 조용히 사라진다."""
+    from src.stage08_campaign.correlate import _os_owned
+
+    assert _os_owned("c:/windows/system32/cmd.exe")
+    assert _os_owned("d:/program files/app/a.exe")
+    assert not _os_owned("c:/exfil/rclone.exe")
+    assert not _os_owned("//server/share/tool.exe")
+    assert not _os_owned("tool.exe")
+    assert not _os_owned("")
+
+
+def test_a_planted_file_inside_system32_is_a_known_blind_spot():
+    r"""**이 필터가 만드는 사각지대를 못 박아 둔다.**
+
+    공격자가 `C:\Windows\System32\` 안에 파일을 놓으면(T1036.005) 그
+    해시가 두 노드에서 같아도 이 필터가 배경으로 내린다. 베이스라인이
+    없어서 "이 자리에 원래 있던 파일인가"를 물을 수 없기 때문이다
+    (docs/limitations.md). 이 시험이 깨졌다면 그 사각지대가 닫힌 것이므로
+    한계 문서도 함께 고친다.
+    """
+    from src.stage08_campaign import correlate
+
+    def node(name, ref):
+        return correlate.observations_of(
+            name,
+            [{
+                "ref": ref, "artifact": "evtx:Sysmon", "event_id": 1,
+                "timestamp": "2026-09-08T07:46:38Z",
+                "canonical": {"subject_path": r"C:\Windows\System32\svch0st.exe"},
+            }],
+            {ref: "passed"},
+        )
+
+    result = correlate.build_links(
+        {"kiosk": node("kiosk", "SYSMON#1"), "mgmt": node("mgmt", "SYSMON#2")}, 2
+    )
+    assert result["links"] == [], "사각지대가 닫혔다면 docs/limitations.md 도 고친다"
+
+
+def test_the_context_table_is_capped_but_the_document_is_not():
+    """**문서가 아니라 표를 자른다.**
+
+    실측(`K2L-20260908`): 참고 연결 44,471건이 그대로 실려 보고서가
+    44,538줄이었다. 본문은 55줄이다.
+    """
+    document = {
+        "case_id": "C", "generated_at": "2026-09-10T00:00:00Z",
+        "nodes": [], "links": [],
+        "stats": {"nodes_ok": 2, "nodes_total": 2, "links": 0, "links_passed": 0,
+                  "links_warning": 0, "links_observed": 0, "context_links": 0,
+                  "ubiquitous_values": 0},
+        "context_links": [
+            {
+                "axis": "path", "value": f"c:/x/{index}.exe",
+                "observations": [
+                    {"node": "a", "ref": f"MFT#{index}", "at": "2026-09-08T00:00:00Z"},
+                    {"node": "b", "ref": f"MFT#{index+1}", "at": "2026-09-08T00:00:01Z"},
+                ],
+            }
+            for index in range(campaign.MAX_CONTEXT_ROWS * 3)
+        ],
+    }
+    context = campaign.build_context(document)
+
+    assert context["context_shown"] == campaign.MAX_CONTEXT_ROWS
+    assert context["context_total"] == campaign.MAX_CONTEXT_ROWS * 3
+    assert len(context["context_links"]) == campaign.MAX_CONTEXT_ROWS
+    # 문서는 그대로다 — 자른 것은 표뿐이다.
+    assert len(document["context_links"]) == campaign.MAX_CONTEXT_ROWS * 3
+
+    rendered = campaign.render(context)
+    assert f"{campaign.MAX_CONTEXT_ROWS * 3}건 중 {campaign.MAX_CONTEXT_ROWS}건만" in rendered
+
+
+def test_the_context_table_prefers_the_axes_that_are_harder_to_fake():
+    """시간순으로 앞에서 자르면 가장 오래된 배경 잡음이 실린다."""
+    def link(axis, at):
+        return {
+            "axis": axis, "value": f"{axis}-{at}",
+            "observations": [{"node": "a", "ref": "MFT#1", "at": at},
+                             {"node": "b", "ref": "MFT#2", "at": at}],
+        }
+
+    document = {
+        "case_id": "C", "generated_at": "2026-09-10T00:00:00Z",
+        "nodes": [], "links": [], "stats": {},
+        # 경로 축이 먼저이고 더 이르지만, 해시가 밀려나면 안 된다.
+        "context_links": (
+            [link("path", f"2026-01-0{i}T00:00:00Z") for i in range(1, 6)]
+            + [link("hash", "2026-09-08T00:00:00Z")]
+        ),
+    }
+    context = campaign.build_context({**document, "context_links": list(document["context_links"])})
+    campaign.MAX_CONTEXT_ROWS  # 상한보다 적으므로 전부 실린다
+
+    # 상한을 1로 좁혀 무엇이 살아남는지 본다.
+    import unittest.mock
+    with unittest.mock.patch.object(campaign, "MAX_CONTEXT_ROWS", 1):
+        narrowed = campaign.build_context(document)
+    assert [item["axis"] for item in narrowed["context_links"]] == ["hash"]

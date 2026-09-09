@@ -332,10 +332,16 @@ def _apply_baseline(
                 continue  # 채널 전체가 이미 열려 있다
             merged = sorted(set(current) | set(request.event_ids))
             if merged != list(current):
+                # **실제로 더한 것만 적는다.** 바탕 전체를 적으면 기법이
+                # 이미 열어 둔 것까지 바탕이 연 것처럼 보인다 — 이 문장은
+                # 07 보고서에 그대로 실리므로 "누가 무엇을 열었나"가
+                # 어긋난다. 바탕에 값이 하나뿐일 때는 드러나지 않던 자리다
+                # (2026-09-09, 바탕에 EID 3 을 더하며 드러났다).
+                added = sorted(set(request.event_ids) - set(current))
                 scope["event_ids"] = merged
                 existing["reason"]["rationale"] = (
                     f"{existing['reason']['rationale']} (바탕으로 "
-                    f"{', '.join(str(v) for v in request.event_ids)} 추가)"
+                    f"{', '.join(str(v) for v in added)} 추가)"
                 )
             continue
 

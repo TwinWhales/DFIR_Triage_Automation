@@ -89,6 +89,58 @@ attention_signals:
     flags: [discovery_command]
     match_fields: [fields.Image, fields.CommandLine]
     representative_images: [whoami.exe]
+  # **이름이 아니라 자리로 고른 신호.** 04단계의 execution_from_unusual_path
+  # 는 "공격자가 무엇을 실행할지는 몰라도 어디에 놓을 수 있는지는 안다"는
+  # 판단이라(`mappings/_flags.yaml`), 도구 이름을 모르는 조사에서 가장
+  # 쓸모가 크다. 그런데 보장 레인에는 올라오지 않고 있었다.
+  #
+  # 실측(`K-2LINE-KIOSK`, 2026-09-09): 두 줄짜리 질문으로 돌린 실행에서
+  # `C:\Temp\nmap\Nmap\nmap.exe` 가 04에 있었는데 05에 한 건도 전달되지
+  # 않았다. 시나리오가 도구 이름을 대지 않았고(그것이 정상이다) 플래그만
+  # 붙은 레코드는 5,669건 중 66자리를 두고 밀렸다.
+  #
+  # representative_images 를 비워 둔 것은 의도다 — 여기서 이름을 적으면
+  # 이 신호의 요지("이름을 모르는 채로 자리로 고른다")를 스스로 어긴다.
+  #
+  # **상한이 5인 이유.** 다른 신호는 이름으로 고른다 — certutil 이 여러 번
+  # 나와도 하나만 보면 뜻이 통한다. 이 신호는 **자리로** 고르므로 그 자리에
+  # 무엇이 있는지 우리가 모르고, 하나만 보내면 배경이 뽑힐 수 있다.
+  # 실측(`K-2LINE-FIX`): 19건 중 앵커 기준 1·2등이 설치 관리자의 임시
+  # 폴더였고 공격자의 `C:\Temp\nmap` 은 3등이었다. 개체 수가 적어(노드당
+  # 19건) 5자리는 60자리 예산에서 감당된다.
+  execution_from_unusual_path_observed:
+    must_review: true
+    flags: [execution_from_unusual_path]
+    match_fields: [fields.Image]
+    max_representatives: 5
+  # **이 사건의 목적이 여기 있었다.** K2L-20260908 에서 결제 정산 테이블을
+  # CSV 로 빼는 행위(SQLCMD ... SELECT * FROM ...settlements -o C:\exfil\...)
+  # 에 flag 가 없어 05단계 배분에서 밀렸고, 관리서버 보고서는 수집 도구와
+  # VMware 스크립트만 실었다. flag 를 만드는 것만으로는 부족하다 — 보장
+  # 레인에 올려야 모델이 그 레코드를 반드시 처분한다.
+  #
+  # 상한이 3인 이유는 **반복이 곧 사실이기 때문**이다. 이 덤프는 10분마다
+  # 도는 예약 작업이 돌려 18건이 거의 같은 명령행이다. 하나만 보내면
+  # "한 번 조회했다"로 읽히고, 전부 보내면 자리를 먹는다. 셋이면 간격이
+  # 보인다.
+  database_dump_observed:
+    must_review: true
+    flags: [database_table_dumped]
+    match_fields: [fields.Image, fields.CommandLine]
+    max_representatives: 3
+
+  # execution_from_unusual_path_observed 와 같은 취지의 짝이다 — 저쪽은
+  # 아는 자리를 열거해 보고 이쪽은 **최상위 폴더를 누가 만들었나**를 본다.
+  # 이름을 적지 않는다는 요지가 같으므로 representative_images 도 비운다.
+  #
+  # 상한 5도 같은 근거다(그쪽 주석 참조). 실측 55건 중 30건이 볼륨 루트에
+  # 설치된 SQL Server 라, 하나만 보내면 그쪽이 뽑힐 수 있다.
+  execution_outside_known_volume_root_observed:
+    must_review: true
+    flags: [execution_outside_known_volume_root]
+    match_fields: [fields.Image]
+    max_representatives: 5
+
   credential_export_option_observed:
     must_review: true
     all_contains: [netsh, wlan, key=clear]

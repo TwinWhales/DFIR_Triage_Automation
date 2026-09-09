@@ -637,3 +637,100 @@ def test_the_three_sysmon_signals_do_not_collapse_into_one():
     assert flagging.apply(shell)["flags"] == ["shell_spawned"]
     assert flagging.apply(usb)["flags"] == ["execution_from_unusual_path"]
     assert flagging.apply(parent)["flags"] == ["unexpected_parent_process"]
+
+
+# ================================ K2L-20260908 가 드러낸 룰 사각지대 (2026-09-10)
+
+
+def test_a_scheduled_task_is_flagged_whatever_the_option_order():
+    r"""`/create /tn` 은 옵션 순서를 가정한 값이었다.
+
+    실측(`K2L-20260908`): 공격자가 주기 옵션을 `/create` 와 `/tn` 사이에
+    끼워 넣자 아무것도 안 붙었다. 명령행에 대해 두 옵션이 붙어 있기를
+    바라면 안 된다.
+    """
+    attacker = _sysmon(
+        1,
+        Image=r"C:\Windows\system32\schtasks.exe",
+        CommandLine=(
+            r'"C:\Windows\system32\schtasks.exe" /create /sc MINUTE /mo 10 '
+            r'/tn WindowsTelemetry /tr "powershell -ep bypass -WindowStyle Hidden '
+            r'-f C:\exfil\sync.ps1" /ru SYSTEM'
+        ),
+    )
+    assert "persistence_command" in flagging.apply(attacker)["flags"]
+
+
+def test_querying_a_task_is_not_a_persistence_command():
+    """`/query /tn` 은 만드는 것이 아니라 보는 것이다."""
+    record = _sysmon(
+        1,
+        Image=r"C:\Windows\system32\schtasks.exe",
+        CommandLine=r'"C:\Windows\system32\schtasks.exe" /query /tn WindowsTelemetry',
+    )
+    assert "persistence_command" not in flagging.apply(record)["flags"]
+
+
+def test_a_whole_table_read_into_a_file_is_flagged():
+    """이 사건의 목적이 여기 있었는데 flag 가 없었다(`K2L-20260908`)."""
+    record = _sysmon(
+        1,
+        Image=r"C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\180\Tools\Binn\SQLCMD.EXE",
+        CommandLine=(
+            r'SQLCMD.EXE -S localhost -U mgmt_app -P *** -Q '
+            r'"SET NOCOUNT ON; SELECT * FROM management.dbo.settlements" '
+            r'-o C:\exfil\settlements_20260908_1646.csv -s , -W'
+        ),
+    )
+    assert "database_table_dumped" in flagging.apply(record)["flags"]
+
+
+def test_ordinary_database_administration_is_not_a_dump():
+    """도구 이름으로 걸면 정상 운영 74건이 전량 걸린다 — 관용구로 건다."""
+    for command in (
+        r'SQLCMD.EXE -S localhost -U sa -P *** -Q "CREATE DATABASE management"',
+        r'SQLCMD.EXE -S localhost -U sa -P *** -Q "SELECT name FROM sys.databases"',
+    ):
+        record = _sysmon(1, Image=r"C:\Program Files\...\SQLCMD.EXE", CommandLine=command)
+        assert "database_table_dumped" not in flagging.apply(record)["flags"], command
+
+
+def test_a_folder_someone_made_at_the_volume_root_is_flagged():
+    r"""열거는 아는 자리만 잡는다. `C:\Temp` 다음은 `C:\exfil` 이었다."""
+    record = _sysmon(1, Image=r"C:\exfil\rclone.exe",
+                     ParentImage=r"C:\Windows\System32\cmd.exe")
+    assert "execution_outside_known_volume_root" in flagging.apply(record)["flags"]
+
+
+def test_windows_own_volume_root_folders_are_not_flagged():
+    """이 룰이 부정 조건인데도 전량을 안 잡는 이유가 여기 있다."""
+    for image in (
+        r"C:\Windows\System32\svchost.exe",
+        r"C:\Program Files\POS\pos.exe",
+        r"C:\Program Files (x86)\App\a.exe",
+        r"C:\Users\kiosk\AppData\Local\Temp\banker.exe",
+        r"C:\ProgramData\pos\pos.exe",
+    ):
+        record = _sysmon(1, Image=image, ParentImage=r"C:\Windows\System32\services.exe")
+        assert "execution_outside_known_volume_root" not in flagging.apply(record)["flags"], image
+
+
+def test_the_site_declares_its_own_install_root_in_yaml():
+    r"""판정은 파이썬이 하고 그 사이트에서 무엇이 정상인가는 YAML 이 정한다.
+
+    K-001 의 주문 앱이 `C:\kiosk\order.exe` 다. 파이썬 상수에 적으면 한
+    표본에서만 맞는 이름이 코드에 남는다.
+    """
+    assert "kiosk" not in flagging.DEFAULT_KNOWN_VOLUME_ROOTS
+    assert "kiosk" in flagging.known_volume_roots()
+
+    record = _sysmon(1, Image=r"C:\kiosk\order.exe",
+                     ParentImage=r"C:\Windows\System32\services.exe")
+    assert flagging.apply(record)["flags"] == []
+
+
+def test_an_unreadable_image_path_silences_this_rule_rather_than_flooding():
+    """형식 가정이 긍정 쪽에 있다 — 못 읽으면 0건이지 전량이 아니다."""
+    for image in ("", "/usr/bin/rclone", r"\server\share\tool.exe", r"C:\evil.exe"):
+        record = _sysmon(1, Image=image, ParentImage=r"C:\Windows\System32\services.exe")
+        assert "execution_outside_known_volume_root" not in flagging.apply(record)["flags"], image

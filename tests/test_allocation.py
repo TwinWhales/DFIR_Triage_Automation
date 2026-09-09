@@ -1302,3 +1302,80 @@ def test_pinning_a_ref_that_is_gone_is_not_an_error():
         [_evtx(1)], limit=60, pinned_refs={"MFT#99999"}
     )
     assert [r["ref"] for r in chosen] == ["EVTX-SEC#1"]
+
+
+# ================== 앵커 동점 규칙 — K2L2-MGMT 가 드러낸 자리 (2026-09-10)
+
+
+def _moment(text):
+    from datetime import datetime
+    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%S")
+
+
+def test_a_tie_goes_to_the_window_nearest_the_incident_anchor():
+    """제외가 동점을 만들면 제외 없는 답으로 되돌린다.
+
+    실측(`K2L2-MGMT`): `execution_outside_known_volume_root` 를 빼자 공격
+    창이 4종 → 3종이 되어 12일 전 설치일과 동점이 됐고, "이른 창" 규칙이
+    설치일을 골랐다. 그 앵커로 줄을 세우니 공격자의 rclone 이 31등이었다.
+    """
+    from src.stage05_interpret import attention
+
+    ranked = "execution_outside_known_volume_root_observed"
+    observed = [
+        # 설치 창 — 3종이고 순위를 매기는 신호는 없다. 그래서 제외해도
+        # 3종 그대로다 (실측에서 SQL2022 실행은 이 창 밖이었다).
+        (_moment("2026-08-27T10:11:39"), frozenset({"silent_install_option_observed"})),
+        (_moment("2026-08-27T10:12:00"), frozenset({"discovery_command_observed"})),
+        (_moment("2026-08-27T10:13:00"), frozenset({"execution_from_unusual_path_observed"})),
+        # 공격 창 — 4종이지만 자기 제외 뒤 3종이라 위와 동점이 된다
+        (_moment("2026-09-08T07:36:14"), frozenset({"database_dump_observed"})),
+        (_moment("2026-09-08T07:37:00"), frozenset({"persistence_command_observed"})),
+        (_moment("2026-09-08T07:38:00"), frozenset({"execution_from_unusual_path_observed"})),
+        (_moment("2026-09-08T07:39:00"), frozenset({ranked})),
+    ]
+
+    incident = attention.burst_anchor(observed)
+    assert incident == _moment("2026-09-08T07:36:14"), "제외 없는 앵커는 공격 창이다"
+
+    # 예전 규칙 — 동점이면 이른 창이라 설치일로 갔다.
+    assert attention.burst_anchor(observed, exclude=ranked) == _moment("2026-08-27T10:11:39")
+
+    # 지금 — 동점이면 사건 앵커에 가까운 창.
+    assert attention.burst_anchor(
+        observed, exclude=ranked, reference=incident
+    ) == _moment("2026-09-08T07:36:14")
+
+
+def test_the_reference_only_breaks_ties_and_never_beats_a_denser_window():
+    """가드가 사는지 본다. 종류 수가 먼저이고 reference 는 그다음이다."""
+    from src.stage05_interpret import attention
+
+    ranked = "noisy_signal"
+    observed = [
+        # 종류가 더 많은 창. reference 에서 멀다.
+        (_moment("2026-01-01T00:00:00"), frozenset({"a"})),
+        (_moment("2026-01-01T00:01:00"), frozenset({"b"})),
+        (_moment("2026-01-01T00:02:00"), frozenset({"c"})),
+        # reference 바로 옆이지만 ranked 하나뿐 — 제외하면 후보에서 빠진다.
+        (_moment("2026-06-01T00:00:00"), frozenset({ranked})),
+        (_moment("2026-06-01T00:01:00"), frozenset({ranked})),
+    ]
+    near = _moment("2026-06-01T00:00:00")
+
+    assert attention.burst_anchor(observed, exclude=ranked, reference=near) == _moment(
+        "2026-01-01T00:00:00"
+    ), "혼자 난 신호는 자기를 정당화하지 못한다"
+
+
+def test_without_a_reference_a_tie_still_goes_to_the_earlier_window():
+    """예전 규칙이 마지막에 그대로 남아 있어야 한다."""
+    from src.stage05_interpret import attention
+
+    observed = [
+        (_moment("2026-03-01T00:00:00"), frozenset({"a"})),
+        (_moment("2026-03-01T00:01:00"), frozenset({"b"})),
+        (_moment("2026-09-01T00:00:00"), frozenset({"a"})),
+        (_moment("2026-09-01T00:01:00"), frozenset({"b"})),
+    ]
+    assert attention.burst_anchor(observed) == _moment("2026-03-01T00:00:00")

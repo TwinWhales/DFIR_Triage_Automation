@@ -499,9 +499,11 @@ def test_cli_says_so_when_the_budget_trims_seats(tmp_path, capsys):
             "--replay", str(replay),
             "--mode", "model",
             # 레코드 넷 중 둘만 들어갈 만큼만 연다. 창에서 출력 예약을 빼고
-            # 남은 것이 1,056자다 — CHARS_PER_TOKEN 을 실측값으로 낮추면서
-            # 같은 예산이 나오도록 창을 함께 옮겼다(2026-09-03).
-            "--num-ctx", "5600",
+            # 남은 것이 1,055자다 — CHARS_PER_TOKEN 을 실측값으로 낮추면서
+            # 같은 예산이 나오도록 창을 함께 옮겼고(2026-09-03), 기법 라벨
+            # 목록이 프롬프트에 들어오며 고정분이 2,034 → 3,853자가 되어
+            # 5600 → 6550 으로 다시 옮겼다(2026-09-10).
+            "--num-ctx", "6550",
             "--reserve-output-tokens", "4096",
         ]
     )
@@ -538,10 +540,11 @@ def test_replaying_a_reply_that_cites_a_trimmed_record_is_refused(tmp_path, caps
             "--mode", "model",
                 # 위 테스트와 같은 창이어야 같은 자르기가 일어난다.
                 # CHARS_PER_TOKEN 을 실측값으로 낮추면서 5300 → 5600
-                # (2026-09-03). 예전 값으로 두면 예산이 한 건도 못 들여보내
+                # (2026-09-03), 기법 라벨 목록이 들어오며 5600 → 6550
+                # (2026-09-10). 예전 값으로 두면 예산이 한 건도 못 들여보내
                 # empty_result 로 죽고, 이 테스트가 보려던 claim_validation
                 # 관문에는 닿지도 못한다.
-                "--num-ctx", "5600",
+                "--num-ctx", "6550",
                 "--reserve-output-tokens", "4096",
             ]
         )
@@ -815,13 +818,15 @@ def test_each_chunk_is_asked_separately(monkeypatch, tmp_path):
     # 를 재게 된다. 2026-09-07 에 flags 지침을 넣으며 고정분이 2,194 →
     # 2,633자가 되어 5400 → 5620 으로 옮겼다(예산 414 → 415자로 같다).
     # 2026-09-08 typed assertion 원자화 지침 뒤 6000, packet/Story 지침 뒤
-    # 6200으로 재보정했다.
+    # 6200으로 재보정했다. 2026-09-10 기법 라벨 목록(41건, 1,819자)이
+    # 프롬프트에 들어오며 고정분이 3,830 → 5,649자가 되어 7130 으로 옮겼다
+    # (예산 419자로 거의 같다).
     # 프롬프트를 또 고치면 여기도 같이 본다.
     code = _run_assembled(
         monkeypatch,
         tmp_path,
         backend,
-        extra=["--num-ctx", "6200", "--reserve-output-tokens", "4096"],
+        extra=["--num-ctx", "7130", "--reserve-output-tokens", "4096"],
     )
 
     assert code == 0

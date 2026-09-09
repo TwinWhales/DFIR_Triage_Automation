@@ -64,24 +64,30 @@ def _select(loaded, scenario, *, with_baseline=True):
 
 
 @pytest.mark.parametrize("technique", ["T1091", "T1200", "T1112", "T1197", "T1547.001"])
-def test_a_technique_that_never_asks_for_sysmon_still_gets_process_creation(loaded, technique):
+def test_a_technique_that_never_asks_for_sysmon_still_gets_the_baseline_channels(loaded, technique):
     """41개 매핑 중 13개가 Sysmon 을 아예 요청하지 않는다.
 
     ``T1091``(USB)·``T1200``(하드웨어)처럼 키오스크 조사에서 자주 걸리는
     것들이 거기 있다. 02가 그 기법 하나만 고르면 `cmd`·`certutil`·
-    `powershell` 의 실행 흔적이 04단계에서 한 건도 나오지 않는다.
+    `powershell` 의 실행 흔적(EID 1)도, **누구에게 연결했는가(EID 3)** 도
+    04단계에서 한 건도 나오지 않는다.
+
+    실측(`K-2LINE-KIOSK`, 2026-09-09): 두 줄짜리 질문에 02가
+    ``T1091``·``T1078.003`` 둘만 골랐고 EID 3 이 0건이라, 옆 노드로 나간
+    연결 60건이 통째로 사라졌다. 그 60건은 08단계가 노드를 잇는 유일한
+    직접 증거다.
     """
     scenario = _scenario(technique)
 
     assert _sysmon(_select(loaded, scenario, with_baseline=False)) is None
-    assert _sysmon(_select(loaded, scenario))["scope"]["event_ids"] == [1]
+    assert _sysmon(_select(loaded, scenario))["scope"]["event_ids"] == [1, 3]
 
 
 def test_exfiltration_scopes_gain_process_creation_without_losing_their_own(loaded):
     """``T1041``·``T1048`` 은 [3, 22] 만 열어 EID 1 을 닫는다.
 
     **덮어쓰지 않고 더한다.** [3, 22] 는 그 기법에 맞는 판단이고, 바탕은
-    거기에 1 을 더할 뿐이다.
+    거기에 없는 것(1)만 더할 뿐이다 — 3 은 이미 있으므로 손대지 않는다.
     """
     doc = _select(loaded, _scenario("T1048"))
 
@@ -104,12 +110,25 @@ def test_a_merged_scope_records_what_the_baseline_added(loaded):
 # ── 바탕이 건드리지 않는 자리 ──────────────────────────────────────────
 
 
-def test_a_scope_that_already_has_process_creation_is_untouched(loaded):
-    before = _sysmon(_select(loaded, _scenario("T1204.002"), with_baseline=False))
+def test_a_scope_that_already_has_the_baseline_channels_is_untouched(loaded):
+    """``T1018`` 은 [1, 3] 을 스스로 연다. 바탕이 더할 것이 없다."""
+    before = _sysmon(_select(loaded, _scenario("T1018"), with_baseline=False))
+    after = _sysmon(_select(loaded, _scenario("T1018")))
+
+    assert before["scope"]["event_ids"] == after["scope"]["event_ids"] == [1, 3]
+    assert before["reason"]["rationale"] == after["reason"]["rationale"]
+
+
+def test_the_rationale_names_only_what_the_baseline_actually_added(loaded):
+    """``T1204.002`` 는 [1, 5] 를 연다 — 바탕이 실제로 더하는 것은 3 뿐이다.
+
+    바탕 전체를 적으면 기법이 이미 열어 둔 1 까지 바탕이 연 것처럼 보인다.
+    이 문장은 07 보고서에 그대로 실리므로 "누가 무엇을 열었나"가 어긋난다.
+    """
     after = _sysmon(_select(loaded, _scenario("T1204.002")))
 
-    assert before["scope"]["event_ids"] == after["scope"]["event_ids"] == [1, 5]
-    assert before["reason"]["rationale"] == after["reason"]["rationale"]
+    assert after["scope"]["event_ids"] == [1, 3, 5]
+    assert "바탕으로 3 추가" in after["reason"]["rationale"]
 
 
 def test_the_baseline_does_not_outrank_a_technique_request(loaded):
