@@ -222,7 +222,7 @@ def build(campaign: dict[str, Any], nodes: list[dict[str, Any]], *, generator: s
     public_nodes = [
         {key: value for key, value in node.items() if not key.startswith("_")} for node in nodes
     ]
-    return io.new_document(
+    document = io.new_document(
         campaign["campaign_id"],
         STAGE,
         generator,
@@ -240,6 +240,11 @@ def build(campaign: dict[str, Any], nodes: list[dict[str, Any]], *, generator: s
             "ubiquitous_values": result["ubiquitous_values"],
         },
     )
+    # ``result["os_background_values"]`` 는 문서에 싣지 않는다. schemas/ 는
+    # 동결이고 stats·links·context_links 가 모두 additionalProperties: false
+    # 라 키를 하나 더하려면 스키마를 고쳐야 하는데, 그 판단은 전체 공지
+    # 대상이다. 지금은 correlate 의 반환값과 테스트에만 남는다.
+    return document
 
 
 #: 등급 → 보고서 딱지. observed 는 소견 인용과 무관한 관측이다.
@@ -253,6 +258,36 @@ AXIS_LABELS = {
     "path": "경로",
     "account": "계정",
 }
+
+
+#: 참고 표에 실을 최대 줄 수.
+#:
+#: **문서가 아니라 표를 자른다.** ``08_campaign.json`` 에는 전부 남는다 —
+#: 자르는 것은 사람이 여는 마크다운뿐이고, 몇 건 중 몇 건인지 표 위에 적는다.
+#:
+#: 실측(2026-09-10): ``K2L-20260908`` 의 참고 연결이 44,471건이라 보고서가
+#: **44,538줄**이었다. 본문은 55줄이고 나머지가 전부 이 표였다 — 경로 29,236 ·
+#: 파일명 14,681 로, ``registry:SOFTWARE`` 를 통째로 연 실행에서 CBS 컴포넌트
+#: 이름이 두 노드에 같이 있다는 것을 한 줄씩 적은 것이다. 같은 사건을 다시
+#: 돌린 ``K2L2-20260908`` 은 2,505건이었다. **실행마다 자릿수가 흔들리므로**
+#: 상한이 없으면 보고서를 열 수 있는지가 운에 달린다.
+#:
+#: 60인 것은 한 화면에서 훑을 수 있는 분량이고, 그 이상은 어차피 표가 아니라
+#: 질의로 봐야 하기 때문이다.
+MAX_CONTEXT_ROWS = 60
+
+
+def _context_priority(link: dict[str, Any]) -> tuple[int, str]:
+    """참고 표에서 먼저 보여 줄 순서. **지어내기 어려운 축이 앞이다.**
+
+    ``AXES`` 의 선언 순서를 그대로 쓴다(그 상수의 주석). 시간순으로 앞에서
+    60개를 자르면 **가장 오래된 배경 잡음**이 실리는데, 그것은 이 표를 읽는
+    이유가 아니다 — 인용되지 않았지만 볼 만한 것이 있는지 훑는 자리다.
+    """
+    order = correlate.AXES
+    axis = str(link.get("axis") or "")
+    rank = order.index(axis) if axis in order else len(order)
+    return (rank, str(link.get("observations", [{}])[0].get("at") or ""))
 
 
 def build_context(document: dict[str, Any]) -> dict[str, Any]:
@@ -271,13 +306,20 @@ def build_context(document: dict[str, Any]) -> dict[str, Any]:
         }
 
     skipped = [node for node in document["nodes"] if node["status"] != "ok"]
+    # **문서가 아니라 표를 자른다** (``MAX_CONTEXT_ROWS``). 고른 뒤 다시
+    # 시각순으로 세워야 표가 읽히므로, 우선순위는 고르는 데에만 쓴다.
+    context_links = document["context_links"]
+    shown = sorted(context_links, key=_context_priority)[:MAX_CONTEXT_ROWS]
+    shown.sort(key=lambda link: str(link.get("observations", [{}])[0].get("at") or ""))
     return {
         "campaign_id": document["case_id"],
         "generated_at": document["generated_at"],
         "nodes": document["nodes"],
         "skipped": skipped,
         "links": [decorate(link) for link in document["links"]],
-        "context_links": [decorate(link) for link in document["context_links"]],
+        "context_links": [decorate(link) for link in shown],
+        "context_total": len(context_links),
+        "context_shown": len(shown),
         "stats": document["stats"],
         "mermaid": _mermaid(document["links"]),
     }

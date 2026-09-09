@@ -27,7 +27,7 @@ from ..common.io import normalize_path, parse_timestamp
 from ..stage04_parse import canonical
 from ..stage05_interpret.incident_packet import _hash_keys
 
-__all__ = ["AXES", "UBIQUITOUS_ACCOUNTS", "observations_of", "build_links"]
+__all__ = ["AXES", "OS_OWNED_PREFIXES", "UBIQUITOUS_ACCOUNTS", "observations_of", "build_links"]
 
 #: 상관 축. 순서가 곧 보고서에 실리는 순서다 — 지어내기 어려운 것부터.
 #:
@@ -172,6 +172,55 @@ def _keys_of(record: dict[str, Any]) -> dict[str, set[str]]:
     return keys
 
 
+#: 운영체제·설치 관리자가 놓은 자리. ``normalize_path`` 를 거친 꼴이라
+#: 소문자에 슬래시다. 드라이브 문자는 뺀다 — 볼륨이 달라도 같은 자리다.
+#:
+#: **이 축들이 무엇을 말하는지가 여기서 갈린다.** 해시·파일명·경로가 두
+#: 노드에서 같다는 것은 두 가지 중 하나다 — 공격자가 파일을 옮겼거나,
+#: **두 기계가 같은 윈도우를 깔았거나**. 뒤쪽은 노드를 잇는 증거가 아니다.
+#:
+#: 실측(`K2L2-20260908`, 2026-09-10). 체인에 오른 🟢 5건 중 4건이
+#: `c:/windows/system32/schtasks.exe` 와 `.../whoami.exe` 였다. 모든 윈도우
+#: 기계에 같은 해시로 있는 파일이고, 이 사건과 무관하게 항상 일치한다.
+#: 앞선 실행(`K2L-20260908`)에서는 같은 자리에 `dismhost.exe` 가 있었다.
+#:
+#: **모든 노드에 있는 값을 세는 규칙으로는 안 걸린다.** 그 규칙은 노드
+#: 셋 전부에 있을 때만 도는데, 이 증거의 POS 에는 schtasks 실행 기록이
+#: 없어 두 노드짜리 링크가 됐다. 값의 분포가 아니라 **자리**를 봐야 한다.
+OS_OWNED_PREFIXES = (
+    "windows/",
+    "program files/",
+    "program files (x86)/",
+    "programdata/microsoft/",
+    "winnt/",
+)
+
+
+def _os_owned(path: str) -> bool:
+    """이 경로가 운영체제·설치 관리자의 자리인가.
+
+    드라이브 문자를 떼고 본다. 못 떼면(상대 경로·UNC) **거짓**이다 —
+    모르는 것을 배경으로 내리면 증거가 조용히 사라진다.
+    """
+    if not isinstance(path, str) or not path:
+        return False
+    body = path
+    if len(body) > 2 and body[1] == ":":
+        body = body[2:]
+    body = body.lstrip("/")
+    return body.startswith(OS_OWNED_PREFIXES)
+
+
+#: ``_os_owned`` 로 걸러지는 축. ``peer``·``network``·``account`` 는 제외다 —
+#: 주소와 계정에는 "자리"가 없고, ``peer`` 는 다른 노드가 자기 주소라고
+#: 말한 것이라 배경일 수 없다(``_peer_links``).
+_PATH_BEARING_AXES = frozenset({"hash", "filename", "path"})
+
+#: 관측에 붙여 다니지만 문서에는 안 나가는 키. schemas/ 가 동결이고
+#: ``observations`` 가 additionalProperties: false 라, 한 자리에서라도
+#: 안 떼면 08 이 스키마 위반으로 멈춘다 — 실제로 그렇게 멈췄다.
+_INTERNAL_KEYS = frozenset({"_moment", "_os_owned"})
+
 #: 등급 순서. 노드 대표를 고를 때와 링크 등급을 정할 때 같은 표를 쓴다 —
 #: 둘이 갈리면 "대표로 뽑힌 근거"와 "링크에 적힌 등급"이 어긋난다.
 _GRADE_ORDER = {"passed": 0, "warning": 1, "uncited": 2}
@@ -215,12 +264,20 @@ def observations_of(node: str, records: Iterable[dict[str, Any]], verdicts: dict
         if record.get("timestamp"):
             observation["at"] = record["timestamp"]
 
+        # 이 레코드의 대상 경로가 운영체제의 자리인가. 해시·파일명 축은
+        # 값 자체에 경로가 없으므로 여기서 한 번 재어 붙인다 (``_os_owned``).
+        canon = record.get("canonical")
+        if not isinstance(canon, dict):
+            canon = canonical.overlay(record).get("canonical") or {}
+        subject = canon.get("subject_path")
+        os_owned = _os_owned(normalize_path(subject)) if isinstance(subject, str) and subject else False
+
         for axis, values in _keys_of(record).items():
             for value in values:
                 key = (axis, value)
                 current = best.get(key)
                 if current is None or _better(observation, moment, current):
-                    best[key] = {**observation, "_moment": moment}
+                    best[key] = {**observation, "_moment": moment, "_os_owned": os_owned}
     return best
 
 
@@ -252,6 +309,7 @@ def build_links(per_node: dict[str, dict], node_count: int) -> dict[str, Any]:
     links: list[dict[str, Any]] = []
     context: list[dict[str, Any]] = []
     ubiquitous = 0
+    os_background = 0
 
     for (axis, value), observations in merged.items():
         if len({item["node"] for item in observations}) < 2:
@@ -263,8 +321,19 @@ def build_links(per_node: dict[str, dict], node_count: int) -> dict[str, Any]:
             ubiquitous += 1
             continue
 
+        if axis in _PATH_BEARING_AXES and all(item.get("_os_owned") for item in observations):
+            # **두 기계가 같은 윈도우를 깔았다는 말이다.** 노드를 잇는 증거가
+            # 아니므로 체인에서 내린다. 지우지는 않는다 — 참고 표에 남겨야
+            # 무엇을 왜 뺐는지 되짚을 수 있다(모든 노드에 있는 값을 세기만
+            # 하는 규칙과 같은 태도).
+            os_background += 1
+            observations = [{**item, "verdict": "uncited"} for item in observations]
+
         ordered = sorted(observations, key=lambda item: (item.get("at") is None, item.get("at") or ""))
-        cleaned = [{k: v for k, v in item.items() if k != "_moment"} for item in ordered]
+        cleaned = [
+            {k: v for k, v in item.items() if k not in _INTERNAL_KEYS}
+            for item in ordered
+        ]
         entry: dict[str, Any] = {"axis": axis, "value": value, "observations": cleaned}
 
         span = _span_seconds(ordered)
@@ -282,7 +351,12 @@ def build_links(per_node: dict[str, dict], node_count: int) -> dict[str, Any]:
 
     links.sort(key=_chain_order)
     context.sort(key=_chain_order)
-    return {"links": links, "context_links": context, "ubiquitous_values": ubiquitous}
+    return {
+        "links": links,
+        "context_links": context,
+        "ubiquitous_values": ubiquitous,
+        "os_background_values": os_background,
+    }
 
 
 def _peer_links(per_node: dict[str, dict]) -> list[dict[str, Any]]:
@@ -317,8 +391,8 @@ def _peer_links(per_node: dict[str, dict]) -> list[dict[str, Any]]:
                 # 순서가 곧 방향이다. 시각으로 다시 정렬하지 않는다 —
                 # 시계가 어긋난 두 노드에서 화살표가 뒤집힌다.
                 pair = [
-                    {k: v for k, v in departure.items() if k != "_moment"},
-                    {k: v for k, v in landing.items() if k != "_moment"},
+                    {k: v for k, v in departure.items() if k not in _INTERNAL_KEYS},
+                    {k: v for k, v in landing.items() if k not in _INTERNAL_KEYS},
                 ]
                 entry: dict[str, Any] = {
                     "axis": "peer",
