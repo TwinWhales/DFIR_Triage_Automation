@@ -194,7 +194,9 @@ def _moment(record: dict[str, Any]) -> "datetime | None":
 
 
 def burst_anchor(
-    observed: "list[tuple[datetime, frozenset[str]]]", exclude: "str | None" = None
+    observed: "list[tuple[datetime, frozenset[str]]]",
+    exclude: "str | None" = None,
+    reference: "datetime | None" = None,
 ) -> "datetime | None":
     """서로 다른 신호가 가장 많이 겹치는 창의 시작. 없으면 ``None``.
 
@@ -202,8 +204,28 @@ def burst_anchor(
     뺀다** — 안 빼면 그 신호가 많이 난 자리가 곧 앵커가 되어, 무엇을
     고르든 자기가 정당화된다.
 
-    동점이면 **이른 창**이다. 밀집도가 같다면 먼저 시작한 국면을 사건의
-    시작으로 본다.
+    ``reference`` 는 **제외 없이 구한 앵커**다. 동점일 때만 본다 — 가까운
+    창이 이긴다. 없으면 예전처럼 이른 창이다.
+
+    **동점 규칙을 왜 바꿨나**(2026-09-10, ``K2L2-MGMT``). 제외는 옳은
+    가드지만, 그 신호가 **사건의 주된 증거일 때** 앵커를 무너뜨린다:
+
+        공격 창 2026-09-08 07:36  신호 4종 → 자기 제외 3
+        설치 창 2026-08-27 10:11  신호 3종 → 자기 제외 3   동점 → 이른 창 승
+
+    ``execution_outside_known_volume_root`` 를 빼자 공격 창이 4종에서 3종이
+    되어 12일 전 SQL Server 설치일과 동점이 됐고, "이른 창" 규칙이 설치일을
+    골랐다. 그 앵커로 줄을 세우니 대표 다섯 자리를 설치 관리자가 가져가고
+    **공격자가 볼륨 루트에 놓은 도구는 31등**이 됐다. 상한을 올려서 될 문제가
+    아니었다.
+
+    같은 데이터에서 **제외하지 않은 앵커는 공격 창을 정확히 짚었다.** 제외는
+    자기정당화를 막으려는 것이지 답을 버리려는 것이 아니므로, 그 가드가
+    동점을 만들었을 때는 제외 없는 답으로 되돌린다.
+
+    **가드는 그대로 산다.** 제외한 뒤의 신호 종류 수가 여전히 순위를 정하고,
+    한 신호만 난 창은 제외 후 종류가 0이라 후보에서 빠진다(아래 필터).
+    ``reference`` 는 그 다음의 동점만 가른다.
     """
     points = sorted(
         (moment, signals - {exclude} if exclude else signals) for moment, signals in observed
@@ -213,15 +235,22 @@ def burst_anchor(
         return None
 
     window = timedelta(seconds=ANCHOR_WINDOW_SECONDS)
-    best_count, best_at = 0, None
+    best_key: "tuple[int, float] | None" = None
+    best_at = None
     for index, (start, _) in enumerate(points):
         kinds: set[str] = set()
         for moment, signals in points[index:]:
             if moment - start > window:
                 break
             kinds |= signals
-        if len(kinds) > best_count:
-            best_count, best_at = len(kinds), start
+        # 종류가 많은 창, 그다음 reference 에 가까운 창. 둘 다 같으면 앞의
+        # 것이 남으므로 이른 창이다 — 예전 규칙이 마지막에 그대로 있다.
+        key = (
+            len(kinds),
+            -abs((start - reference).total_seconds()) if reference is not None else 0.0,
+        )
+        if best_key is None or key > best_key:
+            best_key, best_at = key, start
     return best_at
 
 
@@ -248,7 +277,12 @@ def apply(records: Iterable[dict[str, Any]], *, mappings: str | None = None) -> 
         )
         if signals and (moment := _moment(record)) is not None
     ]
-    anchors = {signal: burst_anchor(observed, exclude=signal) for signal in candidates}
+    # 제외 없이 구한 앵커. 신호별 앵커가 동점일 때만 쓴다 (``burst_anchor``).
+    incident_anchor = burst_anchor(observed)
+    anchors = {
+        signal: burst_anchor(observed, exclude=signal, reference=incident_anchor)
+        for signal in candidates
+    }
 
     def order(signal: str, record: dict[str, Any]) -> tuple[int, float, str, str]:
         # **사건 앵커에 가까운 것이 대표다.**
