@@ -726,6 +726,7 @@ def allocate_records(
     window_seconds: float = DEFAULT_WINDOW_SECONDS,
     char_budget: int | None = None,
     max_list_items: int | None = MAX_LIST_ITEMS,
+    pinned_refs: "Iterable[str] | None" = None,
 ) -> tuple[list[dict[str, Any]], list[Quota], Budget]:
     """전달할 레코드를 시간순으로, 배분 내역·예산과 함께 돌려준다.
 
@@ -745,6 +746,10 @@ def allocate_records(
     레코드이고, 자르는 것은 ``llm_client``가 프롬프트를 만들 때다. 여기서
     미리 자르면 ``interpret``이 원본을 볼 길이 없어진다 — 둘이 같은
     ``for_prompt``을 쓰므로 크기는 어긋나지 않는다.
+
+    ``pinned_refs``는 **반드시 전달할 레코드**다. 루프백 2차가 1차의 인용
+    레코드를 넘긴다 — 자릿수 상한을 받지 않는 보장 레인(``must_review``)에
+    합류하므로, 레코드가 늘어난 2차에서도 1차의 근거가 자리를 잃지 않는다.
     """
     priorities = priorities or {}
     signal_sources = signal_sources or {}
@@ -806,6 +811,18 @@ def allocate_records(
         if record.get("must_review") and record.get("ref")
     }
     by_ref = {str(record.get("ref")): record for record in all_records if record.get("ref")}
+
+    # **1차가 인용한 레코드는 2차에서도 자리를 갖는다.**
+    #
+    # 루프백 2차는 레코드가 늘어난 상태에서 **같은 토큰 예산**으로 다시
+    # 배분한다. 그냥 두면 1차가 소견의 근거로 삼았던 레코드가 자리를 잃고,
+    # 최종 보고서가 1차보다 얇아진다 — "2차를 돌렸더니 소견이 사라졌다"는
+    # 결과는 루프백의 실패다. 새 레인을 만들지 않고 must_review 와 같은
+    # 보장 레인에 합류시킨다. 그 레인은 자릿수 상한을 받지 않는다.
+    for ref in pinned_refs or ():
+        record = by_ref.get(str(ref))
+        if record is not None:
+            guaranteed.setdefault(str(ref), record)
     # Correlation closure is limited to anchors explicitly named by the case or
     # already in the must-review lane. It does not turn every common executable
     # path into a guaranteed group.

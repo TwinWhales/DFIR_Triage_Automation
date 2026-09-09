@@ -1081,6 +1081,18 @@ def _parse_args(
     )
 
     parser.add_argument(
+        "--pin-refs",
+        default=None,
+        metavar="FINDINGS",
+        help=(
+            "1차 05_findings.json 경로. 그 소견이 **인용한 레코드**는 이번 "
+            "배분에서 자리를 보장받는다. 루프백 2차가 쓰는 자리다 — 2차는 "
+            "레코드가 늘어난 상태에서 같은 토큰 예산으로 다시 배분하므로, "
+            "고정하지 않으면 1차 소견의 근거가 자리를 잃고 최종 보고서가 "
+            "1차보다 얇아진다"
+        ),
+    )
+    parser.add_argument(
         "--investigate",
         action="store_true",
         help=(
@@ -1342,6 +1354,24 @@ def main(
     if assembled and budget_chars > 0:
         alloc_budget = budget_chars * max(1, args.max_chunks)
 
+    # 1차가 인용한 레코드. **소견과 타임라인 양쪽에서 모은다** — 어느
+    # 한쪽만 보면 2차에서 타임라인이 조용히 짧아진다.
+    pinned: set[str] = set()
+    if args.pin_refs:
+        previous = io.read_json(args.pin_refs)
+        try:
+            io.check_header(previous, expected_stage="05_interpret")
+            schema.validate(previous, "findings")
+        except schema.SchemaViolation as violation:
+            log.abort(STAGE, "schema_violation", violation.as_detail())
+        except io.HeaderError as e:
+            log.abort(STAGE, "schema_violation", {"field": "<header>", "message": str(e)})
+
+        for finding in previous.get("findings", []):
+            pinned.update(finding.get("refs", []))
+        for moment in previous.get("timeline", []):
+            pinned.update(moment.get("refs", []))
+
     contextual_records = incident_context.enrich(list(parsed.values()))
     packetized_records = incident_packet.enrich(contextual_records)
     prepared_records = attention.apply(packetized_records, mappings=args.mappings)
@@ -1357,8 +1387,26 @@ def main(
         window_seconds=args.window_seconds,
         char_budget=alloc_budget,
         max_list_items=max_list_items,
+        pinned_refs=pinned,
     )
     records = incident_packet.restrict(records)
+
+    if pinned:
+        delivered = {str(record.get("ref")) for record in records}
+        missing = sorted(pinned - delivered)
+        print(f"  1차 인용 {len(pinned)}건 중 {len(pinned) - len(missing)}건 고정")
+        if missing:
+            # 04를 다시 읽었는데 1차의 레코드가 없어졌다는 뜻이다. 2차는
+            # 1차의 상위집합이어야 하므로 정상 경로에서는 생기지 않는다.
+            # **멈추지는 않는다** — 판정은 관문(tools/live_check.py)이 하고,
+            # 여기서는 사람이 보게만 한다.
+            print(
+                f"[{STAGE}] 경고: 1차가 인용한 레코드 {len(missing)}건이 이번 "
+                f"배분에 없습니다 ({', '.join(missing[:5])}"
+                f"{' 외' if len(missing) > 5 else ''}). 04 산출물이 1차보다 "
+                f"좁아졌는지 확인하십시오 — 그 소견은 2차 보고서에서 사라집니다.",
+                file=sys.stderr,
+            )
 
     if not records:
         # 파싱은 됐는데 후보가 하나도 없다.

@@ -50,10 +50,15 @@
   - **`pivot_time`을 모델에게 묻지 않기로 했다**(설계서와 달라진 점). 근거 레코드만 받으면 그 시각은 우리가 안다 — `input_refs`를 묻지 않는 것과 같은 규약이고, 타임스탬프를 지어낼 토큰 경로가 사라진다. 그래서 `expand_time_range`의 `based_on_ref` 열거형만 다르다(시각을 뽑을 수 있는 레코드만). 파일 형식은 설계 그대로다.
   - **질의가 실패해도 05단계는 성공이다.** findings는 이미 쓰였고, 요청은 그 위에 얹는 것이라 사유를 남기고 2차 없이 끝낸다(내러티브 critic과 같은 처리).
   - **관통 확인**: 스텁으로 05 → `05_requests.json`(요청 2건, `pivot_time` 채워짐) → `expand` → 03 재선별에서 아티팩트가 늘었다. 질의 내역은 `05_llm_queries/03_investigation.txt`에 남는다.
-- [ ] **4단계 — 오케스트레이터**
-  - `tools/react_loop.py` 신설 — expand → 03 → 04(`--reuse-from`) → 05(`--pin-refs`, `--investigate` 없이)
-  - `src/stage05_interpret/allocation.py`에 `pinned_refs` (기존 `must_review` 보장 레인에 합류)
-  - `run_pipeline.sh`의 05와 06 **사이**에 `LOOP=1`일 때 한 줄
+- [x] **4단계 — 오케스트레이터** (2026-09-09)
+  - [x] `tools/react_loop.py` 신설 — expand → 03(`--force-artifacts`) → 04(`--reuse-from`) → 05(`--pin-refs`, **`--investigate` 없이**)
+  - [x] `src/stage05_interpret/allocation.py`에 `pinned_refs` (기존 `must_review` 보장 레인에 합류 — 자릿수 상한을 받지 않는다)
+  - [x] `src/stage05_interpret/interpret.py`에 `--pin-refs`. 1차 소견의 `findings[].refs`와 `timeline[].refs`를 **양쪽 다** 모은다
+  - [x] `run_pipeline.sh` — `LOOP=1`일 때 05에 `--investigate`, 05와 06 **사이**에 루프백. 기본은 꺼짐
+  - [x] `tests/test_react_loop.py` 9건 + `tests/test_allocation.py` 3건
+  - **끝난 뒤 정규 이름이 2차를 가리킨다.** 06·07은 루프가 돌았는지 모른 채 평소대로 읽는다. 1차는 `.round1`로 남고, **돌 이유가 없었으면 `.round1`을 남기지 않는다** — 남으면 사람도 도구도 "2차가 돌았다"로 읽는다
+  - **종료 코드 3은 실패가 아니다** (요청 0건·전부 기각·2차 선별이 1차와 같음). `run_pipeline.sh`가 그것을 정상으로 받는다
+  - **관통 확인**: `LOOP=1`로 01→07 완주. 2차 질의 내역(`05_llm_queries_round2`)에 조사 요청 질의가 **없다**(G1이 구조로 걸린 증거). 04는 `$MFT`·`evtx:Security`를 재사용했고, 07 보고서의 기법 표에 `T1041`이 `2차 조사 요청(EVTX-SEC#40912): …`로 실렸다
 - [ ] **5단계 — 보고서와 관문**
   - `src/stage07_report/report.py` + 템플릿에 "2차 조사 요청" 절 (요청·근거 `ref`·수용/기각 사유)
   - `tools/live_check.py`에 `--loop` 관문: 2차 `input_refs` ⊇ 1차 / 시간·기법 상위집합 / 재사용 아티팩트의 `record_count` 동일 / `05_requests.json` 단 한 번
