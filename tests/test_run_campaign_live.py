@@ -93,6 +93,148 @@ def test_no_loop_is_available_even_though_loop_is_the_default():
     assert runner.parse_args(["--raw", "x", "--no-loop"]).loop is False
 
 
+def test_campaign_and_campaign_id_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        runner.parse_args(
+            [
+                "--raw",
+                "x",
+                "--campaign",
+                "campaign.json",
+                "--campaign-id",
+                "K2L8-20260908",
+            ]
+        )
+
+
+def test_campaign_id_mode_parses_without_campaign_path():
+    args = runner.parse_args(
+        ["--raw", "x", "--campaign-id", "K2L8-20260908"]
+    )
+
+    assert args.campaign is None
+    assert args.campaign_id == "K2L8-20260908"
+
+
+def test_auto_campaign_discovers_nodes_and_generates_case_ids(tmp_path):
+    for name in (
+        "MGMT_snapshotB_20260908T103233",
+        "KIOSK_snapshotA_20260908T032657",
+        "POS_snapshotB_20260908T103226",
+    ):
+        (tmp_path / name / "C" / "Windows").mkdir(parents=True)
+    (tmp_path / "KIOSK_snapshotA_20260908T032657.zip").write_bytes(b"archive")
+
+    document = runner.build_auto_campaign_config("K2L8-20260908", tmp_path)
+
+    assert document == {
+        "campaign_id": "K2L8-20260908",
+        "nodes": [
+            {
+                "node": "kiosk",
+                "case_id": "K2L8-KIOSK",
+                "role": "endpoint",
+                "evidence": "KIOSK_snapshotA_20260908T032657",
+            },
+            {
+                "node": "pos",
+                "case_id": "K2L8-POS",
+                "role": "endpoint",
+                "evidence": "POS_snapshotB_20260908T103226",
+            },
+            {
+                "node": "mgmt",
+                "case_id": "K2L8-MGMT",
+                "role": "server",
+                "evidence": "MGMT_snapshotB_20260908T103233",
+            },
+        ],
+    }
+
+
+def test_auto_campaign_refuses_two_snapshots_for_one_node(tmp_path):
+    for name in ("POS_snapshotA", "POS_snapshotB"):
+        (tmp_path / name / "C" / "Windows").mkdir(parents=True)
+
+    with pytest.raises(runner.OrchestratorError, match="pos.*둘 이상"):
+        runner.build_auto_campaign_config("CAMP-20260908", tmp_path)
+
+
+def test_auto_campaign_rejects_unsafe_campaign_id(tmp_path):
+    with pytest.raises(runner.OrchestratorError, match="campaign-id"):
+        runner.build_auto_campaign_config("../outside", tmp_path)
+
+
+def test_create_auto_campaign_writes_json_and_protects_existing(
+    monkeypatch, tmp_path
+):
+    evidence_dir = tmp_path / "evidence"
+    (evidence_dir / "KIOSK_snapshotA" / "C" / "Windows").mkdir(parents=True)
+    campaigns_dir = tmp_path / "campaigns"
+    monkeypatch.setattr(runner, "CAMPAIGNS_DIR", campaigns_dir)
+
+    path, document = runner.create_auto_campaign("AUTO-20260908", evidence_dir)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == document
+    with pytest.raises(runner.OrchestratorError, match="이미 있습니다"):
+        runner.create_auto_campaign("AUTO-20260908", evidence_dir)
+
+
+def test_main_auto_mode_creates_campaign_then_runs_pipeline(monkeypatch, tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    cases_dir = tmp_path / "cases"
+    campaigns_dir = tmp_path / "campaigns"
+    for name in ("KIOSK_snapshotA", "POS_snapshotB", "MGMT_snapshotB"):
+        (evidence_dir / name / "C" / "Windows").mkdir(parents=True)
+
+    calls: list[list[str]] = []
+
+    def fake_run_command(command):
+        calls.append(list(command))
+        if "tools/live_check.py" in command:
+            case_id = command[command.index("--case-id") + 1]
+            report = cases_dir / case_id / "07_report.md"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(
+                "- 검증 결과: 통과 1 / 주의 0 / 기각 0\n"
+                "## 확인된 사실 (🟢 Passed)\nwhoami\n"
+                "## 미확인 사항\n",
+                encoding="utf-8",
+            )
+        else:
+            out_dir = Path(command[command.index("--out") + 1])
+            (out_dir / "08_campaign.md").write_text("# campaign", encoding="utf-8")
+            (out_dir / "08_campaign.json").write_text(
+                json.dumps({"links": []}), encoding="utf-8"
+            )
+        return 0
+
+    monkeypatch.setattr(runner, "CASES_DIR", cases_dir)
+    monkeypatch.setattr(runner, "CAMPAIGNS_DIR", campaigns_dir)
+    monkeypatch.setattr(runner, "run_command", fake_run_command)
+
+    code = runner.main(
+        [
+            "--campaign-id",
+            "K2L8-20260908",
+            "--evidence-dir",
+            str(evidence_dir),
+            "--raw",
+            "분석해주세요",
+        ]
+    )
+
+    assert code == 0
+    generated = campaigns_dir / "K2L8-20260908" / "campaign.json"
+    document = json.loads(generated.read_text(encoding="utf-8"))
+    assert [node["case_id"] for node in document["nodes"]] == [
+        "K2L8-KIOSK",
+        "K2L8-POS",
+        "K2L8-MGMT",
+    ]
+    assert len(calls) == 4
+
+
 def test_report_summary_counts_and_reviewed_behaviors(tmp_path):
     report = tmp_path / "07_report.md"
     report.write_text(

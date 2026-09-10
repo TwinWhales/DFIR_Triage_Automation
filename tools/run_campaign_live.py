@@ -3,10 +3,13 @@
 사용 예::
 
     .venv/Scripts/python.exe tools/run_campaign_live.py \
-        --campaign campaigns/K2L3-20260908/campaign.json \
+        --campaign-id K2L3-20260908 \
+        --evidence-dir evidence \
         --raw "키오스크에 USB가 꽂힌 뒤 포스기를 지나 관리서버까지 공격이 진행되었습니다. 분석해주세요." \
         --model qwen2.5:latest --loop
 
+``--campaign-id``를 주면 증거 디렉터리에서 노드를 찾아 ``campaign.json``과
+case_id를 자동 생성한다. 기존 ``--campaign`` 방식도 그대로 지원한다.
 ``campaign.json`` 순서대로 노드를 실행한다. 같은 case_id가 이미 있으면 실전
 재실행을 위해 ``live_check.py --force``를 사용한다. 기존 결과를 보존해 08만
 다시 만들려면 ``--skip-existing``을 지정한다.
@@ -33,6 +36,15 @@ from src.common import io  # noqa: E402
 
 DEFAULT_CAMPAIGN = "campaigns/K2L3-20260908/campaign.json"
 CASES_DIR = REPO_ROOT / "cases"
+CAMPAIGNS_DIR = REPO_ROOT / "campaigns"
+
+CAMPAIGN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+AUTO_NODE_ORDER = {"kiosk": 0, "pos": 1, "mgmt": 2}
+NODE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("kiosk", ("kiosk",)),
+    ("pos", ("pos",)),
+    ("mgmt", ("mgmt", "management")),
+)
 
 
 class OrchestratorError(RuntimeError):
@@ -124,10 +136,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         prog="python tools/run_campaign_live.py",
         description="캠페인의 각 노드 01→07 실행, 08 상관분석, 최종 요약을 순서대로 수행한다.",
     )
-    parser.add_argument(
+    campaign_source = parser.add_mutually_exclusive_group()
+    campaign_source.add_argument(
         "--campaign",
-        default=DEFAULT_CAMPAIGN,
-        help=f"campaign.json 경로 (기본: {DEFAULT_CAMPAIGN})",
+        default=None,
+        help=f"기존 campaign.json 경로 (생성 모드를 쓰지 않을 때 기본: {DEFAULT_CAMPAIGN})",
+    )
+    campaign_source.add_argument(
+        "--campaign-id",
+        help="증거 폴더에서 노드·case_id를 찾아 campaigns/<ID>/campaign.json을 자동 생성",
     )
     parser.add_argument(
         "--evidence-dir",
@@ -163,11 +180,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="07_report.md가 이미 있는 노드는 재실행하지 않고 08에서 재사용한다",
     )
+    parser.add_argument(
+        "--overwrite-campaign",
+        action="store_true",
+        help="--campaign-id 자동 생성 대상이 이미 있으면 새 탐색 결과로 덮어쓴다",
+    )
     args = parser.parse_args(argv)
     if args.max_chunks < 1:
         parser.error("--max-chunks는 1 이상이어야 합니다")
     if args.num_ctx < 1:
         parser.error("--num-ctx는 1 이상이어야 합니다")
+    if args.overwrite_campaign and not args.campaign_id:
+        parser.error("--overwrite-campaign은 --campaign-id와 함께 사용해야 합니다")
     return args
 
 
@@ -227,6 +251,111 @@ def _enter_volume_root(candidate: Path) -> Path:
 def _is_evidence_candidate(path: Path) -> bool:
     """압축 원본은 제외하고 추출 디렉터리와 지원 가능한 이미지형 파일만 고른다."""
     return path.is_dir() or (path.is_file() and path.suffix.casefold() in DISK_IMAGE_SUFFIXES)
+
+
+def _is_auto_discoverable_evidence(path: Path) -> bool:
+    """자동 생성 시 일반 폴더를 KAPE 증거로 오인하지 않는다."""
+    if path.is_file():
+        return path.suffix.casefold() in DISK_IMAGE_SUFFIXES
+    if not path.is_dir():
+        return False
+    if (path / "Windows").is_dir():
+        return True
+    try:
+        return any(
+            child.is_dir() and (child / "Windows").is_dir()
+            for child in path.iterdir()
+        )
+    except OSError:
+        return False
+
+
+def _infer_node_name(path: Path) -> str:
+    """증거 항목 이름에서 안정적인 소문자 노드 ID를 만든다."""
+    name = path.stem if path.is_file() else path.name
+    for canonical, aliases in NODE_ALIASES:
+        if _name_matches(name, aliases):
+            return canonical
+
+    prefix = re.split(
+        r"(?i)[_-](?:snapshot|kape|triage|evidence)(?:[_-]|$)",
+        name,
+        maxsplit=1,
+    )[0]
+    slug = re.sub(r"[^a-z0-9]+", "-", prefix.casefold()).strip("-")
+    if not slug:
+        raise OrchestratorError(f"증거 이름에서 node를 만들 수 없습니다: {path.name}")
+    return slug
+
+
+def _auto_case_prefix(campaign_id: str) -> str:
+    """K2L8-20260908은 K2L8-KIOSK처럼 읽기 쉬운 case_id를 만든다."""
+    return re.sub(r"-\d{8}$", "", campaign_id, flags=re.IGNORECASE)
+
+
+def build_auto_campaign_config(campaign_id: str, evidence_dir: Path) -> dict[str, Any]:
+    """증거 루트의 KAPE 스냅샷·이미지를 노드와 case_id로 변환한다."""
+    if not CAMPAIGN_ID_RE.fullmatch(campaign_id):
+        raise OrchestratorError(
+            "--campaign-id는 영문자·숫자로 시작하고 영문자, 숫자, 점, 밑줄, 하이픈만 사용할 수 있습니다"
+        )
+    if not evidence_dir.is_dir():
+        raise OrchestratorError(f"증거 상위 디렉터리가 없습니다: {evidence_dir}")
+
+    try:
+        candidates = sorted(
+            (item for item in evidence_dir.iterdir() if _is_auto_discoverable_evidence(item)),
+            key=lambda item: item.name.casefold(),
+        )
+    except OSError as exc:
+        raise OrchestratorError(f"증거 디렉터리를 읽지 못했습니다: {evidence_dir}: {exc}") from exc
+    if not candidates:
+        raise OrchestratorError(
+            "자동 생성할 KAPE 스냅샷이나 디스크 이미지를 찾지 못했습니다: "
+            f"{evidence_dir}"
+        )
+
+    grouped: dict[str, list[Path]] = {}
+    for candidate in candidates:
+        grouped.setdefault(_infer_node_name(candidate), []).append(candidate)
+    duplicates = {node: paths for node, paths in grouped.items() if len(paths) > 1}
+    if duplicates:
+        node = sorted(duplicates)[0]
+        shown = ", ".join(path.name for path in duplicates[node])
+        raise OrchestratorError(f"{node}: 자동 탐색된 증거가 둘 이상입니다: {shown}")
+
+    case_prefix = _auto_case_prefix(campaign_id)
+    ordered = sorted(grouped, key=lambda node: (AUTO_NODE_ORDER.get(node, 100), node))
+    nodes = []
+    for node in ordered:
+        evidence = grouped[node][0]
+        nodes.append(
+            {
+                "node": node,
+                "case_id": f"{case_prefix}-{node.upper()}",
+                "role": "server" if node == "mgmt" else "endpoint",
+                "evidence": evidence.name,
+            }
+        )
+    return {"campaign_id": campaign_id, "nodes": nodes}
+
+
+def create_auto_campaign(
+    campaign_id: str,
+    evidence_dir: Path,
+    *,
+    overwrite: bool = False,
+) -> tuple[Path, dict[str, Any]]:
+    """자동 캠페인을 원자적으로 기록하고 생성 경로와 문서를 반환한다."""
+    path = CAMPAIGNS_DIR / campaign_id / "campaign.json"
+    if path.exists() and not overwrite:
+        raise OrchestratorError(
+            f"자동 생성 대상이 이미 있습니다: {path} "
+            "(재생성하려면 --overwrite-campaign을 지정하십시오)"
+        )
+    document = build_auto_campaign_config(campaign_id, evidence_dir)
+    io.write_json(path, document)
+    return path, document
 
 
 def find_evidence_for_node(entry: dict[str, Any], evidence_dir: Path) -> Path:
@@ -500,13 +629,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     io.configure_console()
     args = parse_args(argv)
     try:
-        campaign_path = _absolute(args.campaign)
         evidence_dir = _absolute(args.evidence_dir)
-        if not campaign_path.is_file():
-            raise OrchestratorError(f"campaign.json이 없습니다: {campaign_path}")
         if not evidence_dir.is_dir():
             raise OrchestratorError(f"증거 상위 디렉터리가 없습니다: {evidence_dir}")
-        campaign_doc = load_campaign_config(campaign_path)
+        if args.campaign_id:
+            campaign_path, campaign_doc = create_auto_campaign(
+                args.campaign_id,
+                evidence_dir,
+                overwrite=args.overwrite_campaign,
+            )
+            print(f"[CAMPAIGN] 자동 생성: {campaign_path}")
+            for entry in campaign_doc["nodes"]:
+                print(
+                    f"  {entry['node']} → {entry['case_id']} "
+                    f"({entry['role']}, {entry['evidence']})"
+                )
+        else:
+            campaign_path = _absolute(args.campaign or DEFAULT_CAMPAIGN)
+            if not campaign_path.is_file():
+                raise OrchestratorError(f"campaign.json이 없습니다: {campaign_path}")
+            campaign_doc = load_campaign_config(campaign_path)
 
         total_steps = len(campaign_doc["nodes"]) + 1
         CASES_DIR.mkdir(parents=True, exist_ok=True)
