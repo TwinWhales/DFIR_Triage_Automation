@@ -13,6 +13,20 @@
 
 기각된 {{ stats.rejected }}개 문장은 근거 검증을 통과하지 못해 본 보고서에서 제외되었습니다.
 {% endif %}
+{% if coverage %}
+
+## 조사 커버리지 매트릭스
+
+이 표는 **미조사**와 **조사했으나 근거 없음**을 구분합니다. 관측은 05단계
+또는 행위 재검색에서 근거를 찾은 상태이고, 검증은 관련 소견이 06단계를
+통과한 상태입니다.
+
+| 행위 범주 | 입력 관련 | 조사 상태 | 근거 ref | 설명 |
+|---|---|---|---|---|
+{% for item in coverage %}
+| {{ item.label }} | {{ item.relevant_label }} | {{ item.status_label }} | {{ item.refs_label }} | {{ item.reason }} |
+{% endfor %}
+{% endif %}
 
 {% if story.sentences or story.dropped or story.unreviewed %}
 ## 사건 개요 서사 (Incident Narrative)
@@ -142,7 +156,7 @@
 1차 해석 뒤 **해석 단계가 스스로 추가 조사를 요청**했습니다. 아래가 그
 요청과 처리 결과입니다.
 
-| 요청 | 대상 | 근거 레코드 | 요청 사유 | 처리 |
+| 요청 | 대상 | 근거 | 요청 사유 | 처리 |
 |---|---|---|---|---|
 {% for item in investigation %}
 | {{ item.kind }} | {{ item.target }} | `{{ item.ref }}` | {{ item.rationale }} | **{{ item.verdict }}** — {{ item.reason }} |

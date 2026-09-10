@@ -99,11 +99,17 @@ class Outcome:
     techniques: list[str] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)
     time_range_widened: bool = False
+    behavior_applied: bool = False
 
     @property
     def accepted(self) -> bool:
         """2차를 돌릴 이유가 있는가."""
-        return bool(self.techniques or self.artifacts or self.time_range_widened)
+        return bool(
+            self.techniques
+            or self.artifacts
+            or self.time_range_widened
+            or self.behavior_applied
+        )
 
     def applied(self) -> dict[str, Any]:
         """``05_requests.json``의 ``applied`` 블록."""
@@ -341,6 +347,25 @@ def expand(
     claimed: set[str] = set()
 
     for request in requests:
+        kind = request.get("type")
+        if kind == "request_behavior":
+            # 이미 파싱된 04 데이터가 필요한 요청이라 react_loop의
+            # behavior_search가 먼저 처리한다. 여기서는 그 결과가 2차
+            # Stage05를 열 만큼 있었는지만 받아들인다.
+            disposition = request.get("disposition") or {}
+            if disposition.get("verdict") == "accepted":
+                if disposition.get("reason") == "applied":
+                    outcome.behavior_applied = True
+                continue
+            if disposition:
+                continue
+            _reject(
+                request,
+                "behavior_not_processed",
+                "request_behavior는 tools/react_loop.py의 행위 재검색을 먼저 거쳐야 합니다.",
+            )
+            continue
+
         # **근거가 먼저다.** 요청의 내용이 아무리 그럴듯해도 근거로 든
         # 레코드를 모델이 실제로 받지 않았다면 그 요청은 근거가 없다.
         # 열거형으로 막아 두었으므로 여기 걸리는 것은 제약이 새고 있다는 뜻이다.
@@ -353,7 +378,6 @@ def expand(
             )
             continue
 
-        kind = request.get("type")
         if kind == "expand_time_range":
             if _widen_time_range(request, working["time_range"], collected_at):
                 outcome.time_range_widened = True

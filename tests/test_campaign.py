@@ -17,6 +17,7 @@ import pytest
 
 from src.common import io, schema
 from src.stage08_campaign import campaign
+from src.stage05_interpret import coverage as coverage_mod
 
 HASH = "b" * 64
 FIXTURE = Path(__file__).resolve().parents[1] / "benchmark/fixtures/campaign-3node"
@@ -365,6 +366,37 @@ def test_the_document_matches_the_schema():
     )
     schema.validate(document, "campaign")
     schema.validate_stage(document)
+
+
+def test_campaign_report_renders_per_node_coverage_without_changing_campaign_schema():
+    scenario = io.new_document(
+        "C-kiosk",
+        "02_normalize",
+        "test",
+        target_os="windows_10",
+        techniques=[],
+        time_range={
+            "start": "2026-09-07T13:00:00Z",
+            "end": "2026-09-08T01:30:00Z",
+            "basis": "테스트",
+        },
+        entities={"hosts": [], "accounts": [], "processes": [], "paths": [], "ips": []},
+        overall_confidence=0.5,
+        unmapped_text=[],
+    )
+    findings = io.new_document(
+        "C-kiosk", "05_interpret", "test", input_refs=[], findings=[], timeline=[]
+    )
+    ledger = coverage_mod.build(scenario, findings, raw="키오스크 USB 침입")
+    document = build(node("kiosk", [], {}), node("pos", [], {}))
+
+    context = campaign.build_context(document, coverage_by_node={"kiosk": ledger})
+    text = campaign.render(context)
+
+    schema.validate(document, "campaign")
+    assert len(context["coverage"]) == 10
+    assert "## 노드별 조사 커버리지 매트릭스" in text
+    assert "원장 없음" in text
 
 
 def test_a_duplicate_node_name_is_refused(tmp_path):

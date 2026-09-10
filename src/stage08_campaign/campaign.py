@@ -29,6 +29,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from ..common import errors as errlog
 from ..common import io, schema
+from ..stage05_interpret import coverage as coverage_mod
 from . import correlate
 
 __all__ = ["STAGE", "load_campaign", "read_node", "build", "render", "main"]
@@ -169,6 +170,15 @@ def read_node(entry: dict[str, Any], cases_dir: Path) -> dict[str, Any]:
         if hosts:
             node["host"] = str(hosts[0])
 
+    coverage_path = case_dir / "05_coverage.json"
+    if coverage_path.is_file():
+        try:
+            ledger = io.read_json(coverage_path)
+            schema.validate(ledger, "coverage")
+            node["_coverage"] = ledger
+        except Exception as exc:  # noqa: BLE001 — 이 노드의 본 분석은 계속 사용한다
+            node["_coverage_error"] = str(exc)
+
     node["_records"] = list(records.values())
     node["_verdicts"] = verdicts
     node["records"] = len(records)
@@ -290,7 +300,10 @@ def _context_priority(link: dict[str, Any]) -> tuple[int, str]:
     return (rank, str(link.get("observations", [{}])[0].get("at") or ""))
 
 
-def build_context(document: dict[str, Any]) -> dict[str, Any]:
+def build_context(
+    document: dict[str, Any],
+    coverage_by_node: "dict[str, dict[str, Any]] | None" = None,
+) -> dict[str, Any]:
     """템플릿에 넘길 값. 판정에 쓰이는 값은 여기서 만들지 않는다."""
     def decorate(link: dict[str, Any]) -> dict[str, Any]:
         observations = link["observations"]
@@ -311,6 +324,40 @@ def build_context(document: dict[str, Any]) -> dict[str, Any]:
     context_links = document["context_links"]
     shown = sorted(context_links, key=_context_priority)[:MAX_CONTEXT_ROWS]
     shown.sort(key=lambda link: str(link.get("observations", [{}])[0].get("at") or ""))
+
+    coverage_by_node = coverage_by_node or {}
+    coverage_nodes = [node["node"] for node in document["nodes"] if node["status"] == "ok"]
+    coverage_rows: list[dict[str, Any]] = []
+    if coverage_by_node:
+        indexed = {
+            node: {row["id"]: row for row in coverage_mod.report_rows(ledger)}
+            for node, ledger in coverage_by_node.items()
+        }
+        for family_id in coverage_mod.FAMILY_IDS:
+            cells: list[str] = []
+            statuses: list[str] = []
+            label = family_id
+            for node in coverage_nodes:
+                row = indexed.get(node, {}).get(family_id)
+                if row is None:
+                    cells.append("⚪ 원장 없음")
+                    continue
+                label = str(row["label"])
+                statuses.append(str(row["status"]))
+                cells.append(str(row["status_label"]))
+            strongest = max(
+                statuses,
+                key=lambda value: coverage_mod.STATUS_ORDER.get(value, -2),
+                default="not_searched",
+            )
+            coverage_rows.append(
+                {
+                    "id": family_id,
+                    "label": label,
+                    "cells": cells,
+                    "overall": coverage_mod.STATUS_LABELS.get(strongest, strongest),
+                }
+            )
     return {
         "campaign_id": document["case_id"],
         "generated_at": document["generated_at"],
@@ -322,6 +369,8 @@ def build_context(document: dict[str, Any]) -> dict[str, Any]:
         "context_shown": len(shown),
         "stats": document["stats"],
         "mermaid": _mermaid(document["links"]),
+        "coverage_nodes": coverage_nodes,
+        "coverage": coverage_rows,
     }
 
 
@@ -397,7 +446,15 @@ def main(argv: "list[str] | None" = None) -> int:
 
     json_path = io.write_json(out_dir / "08_campaign.json", document)
     md_path = out_dir / "08_campaign.md"
-    md_path.write_text(render(build_context(document)), encoding="utf-8")
+    coverage_by_node = {
+        node["node"]: node["_coverage"]
+        for node in nodes
+        if isinstance(node.get("_coverage"), dict)
+    }
+    md_path.write_text(
+        render(build_context(document, coverage_by_node=coverage_by_node)),
+        encoding="utf-8",
+    )
 
     stats = document["stats"]
     print(

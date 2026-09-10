@@ -23,6 +23,31 @@
       "type": "string",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
     },
+    "category": {
+      "enum": ["initial_access", "execution", "persistence", "defense_evasion", "discovery", "lateral_movement", "credential_access", "collection", "exfiltration", "impact"]
+    },
+    "based_on": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "ref"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"const": "evidence_ref"},
+            "ref": {"$ref": "#/$defs/ref"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "claim_id"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"const": "scenario_claim"},
+            "claim_id": {"type": "string", "pattern": "^SC[1-9]\\d*$"}
+          }
+        }
+      ]
+    },
     "disposition": {
       "type": "object",
       "description": "요청 하나를 어떻게 처리했는가. **05단계가 쓰지 않는다** — expand.py 가 처리한 뒤 채운다. 요청과 판정이 한 파일에 있어야 '무엇을 물었고 무엇이 받아들여졌나'를 한 번에 본다.",
@@ -47,9 +72,13 @@
             "already_selected",
             "unsupported_artifact",
             "out_of_evidence",
-            "no_widening"
+            "no_widening",
+            "ungrounded_claim",
+            "unknown_behavior",
+            "behavior_not_processed",
+            "searched_no_evidence"
           ],
-          "description": "applied 만 accepted 다. 나머지는 전부 기각 사유이며 errors.jsonl 에 investigation_rejected 로도 남는다 — 실패가 아니라 측정이므로 action 은 record 다."
+          "description": "applied와 searched_no_evidence는 요청을 실제 수행한 accepted 상태다. 나머지는 기각 사유다."
         },
         "detail": {
           "type": "string",
@@ -180,6 +209,24 @@
               "disposition": {
                 "$ref": "#/$defs/disposition"
               }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["type", "based_on", "rationale", "category", "pivots"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {"const": "request_behavior"},
+              "based_on": {"$ref": "#/$defs/based_on"},
+              "rationale": {"type": "string", "minLength": 1},
+              "category": {"$ref": "#/$defs/category"},
+              "pivots": {
+                "type": "array",
+                "maxItems": 5,
+                "uniqueItems": true,
+                "items": {"type": "string", "minLength": 1}
+              },
+              "disposition": {"$ref": "#/$defs/disposition"}
             }
           }
         ]

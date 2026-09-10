@@ -47,6 +47,7 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, schema
+from ..stage05_interpret import coverage as coverage_mod
 from ..stage03_select import mapping_loader
 from . import checkers, runlog
 
@@ -320,6 +321,11 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--coverage",
+        default=None,
+        help="05_coverage.json 경로. 생략하면 --out 옆의 원장이 있을 때 자동 갱신한다",
+    )
+    parser.add_argument(
         "--tolerance-seconds",
         type=float,
         default=DEFAULT_TOLERANCE_SECONDS,
@@ -398,6 +404,26 @@ def main(argv: "list[str] | None" = None) -> int:
         log.abort(STAGE, "schema_violation", violation.as_detail())
 
     io.write_json(out_path, verified)
+
+    coverage_path = Path(args.coverage) if args.coverage else out_path.parent / "05_coverage.json"
+    if coverage_path.is_file():
+        try:
+            ledger = io.read_json(coverage_path)
+            schema.validate(ledger, "coverage")
+            ledger = coverage_mod.apply_verified(
+                ledger, findings_doc, verified, mappings=args.mappings
+            )
+            schema.validate(ledger, "coverage")
+            io.write_json(coverage_path, ledger)
+        except (ValueError, KeyError, schema.SchemaViolation) as exc:
+            # 핵심 06 산출물은 이미 유효하다. 선택적 사이드카 결함 때문에
+            # 검증 결과까지 버리지는 않고 명시적으로 기록한다.
+            log.record(
+                STAGE,
+                "schema_violation",
+                {"field": "05_coverage.json", "message": str(exc)},
+                action="skip",
+            )
 
     # **입구와 무관하게 남긴다.** 기각 상세는 이 파일에도 있지만 같은
     # case-id 를 다시 돌리면 덮인다. 매핑을 넓힐 근거는 여러 실행에 걸쳐

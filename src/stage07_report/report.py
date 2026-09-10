@@ -38,6 +38,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from ..common import attack
 from ..common import errors as errlog
 from ..common import io, refs, schema
+from ..stage05_interpret import coverage as coverage_mod
 
 __all__ = ["STAGE", "SEVERITY_LABELS", "build_context", "render", "main"]
 
@@ -64,6 +65,7 @@ REQUEST_LABELS = {
     "expand_time_range": "분석 기간 확장",
     "request_technique": "기법 추가",
     "request_artifact": "아티팩트 추가 수집",
+    "request_behavior": "행위 기반 재검색",
 }
 
 #: 기각 사유 → 보고서에 인쇄할 말.
@@ -80,6 +82,10 @@ REJECTION_LABELS = {
     "unsupported_artifact": "이 버전이 읽지 못하는 아티팩트입니다",
     "out_of_evidence": "증거 수집 시각 밖이라 볼 것이 없습니다",
     "no_widening": "이미 분석 기간이 덮고 있습니다",
+    "ungrounded_claim": "사용자 원문에서 확인되지 않은 조사 근거입니다",
+    "unknown_behavior": "지원하지 않는 행위 범주입니다",
+    "behavior_not_processed": "행위 재검색 실행기를 거치지 않았습니다",
+    "searched_no_evidence": "재검색을 수행했으나 일치하는 근거가 없습니다",
 }
 
 
@@ -92,7 +98,21 @@ def _request_target(request: dict[str, Any]) -> str:
         return str(request.get("technique_id", "?"))
     if kind == "request_artifact":
         return str(request.get("artifact", "?"))
+    if kind == "request_behavior":
+        pivots = ", ".join(request.get("pivots") or [])
+        return f"{request.get('category', '?')}" + (f" ({pivots})" if pivots else "")
     return "?"
+
+
+def _request_ground(request: dict[str, Any]) -> str:
+    if request.get("based_on_ref"):
+        return str(request["based_on_ref"])
+    based_on = request.get("based_on") or {}
+    if based_on.get("kind") == "evidence_ref":
+        return str(based_on.get("ref") or "")
+    if based_on.get("kind") == "scenario_claim":
+        return f"사용자 원문 {based_on.get('claim_id', '?')}"
+    return ""
 
 
 def _investigation(requests_doc: dict[str, Any] | None) -> list[dict[str, str]]:
@@ -112,7 +132,7 @@ def _investigation(requests_doc: dict[str, Any] | None) -> list[dict[str, str]]:
             {
                 "kind": REQUEST_LABELS.get(str(request.get("type")), str(request.get("type"))),
                 "target": _request_target(request),
-                "ref": request.get("based_on_ref", ""),
+                "ref": _request_ground(request),
                 "rationale": request.get("rationale", ""),
                 "verdict": "2차에서 확인" if accepted else "확인하지 않음",
                 "reason": (
@@ -133,6 +153,7 @@ def build_context(
     records: dict[str, dict[str, Any]] | None = None,
     manifest: dict[str, Any] | None = None,
     requests_doc: dict[str, Any] | None = None,
+    coverage_doc: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """템플릿에 넘길 값을 만든다.
 
@@ -226,6 +247,7 @@ def build_context(
         # 템플릿이 절을 통째로 뺀다 — 매 보고서에 "루프백을 돌리지
         # 않았습니다"를 인쇄하면 그 문장이 곧 소음이 된다.
         "investigation": _investigation(requests_doc),
+        "coverage": coverage_mod.report_rows(coverage_doc),
         "generated_at": io.utc_now(),
         "generator": io.make_generator("report.py"),
     }
@@ -620,6 +642,11 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
             "모델이 더 보자고 했는데 보지 않은 것이므로"
         ),
     )
+    parser.add_argument(
+        "--coverage",
+        default=None,
+        help="05_coverage.json 경로. 생략하면 06_verified.json 옆의 파일을 자동으로 읽는다",
+    )
     parser.add_argument("--out", required=True, help="07_report.md 출력 경로")
     parser.add_argument("--errors", default=None)
     return parser.parse_args(argv)
@@ -636,6 +663,12 @@ def main(argv: "list[str] | None" = None) -> int:
     selection = io.read_json(args.selection)
     scenario = io.read_json(args.scenario) if args.scenario else None
     requests_doc = io.read_json(args.requests) if args.requests else None
+    coverage_path = (
+        Path(args.coverage)
+        if args.coverage
+        else Path(args.in_path).parent / "05_coverage.json"
+    )
+    coverage_doc = io.read_json(coverage_path) if coverage_path.is_file() else None
 
     try:
         schema.validate(verified, "verified")
@@ -645,6 +678,8 @@ def main(argv: "list[str] | None" = None) -> int:
             schema.validate(scenario, "scenario")
         if requests_doc is not None:
             schema.validate(requests_doc, "investigation")
+        if coverage_doc is not None:
+            schema.validate(coverage_doc, "coverage")
     except schema.SchemaViolation as violation:
         log.abort(STAGE, "schema_violation", violation.as_detail())
 
@@ -673,7 +708,14 @@ def main(argv: "list[str] | None" = None) -> int:
             print(f"[{STAGE}] 경고 — {manifest_path} 없음. 분석 범위가 불완전합니다.")
 
     context = build_context(
-        verified, findings_doc, selection, scenario, records, manifest, requests_doc
+        verified,
+        findings_doc,
+        selection,
+        scenario,
+        records,
+        manifest,
+        requests_doc,
+        coverage_doc,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render(context), encoding="utf-8", newline="\n")

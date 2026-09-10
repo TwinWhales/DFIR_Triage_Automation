@@ -505,6 +505,8 @@ def investigation_schema(
     refs: list[str],
     techniques: list[str],
     artifacts: list[str],
+    behaviors: "list[str] | None" = None,
+    claim_ids: "list[str] | None" = None,
 ) -> dict[str, Any]:
     """조사 요청 질의의 출력 스키마. **요청할 수 있는 것만 열거한다.**
 
@@ -552,6 +554,52 @@ def investigation_schema(
     if artifacts:
         branches.append(
             branch("request_artifact", refs, artifact={"enum": sorted(set(artifacts))})
+        )
+    if behaviors and (refs or claim_ids):
+        grounds: list[dict[str, Any]] = []
+        if refs:
+            grounds.append(
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"const": "evidence_ref"},
+                        "ref": {"enum": sorted(set(refs))},
+                    },
+                    "required": ["kind", "ref"],
+                    "additionalProperties": False,
+                }
+            )
+        if claim_ids:
+            grounds.append(
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"const": "scenario_claim"},
+                        "claim_id": {"enum": sorted(set(claim_ids))},
+                    },
+                    "required": ["kind", "claim_id"],
+                    "additionalProperties": False,
+                }
+            )
+        based_on = grounds[0] if len(grounds) == 1 else {"oneOf": grounds}
+        branches.append(
+            {
+                "type": "object",
+                "properties": {
+                    "type": {"const": "request_behavior"},
+                    "based_on": based_on,
+                    "rationale": {"type": "string"},
+                    "category": {"enum": sorted(set(behaviors))},
+                    "pivots": {
+                        "type": "array",
+                        "maxItems": 5,
+                        "uniqueItems": True,
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["type", "based_on", "rationale", "category", "pivots"],
+                "additionalProperties": False,
+            }
         )
 
     return {
@@ -735,6 +783,8 @@ class InterpretClient:
         pivots: dict[str, str],
         techniques: list[tuple[str, str]],
         artifacts: list[tuple[str, str]],
+        behaviors: "list[tuple[str, str, bool]] | None" = None,
+        claims: "list[dict[str, Any]] | None" = None,
     ) -> str:
         """조사 요청 질의의 사용자 프롬프트.
 
@@ -778,6 +828,22 @@ class InterpretClient:
             + ("\n".join(f"- {tid}({name})" for tid, name in techniques) or "- 없음"),
             "### 추가로 수집할 수 있는 아티팩트\n"
             + ("\n".join(f"- {name}: {desc}" for name, desc in artifacts) or "- 없음"),
+            "### 아직 비어 있는 행위 범주\n"
+            + (
+                "\n".join(
+                    f"- {family_id}({label}) — 사용자 입력 관련: {'예' if relevant else '아니오'}"
+                    for family_id, label, relevant in (behaviors or [])
+                )
+                or "- 없음"
+            ),
+            "### 사용자 원문 조사 근거 (scenario_claim)\n"
+            + (
+                "\n".join(
+                    f"- {claim['id']}: {claim['text']} [범주: {', '.join(claim['categories'])}]"
+                    for claim in (claims or [])
+                )
+                or "- 없음"
+            ),
             "### 출력",
         ]
         return "\n\n".join(parts)
@@ -790,6 +856,8 @@ class InterpretClient:
         pivots: dict[str, str],
         techniques: list[tuple[str, str]],
         artifacts: list[tuple[str, str]],
+        behaviors: "list[tuple[str, str, bool]] | None" = None,
+        claims: "list[dict[str, Any]] | None" = None,
     ) -> list[dict[str, Any]]:
         """모델에게 "무엇을 더 봐야 하는가"를 묻는다.
 
@@ -800,7 +868,13 @@ class InterpretClient:
         refs = sorted(set(findings.get("input_refs", [])))
         system = self.investigate_system_prompt()
         user = self.investigate_user_prompt(
-            scenario, findings, pivots=pivots, techniques=techniques, artifacts=artifacts
+            scenario,
+            findings,
+            pivots=pivots,
+            techniques=techniques,
+            artifacts=artifacts,
+            behaviors=behaviors,
+            claims=claims,
         )
         self.last_system, self.last_user = system, user
         raw = self.backend.complete(
@@ -812,6 +886,8 @@ class InterpretClient:
                     refs,
                     [tid for tid, _ in techniques],
                     [name for name, _ in artifacts],
+                    [family_id for family_id, _label, _relevant in (behaviors or [])],
+                    [str(claim["id"]) for claim in (claims or [])],
                 )
                 if self.constrain
                 else None
@@ -836,6 +912,7 @@ class InterpretClient:
             "expand_time_range": ("window_hours",),
             "request_technique": ("technique_id",),
             "request_artifact": ("artifact",),
+            "request_behavior": ("based_on", "category", "pivots"),
         }
         requests: list[dict[str, Any]] = []
         for item in items:
@@ -844,15 +921,12 @@ class InterpretClient:
             kind = item.get("type")
             if kind not in required:
                 raise MalformedOutput(f"알 수 없는 요청 종류: {kind!r}")
-            missing = [
-                key
-                for key in ("based_on_ref", "rationale", *required[kind])
-                if not item.get(key)
-            ]
+            common = ("rationale",) if kind == "request_behavior" else ("based_on_ref", "rationale")
+            missing = [key for key in (*common, *required[kind]) if key not in item or item[key] in (None, "")]
             if missing:
                 raise MalformedOutput(f"{kind} 에 필수 필드 없음: {', '.join(missing)}")
 
-            request = {key: item[key] for key in ("type", "based_on_ref", "rationale", *required[kind])}
+            request = {key: item[key] for key in ("type", *common, *required[kind])}
             if kind == "expand_time_range":
                 # **시각은 우리가 채운다.** 모델은 어느 레코드를 근거로
                 # 들었는지만 고르고, 그 레코드가 언제인지는 우리가 안다.
