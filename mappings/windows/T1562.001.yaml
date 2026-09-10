@@ -3,6 +3,23 @@ name: "Impair Defenses: Disable or Modify Tools"
 os: windows
 
 artifacts:
+  # 명령행으로 끄는 것이 이 기법의 요즘 모습이다. 아래 셋은 전부 그 뒤에
+  # 남는 상태(레지스트리 값·서비스 시작 유형·Defender 자기 로그)를 보는데,
+  # **끄는 행위 자체는 명령행에만 있다.**
+  #
+  # 실측(K2L5-KIOSK, 2026-09-10): 4건.
+  #   SYSMON#22246  powershell -Command ... Set-MpPreference -DisableRealtimeMonitoring
+  #   SYSMON#22249  reg add HKLM Software Policies Microsoft Windows Defender ...
+  #   SYSMON#22291  reg add ... Services WinDefend /v Start ...
+  #
+  # 이 채널이 없어서 05단계가 그 레코드에 T1562.001 을 붙이면 06단계가
+  # technique_unsupported 로 기각할 자리였다. 실제로 모델은 T1041 을 붙였다.
+  - name: evtx:Sysmon
+    tier: 1
+    scope_template:
+      event_ids: [1]
+    rationale: 보안 도구를 끄는 명령행 — Set-MpPreference·서비스 Start 변경·정책 값 기록
+
   # 서비스 Start 값이 4(disabled)로 바뀌었는지가 핵심이다. 값 자체는
   # SYSTEM 하이브에 남고, 바뀐 시점은 evtx 7040에 남는다. 둘을 같이
   # 봐야 "언제 누가"가 나온다.

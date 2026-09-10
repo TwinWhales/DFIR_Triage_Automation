@@ -227,7 +227,9 @@ def test_the_requestable_lists_leave_out_what_we_already_have(scenario, catalog)
     assert "T1505.003" not in techniques and "T1136.001" not in techniques
     assert "$MFT" not in artifacts and "evtx:Security" not in artifacts
     # 매핑이 없는 기법과 파서가 없는 아티팩트는 애초에 못 고른다.
-    assert "T1486" not in techniques
+    # T1499 는 우리 카탈로그 밖의 실재 ATT&CK ID 다 — 2026-09-10 에
+    # KNOWN_TECHNIQUES 전부가 매핑을 갖게 되어 예전 예시(T1486)가 사라졌다.
+    assert "T1499" not in techniques
     assert "psreadline_history" not in artifacts
     # 열 수 있는 것은 남아 있어야 한다. 비면 질의 자체가 뜻이 없다.
     assert "T1041" in techniques and "prefetch" in artifacts

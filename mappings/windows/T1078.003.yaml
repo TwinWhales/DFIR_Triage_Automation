@@ -3,6 +3,36 @@ name: "Valid Accounts: Local Accounts"
 os: windows
 
 artifacts:
+  # **훔친 계정을 애플리케이션에 쓰는 순간.** 윈도우 로그온(Security 4624)과
+  # 다른 축이다 — DB 계정으로 붙은 것은 SQL Server 자신의 로그에만 남는다.
+  #
+  # 실측(K2L6-MGMT, 2026-09-10): `mgmt_app` 계정의 로그인이 426건 중
+  # 220건이고, 그중 **공격 시간대(09-08 07:00 이후)가 34건**이다. 시나리오
+  # 에서 공격자가 설정 파일에서 훔친 바로 그 계정이다.
+  #
+  # 채널 자체는 `_baseline.yaml` 이 무조건 연다(02가 이 기법을 고른 적이
+  # 없어서다). 여기 적는 것은 **06단계가 이 증거로 이 기법을 인정하게**
+  # 하기 위해서다 — 매핑에 없으면 옳게 붙여도 technique_unsupported 다.
+  - name: evtx:Application
+    tier: 1
+    priority: 2
+    scope_template:
+      event_ids: [18453, 18454, 18456]
+    rationale: 애플리케이션·DB 로그인 성공과 실패 — 어느 계정이 언제 붙었는지
+
+  # 훔친 계정을 **쓰는 순간**이 명령행에 남는 경우가 있다. 아래 Security 는
+  # 로그온을 보는데, 원격 공유 접속이나 runas 는 로그온 이벤트보다 명령행이
+  # 먼저이고 더 구체적이다(계정 이름이 인자에 있다).
+  #
+  # 실측(K2L5, 2026-09-10): 21건.
+  #   SYSMON#2599  runas.exe /user:testuser cmd
+  #   SYSMON#301   net.exe use (원격 공유) /user:Admin
+  - name: evtx:Sysmon
+    tier: 1
+    scope_template:
+      event_ids: [1]
+    rationale: runas·net use 등 다른 계정으로 무언가를 하는 명령행 — 인자에 계정 이름
+
   # 4624 성공 / 4625 실패 / 4672 특권 로그온.
   # 4672는 관리자 세션이 열릴 때 4624 직후에 따라붙는 동반 이벤트다.
   # 단일 계정으로 상시 로그온된 키오스크에서는 "평소 쓰지 않는 계정의

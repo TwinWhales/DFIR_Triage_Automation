@@ -158,7 +158,24 @@ RESERVE_FINDINGS_TOKENS = 4096
 # than the former ref-only selection.  SVCStealer live runs repeatedly truncated
 # at ~2.5-3.4K characters with 1,024 tokens, so reserve a safe 2,048 tokens and
 # spend the remaining context through additional Map chunks.
-RESERVE_SELECTION_TOKENS = 2048
+#
+#: **2026-09-10 에 2,048 → 3,072 으로 올렸다.** 위 "20건 안팎" 이라는 전제가
+#: 깨졌다 — 04단계에 신호가 늘면 보장 레인 레코드가 늘고, 그것은 좌석 상한을
+#: 면제받으므로 **한 조각에 실리는 레코드가 함께 는다.**
+#:
+#: 실측(`K2L4`, 자격증명 척추 flag 3종을 더한 뒤):
+#:
+#:     조각당 레코드   K2L3-KIOSK 25·12  ->  K2L4-KIOSK 19·41
+#:     응답            2,048 토큰에서 6,396~6,465자를 쓰고 잘림
+#:     결과            조각 3/4 를 세 번 재시도하고 05 가 중단
+#:
+#: 잘린 자리가 `signal_dispositions` 였다 — 보장 레인 레코드마다 처분을
+#: 하나씩 써야 하는데 그 수가 늘었다.
+#:
+#: **올리면 프롬프트 예산이 줄어 조각이 더 잘게 나뉜다.** 두 효과가 같은
+#: 방향이라(응답도 짧아지고 자리도 넓어진다) 이 자리에서는 상충이 아니다.
+#: 커버리지는 `--max-chunks` 가 지킨다.
+RESERVE_SELECTION_TOKENS = 3072
 
 #: 프롬프트에 실을 때 ``fields`` 안의 목록을 몇 개까지 남길 것인가
 #: (``for_prompt`` 참조). ``None`` 이면 안 자른다.

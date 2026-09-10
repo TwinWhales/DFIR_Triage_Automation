@@ -2,6 +2,16 @@
 name: "Create Account: Local Account"
 os: windows
 artifacts:
+  # 계정 생성은 Security 4720 에 남지만, 감사가 꺼져 있으면 그쪽에 아무것도
+  # 없다. 명령행에는 **만든 계정 이름과 초기 암호까지** 남는다.
+  #
+  # 실측(K2L5-KIOSK, 2026-09-10): 6건. net1 user <이름> <암호> /add 꼴이다.
+  - name: evtx:Sysmon
+    tier: 1
+    scope_template:
+      event_ids: [1]
+    rationale: net user /add 등 계정을 만드는 명령행 — 계정 이름과 초기 암호
+
   - name: evtx:Security
     tier: 1
     priority: 2

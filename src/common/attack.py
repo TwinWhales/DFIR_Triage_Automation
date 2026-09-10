@@ -94,7 +94,24 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1083": "File and Directory Discovery",
     "T1105": "Ingress Tool Transfer",
     "T1569.002": "System Services: Service Execution",
-    # 매핑은 아직 없으나 시나리오에 자주 등장하는 기법
+    # K-001 실측 대조(2026-09-10)에서 **라벨 자체가 없어** 못 붙이던 기법들.
+    # 시나리오의 16개 기법 중 다섯이 여기 없어, 05단계가 관측을 정확히 하고도
+    # T1059.003 같은 일반 코드로 뭉갰다(docs/limitations.md 3-1 ②의 다른 얼굴).
+    # **관문 1이 여기다** — 매핑 YAML 만 만들면 02단계가 그 기법을 못 내서
+    # 매핑이 도달 불가가 된다. 위 HID/BadUSB 주석의 선례와 같은 자리다.
+    "T1046": "Network Service Discovery",
+    "T1210": "Exploitation of Remote Services",
+    "T1552.001": "Unsecured Credentials: Credentials In Files",
+    "T1567.002": "Exfiltration Over Web Service: Exfiltration to Cloud Storage",
+    "T1036": "Masquerading",
+    # 2026-09-10 에 이 다섯에도 매핑이 생겼다. **이제 KNOWN_TECHNIQUES 는
+    # 전부 매핑을 갖는다** — `attack.unmapped(KNOWN_TECHNIQUES)` 가 빈 목록
+    # 이다. 매핑 결손을 예시로 쓰던 시험들이 그때 함께 바뀌었다
+    # (조건을 저장소에 기대지 않고 시험이 직접 만들도록).
+    #
+    # 여기 새 ID 를 더할 때는 매핑 파일도 같이 만든다. 관문이 둘이라는 것은
+    # 위 HID/BadUSB 주석에 적혀 있고, 이번에는 반대 방향으로 걸렸다 —
+    # ID 만 있고 매핑이 없어 05단계가 그 라벨을 붙여도 06단계가 기각했다.
     "T1003.001": "OS Credential Dumping: LSASS Memory",
     "T1021.001": "Remote Services: Remote Desktop Protocol",
     "T1036.005": "Masquerading: Match Legitimate Name or Location",

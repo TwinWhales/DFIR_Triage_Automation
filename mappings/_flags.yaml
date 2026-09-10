@@ -19,7 +19,18 @@
 #   match     생략하면 "그 아티팩트의 모든 레코드". 나머지는 셋.
 #               event_id       record["event_id"] 가 values 안에 있는가
 #               list_contains  record[field] (리스트) 가 values 와 겹치는가
-#               field_equals   record[field] 가 value 와 같은가
+#               field_equals   record[field] 가 value 와 같은가 (최상위 키만)
+#               field_regex    field(점 표기) 의 값이 values 의 정규식 중
+#                              하나에 걸리는가. **어휘가 열려 있는 자리에만
+#                              쓴다** — 토큰 목록으로 되는 것을 이걸로 쓰면
+#                              이 파일만 읽어서 조건을 알기 어려워진다.
+#                              대소문자는 패턴이 정한다((?i) 를 직접 적는다).
+#                              로드할 때 컴파일해 보므로 오타는 그때 터진다.
+#               field_in       field(점 표기) 의 값이 values 중 하나와 정확히
+#                              같은가. 문자열로 맞춰 본다.
+#                              **포함 검사로 대신하면 안 되는 자리에 쓴다** —
+#                              포트 4444 를 field_contains 로 쓰면 14444 가
+#                              걸린다(유효한 포트다).
 #
 # `handler` 는 선언으로 표현되지 않는 판정이다. flagging.py 의 HANDLERS 에
 # 등록된 이름만 쓸 수 있다. `when` 과 함께 쓰면 **둘 다** 만족해야 한다 —
@@ -440,6 +451,201 @@ flags:
             - '\computerdefaults.exe'
             - '\sdclt.exe'
             - '\eventvwr.exe'
+
+  database_logon:
+    artifacts: [evtx:Application]
+    condition: Application 채널의 데이터베이스 로그인 성공(18453·18454)·실패(18456)와 감사(33205)
+    note: |
+      **이 사건의 목적에 가장 가까운 자리다.** 시나리오의 Stage 8~10 은
+      DB 에 붙어 결제 정산 테이블을 읽는 것인데, 그 행위는 윈도우 로그온이
+      아니라 **애플리케이션 자신의 로그**에 남는다. `logon_success` 가 보는
+      Security 4624 에는 없다.
+
+      실측(K2L6 세 노드, 2026-09-10):
+
+        MGMT   전체 6,269건 중 이 EID 426건
+               18454 로그인 성공 243 / 17137 시작 106 / 18453 성공 73 /
+               18456 실패 3 / 33205 감사 1
+        KIOSK  0건
+        POS    0건
+
+      **SQL Server 가 없는 기계에서는 0건이다.** 이 축을 바탕에 두어도 그런
+      기계의 비용은 늘지 않는다 — `_baseline.yaml` 에 넣은 근거가 그것이다.
+
+      `mgmt_app` 계정의 로그인이 **공격 시간대(09-08 07:00 이후)에 34건**
+      있다. 그 계정은 시나리오에서 공격자가 설정 파일에서 훔친 DB 계정이다.
+
+      **17137(데이터베이스 시작)은 뺐다.** 106건으로 이 목록에서 가장 많은데
+      서비스가 뜰 때마다 나는 것이라 침해와 무관하다.
+
+      **33205(SQL Server Audit)는 1건뿐이다.** 시나리오는 이 감사가 SELECT
+      질의를 담는다고 적었지만, 이 수집본의 유일한 33205 는 2026-09-03 의
+      `action_id:AUSC`(감사를 켠 기록)이고 `settlements`·`SELECT` 문자열은
+      **0건**이다. 넣어 두는 것은 감사가 제대로 도는 수집본을 위한 것이고,
+      **이 증거에서 Stage 9·10 을 되살리지는 못한다**는 사실을 적어 둔다.
+    rule:
+      when:
+        - artifact: evtx:Application
+          match: event_id
+          values: [18453, 18454, 18456, 33205]
+
+  system_crash_recorded:
+    artifacts: [evtx:System]
+    condition: System 채널의 BugCheck(1001)·예기치 않은 종료(6008)
+    note: |
+      **커널 익스플로잇이 실패하면 파랗게 죽는다.** T1210(원격 서비스
+      익스플로잇)이 이 채널을 요청하는데 받는 flag 가 없어
+      `test_every_mapped_event_id_has_a_flag_that_receives_it` 가 잡았다 —
+      요청은 하는데 표시가 없으면 그 레코드는 04까지 와서 "볼 이유 없이"
+      05에 실린다.
+
+      `app_crash` 와 다르다. 저쪽은 `evtx:Application` 의 1000·1001·1002 로
+      **응용 프로그램**이 죽은 것이고, 이쪽은 `evtx:System` 이라 **커널**이
+      죽은 것이다. EID 번호가 겹치는 것은 우연이다.
+
+      K-001 Stage 3 의 SMBGhost 는 익스플로잇 뒤 POS 가 블루스크린으로
+      죽을 수 있다고 적혀 있다. 이 수집본에는 해당 레코드가 없지만
+      (`evtx:System` 이 선별되지 않았다), 매핑이 그 자리를 여는 이상 표시는
+      있어야 한다.
+
+      **악성 판정이 아니다.** 정상 하드웨어 문제로도 난다.
+    rule:
+      when:
+        - artifact: evtx:System
+          match: event_id
+          values: [1001, 6008]
+
+  remote_interactive_logon:
+    artifacts: [evtx:Security]
+    condition: Security 4624 중 LogonType 이 10(원격 대화형)인 것
+    note: |
+      **`logon_success` 로는 안 보인다.** 그 flag 는 4624 전부에 붙어서, 이
+      증거의 관리서버에서 2,945건이다. 원격 데스크톱으로 들어온 것은 그중
+      **6건**이고, 나머지는 서비스 로그온(Type 5)이 1,292건, 대화형(Type 2)이
+      151건이다. 같은 flag 를 달고 있으면 보장 레인에 못 올린다 — 올리면
+      홍수가 된다.
+
+      실측(`K2L3-MGMT`, 2026-09-10). LogonType 분포와 Type 10 전량:
+
+        5: 1,292  2: 151  3: 25  7: 22  0: 10  **10: 6**
+
+        EVTX-SEC#20198  2026-08-27T10:45:39  100.83.93.111  MGMT
+        EVTX-SEC#20229  2026-08-27T10:46:10  100.83.93.111  MGMT
+        EVTX-SEC#20325  2026-08-27T10:51:11  100.83.93.111  mgmt_admin1
+        (각 2건씩 짝을 이룬다)
+
+      여섯 건 전부 **같은 외부 주소**에서 왔고 계정이 둘이다. 이것이 시나리오의
+      "POS 에서 훔친 계정으로 관리서버 RDP 진입"에 해당하는 자리다.
+
+      **`field_in` 을 쓰는 이유가 여기 있다.** `field_contains` 로 '10' 을
+      쓰면 LogonType 범위(0~13)에서는 우연히 안전하지만, 그 안전이 값의
+      범위에 기대는 것이라 규칙으로 삼을 수 없다.
+
+      **악성 판정이 아니다.** 정상 원격 관리도 Type 10 이다. 이 flag 는 "원격
+      대화형 로그온이 있었다"까지만 말하고, 뜻은 05단계가 정한다.
+    rule:
+      when:
+        - artifact: evtx:Security
+          event_ids: [4624]
+          match: field_in
+          field: fields.LogonType
+          values: ['10', 10]
+
+  credential_config_accessed:
+    artifacts: [evtx:Sysmon]
+    condition: Sysmon 1 중 명령행이 자격증명이 평문으로 든 설정 파일을 여는 것
+    note: |
+      **K2L3 에서 통째로 놓친 자리다**(2026-09-10). 시나리오의 자격증명 척추
+      (POS 에서 관리서버 열쇠를, 관리서버에서 DB 열쇠를 얻는 두 단계)가
+      보고서에 한 줄도 없었는데, 레코드는 **완벽하게 있었다**:
+
+        SYSMON#42071  2026-09-08T07:25:33  flags=[]
+          "C:\Windows\system32\NOTEPAD.EXE"
+          C:\projects\kiosk-dfir\management-server-app\server\config\settings.json
+
+        SYSMON#42078  2026-09-08T07:26:18  (45초 뒤) SSMS.exe 실행
+
+      메모장으로 설정 파일을 열고 45초 뒤 DB 관리 도구를 띄운 것이라, 두
+      레코드가 나란히 있으면 뜻이 분명하다. 그런데 앞의 것에 flag 가 없어
+      배분에서 밀렸다.
+
+      **이 축에는 관용구가 없다.** 설정 파일을 여는 것은 `type`·`notepad`·
+      `more` 무엇으로도 되고, 공통은 **무엇을 여느냐**뿐이다.
+
+      **그렇다고 파일 이름을 열거하지 않는다.** 처음에는 `settings.json`·
+      `mgmt-credentials`·`credentials.ini` 를 적었는데, 그것은 **이 랩의 파일
+      이름**이라 다음 사건에서 안 맞는다. `_attention_signals.yaml` 이 실행
+      파일 이름을 경계하는 것과 같은 종류의 과적합이다 — 저쪽은 공격자가
+      고르는 이름이고 이쪽은 방어자가 만든 이름이라는 차이는 있지만, 한
+      표본에서만 맞는 값이 남는다는 결과는 똑같다.
+
+      대신 **자격증명이 흔히 들어가는 파일의 꼴**로 건다. 어휘가 열려 있는
+      자리라 토큰 목록이 아니라 정규식이다(`field_regex` 의 설명).
+
+      **파일 이름 토큰 안에서만 맞춘다.** 앞을 `(?<![^\/:"\s])` 로 끊고
+      `[^\/:"\s]*` 로 구분자·공백·따옴표를 넘지 않게 했다. 안 그러면 `.*` 가
+      명령행을 가로질러 **앞쪽의 `config` 와 뒤쪽의 `.json` 이 서로 다른
+      토큰이어도** 걸린다. 실측에서 그 차이가 36건 대 16건이었다.
+
+      낱말이 앞에 오든 뒤에 오든 걸리도록 **앞을 내다보는 조건**으로 썼다.
+      그래서 `settings.json`·`appsettings.Production.json`·
+      `mgmt-credentials.ini`·`app.config`·`.env`·`database.yml` 이 한 패턴에
+      다 들어온다. 그중 이 랩에 실제로 있는 것은 첫 번째뿐이다.
+
+      적중 실측(세 노드, Sysmon EID 1 명령행 15,605건): **16건(0.10%)**.
+      그중 공격은 1건(`SYSMON#42071`)이고, 나머지는 랩 제작자가 2026-09-03 에
+      환경을 만들며 남긴 `git add`·`notepad` 와 SQL Server 설치 관리자의
+      `/ConfigurationFile=...SqlServerInstallConfig.ini` 다.
+
+      **오탐이 15건(94%)이지만 좁히지 않는다.** 공격자와 제작자가 **같은
+      파일**을 열었기 때문이다 — 레코드만 보고는 구별되지 않는다. 가르는
+      것은 시각이고, 그것은 05단계의 앵커 거리 정렬이 할 일이다
+      (`attention.burst_anchor`). 신고에 사고 시각이 있으면 03단계의
+      time_range 가 그보다 앞에서 걸러 낸다.
+    rule:
+      when:
+        - artifact: evtx:Sysmon
+          event_ids: [1]
+          match: field_regex
+          field: fields.CommandLine
+          values:
+            - '(?i)(?<![^\\/:"\s])(?=[^\\/:"\s]*(?:settings|config|credential|secret|passw|database|conn_str|token|apikey|env))[^\\/:"\s]*\.(?:json|ini|env|xml|conf|config|ya?ml)(?![^\s",;)])'
+
+  suspicious_c2_port_connection:
+    artifacts: [evtx:Sysmon]
+    condition: Sysmon 3 중 목적지 포트가 4444 인 연결
+    note: |
+      **리버스 셸의 착지점이다.** 시나리오는 공격자가 netcat 을 4444 로 열어
+      두고 키오스크·POS 양쪽에서 셸을 받는다. 두 노드 모두 레코드가 있었고
+      `network_connection` 만 붙어 있었다 — 그 flag 는 EID 3 전량(노드당
+      360~380건)에 붙으므로 신호가 되지 못한다.
+
+      실측(세 노드, 2026-09-10). 포트 4444 로 나간 연결 **3건이 전부**다:
+
+        KIOSK  SYSMON#22245  2026-09-07T13:38:18  powershell.exe -> 192.168.0.153
+        KIOSK  SYSMON#22326  2026-09-07T13:39:58  powershell.exe -> 192.168.0.153
+        POS    SYSMON#920    2026-09-08T07:18:33  spoolsv.exe    -> 100.67.251.20
+
+      **POS 쪽이 특히 이 flag 로만 보인다.** SMBGhost 는 사전 인증 RCE 라
+      로그온 이벤트가 남지 않아(시나리오 Stage 5 주석) 착지 자체를 말해 주는
+      것이 이 아웃바운드뿐이다. 부모가 `spoolsv.exe` 인 것도 그 자리와 맞다.
+
+      **포트 하나를 박아 두는 것이 이 룰의 한계다.** 4444 는 도구 기본값의
+      관용이지 공격의 정의가 아니다(`certutil -urlcache` 와 같은 부류로 보되,
+      그쪽은 옵션이고 이쪽은 숫자라 더 약하다). 공격자가 포트를 바꾸면 조용히
+      0건이 된다. **넓히려면 목록을 늘리는 것이 아니라 다른 축이 필요하다** —
+      "어느 포트인가"가 아니라 "셸이 바깥으로 나갔는가"이고, 그것은 부모-자식
+      관계와 방향을 함께 봐야 해서 handler 자리다. 실측 근거가 쌓이면 그때
+      옮긴다.
+
+      **악성 판정이 아니다.** 4444 를 정상으로 쓰는 서비스가 있으면 걸린다.
+    rule:
+      when:
+        - artifact: evtx:Sysmon
+          event_ids: [3]
+          match: field_in
+          field: fields.DestinationPort
+          values: ['4444', 4444]
 
   database_table_dumped:
     artifacts: [evtx:Sysmon]

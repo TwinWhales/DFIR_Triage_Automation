@@ -1,0 +1,54 @@
+technique: T1036
+name: "Masquerading"
+os: windows
+
+# K-001 Stage 11 — 10분마다 도는 유출 작업에 `WindowsTelemetry` 라는 이름을
+# 붙여 운영체제의 정기 작업처럼 보이게 한다.
+#
+# **T1036.005 와 남남이다.** 이 도구는 상하위 관계를 모른다(`attack.py` 의
+# 주석). 저쪽은 "정상 이름·위치와 일치시킨다"로 파일 이름과 경로를 보고,
+# 이쪽은 상위 기법이라 **작업 이름·서비스 이름처럼 파일이 아닌 자리의
+# 위장**까지 받는다. 02단계가 어느 쪽을 내든 선별이 되어야 해서 따로 둔다.
+#
+# 실측(`K2L3-MGMT`, 2026-09-10). 이 기법이 없어 T1547.001 로 잘못 붙었고
+# 06단계가 기각했다:
+#
+#   SYSMON#42186  "schtasks.exe" /create /sc MINUTE /mo 10
+#                 /tn WindowsTelemetry
+#                 /tr "powershell -ep bypass -WindowStyle Hidden -f C:\exfil\sync.ps1"
+#                 /ru SYSTEM
+#
+# 이름만 보면 윈도우 것이고, 하는 일은 10분마다 유출 스크립트를 도는 것이다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: 위장 이름을 짓는 명령행 — 이름과 실제 하는 일이 한 줄에 같이 있다
+
+  # 작업이 등록된 뒤의 기록. 명령행이 없어도 이름은 여기 남는다.
+  - name: evtx:Security
+    tier: 1
+    priority: 2
+    scope_template:
+      event_ids: [4698, 4699, 4702]
+    rationale: 예약 작업 생성·삭제·수정 — 등록된 이름
+
+  # 정상 이름을 쓰지만 자리가 다른 경우. 이름이 같아도 경로로 갈린다.
+  - name: $MFT
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 위장 의심 이름이 확인되어 실제 파일의 자리를 확인해야 하는 경우
+    rationale: 그 이름의 파일이 정상 설치 자리에 있는지
+
+  - name: registry:SOFTWARE
+    tier: 2
+    priority: 3
+    trigger: Tier1에서 예약 작업 위장이 확인되어 등록 내용을 확인해야 하는 경우
+    scope_template:
+      path_prefix: ["{taskcache_root}"]
+    rationale: 작업 캐시에 남은 등록 항목 — 이름과 실행 대상
+
+defaults:
+  taskcache_root: 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache'

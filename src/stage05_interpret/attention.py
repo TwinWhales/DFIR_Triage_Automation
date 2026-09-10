@@ -205,7 +205,24 @@ def burst_anchor(
     고르든 자기가 정당화된다.
 
     ``reference`` 는 **제외 없이 구한 앵커**다. 동점일 때만 본다 — 가까운
-    창이 이긴다. 없으면 예전처럼 이른 창이다.
+    창이 이긴다. 그다음 동점은 **신호가 조밀한 창**이 가른다. 셋 다 같으면
+    예전처럼 이른 창이다.
+
+    **밀도를 세 번째로 둔 이유**(2026-09-10, ``K2L3-MGMT``). ``reference`` 는
+    전역 앵커 자신을 구할 때는 없다(그때는 기준이 없으니 당연하다). 그래서
+    전역 앵커의 동점은 여전히 "이른 창"으로 갈렸고, 자격증명·RDP 신호를
+    더하자 그 자리에서 뒤집혔다:
+
+        환경 구축 창 08-27 10:11  종류 4 / 신호 레코드 10
+        공격 창      09-08 07:36  종류 4 / 신호 레코드 17   ← 동점, 이른 창 승
+
+    전역 앵커가 12일 전 환경 구축 시각으로 되돌아가자 그것을 ``reference``
+    로 쓰는 신호별 앵커가 전부 따라 움직였고, 직전에 살려 낸 유출 도구 대표
+    다섯 자리를 설치 관리자가 도로 가져갔다.
+
+    밀도는 이 모듈이 처음부터 근거로 삼은 값이다 — ``ANCHOR_WINDOW_SECONDS``
+    의 설명이 "중앙값이 아니라 밀집도를 보는 이유"를 적고 있다. 종류 수가
+    같을 때 그 원칙으로 되돌아가는 것이라 새 기준을 만드는 것이 아니다.
 
     **동점 규칙을 왜 바꿨나**(2026-09-10, ``K2L2-MGMT``). 제외는 옳은
     가드지만, 그 신호가 **사건의 주된 증거일 때** 앵커를 무너뜨린다:
@@ -235,19 +252,23 @@ def burst_anchor(
         return None
 
     window = timedelta(seconds=ANCHOR_WINDOW_SECONDS)
-    best_key: "tuple[int, float] | None" = None
+    best_key: "tuple[int, float, int] | None" = None
     best_at = None
     for index, (start, _) in enumerate(points):
         kinds: set[str] = set()
+        density = 0
         for moment, signals in points[index:]:
             if moment - start > window:
                 break
             kinds |= signals
-        # 종류가 많은 창, 그다음 reference 에 가까운 창. 둘 다 같으면 앞의
-        # 것이 남으므로 이른 창이다 — 예전 규칙이 마지막에 그대로 있다.
+            density += 1
+        # 종류가 많은 창 → reference 에 가까운 창 → **신호가 조밀한 창**.
+        # 셋 다 같으면 앞의 것이 남으므로 이른 창이다 — 예전 규칙이 마지막에
+        # 그대로 있다.
         key = (
             len(kinds),
             -abs((start - reference).total_seconds()) if reference is not None else 0.0,
+            density,
         )
         if best_key is None or key > best_key:
             best_key, best_at = key, start

@@ -1,0 +1,49 @@
+technique: T1210
+name: "Exploitation of Remote Services"
+os: windows
+
+# K-001 Stage 3 — 키오스크에서 정찰로 POS 의 SMB 취약(CVE-2020-0796)을
+#확인한 뒤, 공격자 VM 에서 익스플로잇을 쏴 POS 에 SYSTEM 셸을 얻는다.
+#
+# **이 기법의 어려움은 "쏜 쪽"이 우리 증거에 없다는 것이다.** 익스플로잇
+# 프로세스는 공격자 VM 에서 돌고 그 호스트는 수집 대상이 아니다. 그래서
+# 여기 적는 것은 전부 **맞은 쪽에 남는 것**이다.
+#
+# 실측(`K2L3-POS`, 2026-09-10). 착지 순간이 이렇게 남았다:
+#
+#   SYSMON#919  2026-09-08T07:18:32  cmd                       flags=[shell_spawned]
+#   SYSMON#920  2026-09-08T07:18:33  spoolsv.exe -> 100.67.251.20:4444
+#   SYSMON#921~ 2026-09-08T07:18:43  whoami / systeminfo / arp -a / netstat -an
+#
+# 부모가 `spoolsv.exe` 인 셸과 1초 뒤의 아웃바운드가 짝이다.
+#
+# **로그온 이벤트는 없다.** 사전 인증 RCE 라 4624 가 남지 않고, 그 부재
+# 자체가 판별 근거다. 부재는 매핑으로 표현할 수 없으므로 여기 적지 않고,
+# 그 판단은 05단계가 레코드를 보고 한다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1, 3]
+    rationale: 익스플로잇이 낳은 셸(EID1)과 그 직후의 인바운드·아웃바운드 연결(EID3)
+
+  # 커널 익스플로잇은 자주 실패한다. 실패하면 블루스크린이 나고, 그 기록이
+  # 남으면 "무언가가 커널을 건드렸다"의 직접 증거가 된다.
+  - name: evtx:System
+    tier: 1
+    priority: 2
+    scope_template:
+      event_ids: [1001, 6008]
+    rationale: BugCheck(1001)와 예기치 않은 종료(6008) — 커널 익스플로잇 실패의 흔적
+
+  - name: $MFT
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 BugCheck 또는 예기치 않은 종료가 확인된 경우
+    scope_template:
+      path_prefix: ["{crashdump_root}"]
+    rationale: 크래시 덤프 생성 시각 — 익스플로잇 시점의 상한
+
+defaults:
+  crashdump_root: 'C:\Windows\Minidump'

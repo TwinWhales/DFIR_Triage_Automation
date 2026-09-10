@@ -63,9 +63,15 @@ def _select(loaded, scenario, *, with_baseline=True):
 # ── 바탕이 메우는 자리 ─────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("technique", ["T1091", "T1200", "T1112", "T1197", "T1547.001"])
+@pytest.mark.parametrize("technique", ["T1091", "T1200", "T1197", "T1543.003", "T1546.008"])
 def test_a_technique_that_never_asks_for_sysmon_still_gets_the_baseline_channels(loaded, technique):
-    """41개 매핑 중 13개가 Sysmon 을 아예 요청하지 않는다.
+    """매핑 46개 중 9개가 Sysmon 을 아예 요청하지 않는다.
+
+    **이 수는 줄어 왔다.** 2026-09-10 에 명령행으로 일어나는 기법 여덟에
+    Sysmon EID 1 을 더하며 17개에서 9개가 됐다(T1112·T1547.001 이 이
+    파라미터에서 빠진 이유다). 그래도 바탕이 필요한 자리는 남는다 —
+    남은 아홉은 USB·하드웨어·서비스 설치처럼 명령행이 아니라 상태로
+    드러나는 것들이다.
 
     ``T1091``(USB)·``T1200``(하드웨어)처럼 키오스크 조사에서 자주 걸리는
     것들이 거기 있다. 02가 그 기법 하나만 고르면 `cmd`·`certutil`·

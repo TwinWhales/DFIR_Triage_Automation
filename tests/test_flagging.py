@@ -734,3 +734,134 @@ def test_an_unreadable_image_path_silences_this_rule_rather_than_flooding():
     for image in ("", "/usr/bin/rclone", r"\server\share\tool.exe", r"C:\evil.exe"):
         record = _sysmon(1, Image=image, ParentImage=r"C:\Windows\System32\services.exe")
         assert "execution_outside_known_volume_root" not in flagging.apply(record)["flags"], image
+
+
+# ========== 자격증명 척추 3종 — K2L3 실측이 드러낸 자리 (2026-09-10)
+
+
+def test_only_remote_interactive_logons_get_the_narrow_flag():
+    r"""`logon_success` 는 4624 전량(2,945건)에 붙어 신호가 되지 못한다.
+
+    실측(`K2L3-MGMT`): LogonType 분포가 5:1,292 / 2:151 / 3:25 / 7:22 /
+    0:10 / **10:6** 이다. RDP 로 들어온 여섯 건만 가려야 보장 레인에 올릴
+    수 있다.
+    """
+    rdp = _evtx(4624, LogonType="10", IpAddress="100.83.93.111",
+                           TargetUserName="mgmt_admin1")
+    assert "remote_interactive_logon" in flagging.apply(rdp)["flags"]
+
+    for other in ("2", "3", "5", "7", "0", "11"):
+        record = _evtx(4624, LogonType=other, TargetUserName="svc")
+        assert "remote_interactive_logon" not in flagging.apply(record)["flags"], other
+
+
+def test_the_logon_type_is_matched_exactly_not_by_substring():
+    """`field_contains` 로 '10' 을 쓰면 값의 범위에 기대게 된다."""
+    record = _evtx(4624, LogonType="110", TargetUserName="svc")
+    assert "remote_interactive_logon" not in flagging.apply(record)["flags"]
+
+
+def test_opening_a_credential_config_file_is_flagged():
+    r"""K2L3 에서 통째로 놓친 자리 — 레코드는 있었고 flags 가 비어 있었다.
+
+    `SYSMON#42071` 이 `NOTEPAD.EXE ...\server\config\settings.json` 이고
+    45초 뒤 SSMS 가 떴다.
+    """
+    record = _sysmon(
+        1,
+        Image=r"C:\Windows\system32\NOTEPAD.EXE",
+        CommandLine=(r'"C:\Windows\system32\NOTEPAD.EXE" '
+                     r'C:\projects\kiosk-dfir\management-server-app\server\config\settings.json'),
+    )
+    assert "credential_config_accessed" in flagging.apply(record)["flags"]
+
+
+def test_an_ordinary_command_is_not_a_credential_config_access():
+    record = _sysmon(1, Image=r"C:\Windows\system32\notepad.exe",
+                     CommandLine=r'"notepad.exe" C:\Users\kiosk\Documents\memo.txt')
+    assert "credential_config_accessed" not in flagging.apply(record)["flags"]
+
+
+def test_a_connection_to_the_reverse_shell_port_is_flagged():
+    r"""`network_connection` 은 EID 3 전량에 붙어 신호가 되지 못한다.
+
+    실측(세 노드): 4444 로 나간 연결은 **3건이 전부**다 —
+    키오스크의 powershell 둘(Stage 1)과 POS 의 spoolsv 하나(Stage 3).
+    POS 쪽은 SMBGhost 가 사전 인증 RCE 라 로그온 이벤트가 없어, 착지를
+    말해 주는 것이 이 아웃바운드뿐이다.
+    """
+    record = _sysmon(3, Image=r"C:\Windows\System32\spoolsv.exe",
+                     DestinationIp="100.67.251.20", DestinationPort="4444")
+    assert "suspicious_c2_port_connection" in flagging.apply(record)["flags"]
+
+
+def test_a_port_that_merely_contains_4444_is_not_flagged():
+    """14444 는 유효한 포트다 — 포함 검사로 쓰면 걸린다."""
+    record = _sysmon(3, Image=r"C:\app\svc.exe", DestinationIp="10.0.0.5",
+                     DestinationPort="14444")
+    assert "suspicious_c2_port_connection" not in flagging.apply(record)["flags"]
+
+
+def test_the_port_is_matched_whether_the_parser_gives_a_string_or_a_number():
+    """evtx 파서가 숫자로 줄지 문자열로 줄지는 이 룰이 답할 질문이 아니다."""
+    for value in ("4444", 4444):
+        record = _sysmon(3, Image=r"C:\x\y.exe", DestinationIp="1.2.3.4",
+                         DestinationPort=value)
+        assert "suspicious_c2_port_connection" in flagging.apply(record)["flags"], repr(value)
+
+
+def test_the_credential_config_rule_is_not_tied_to_this_lab_filenames():
+    r"""이름을 열거하면 그 랩의 파일 이름이 룰에 남는다.
+
+    처음에는 `settings.json`·`mgmt-credentials`·`credentials.ini` 를
+    적었는데, 그러면 다음 사건에서 안 맞는다. 자격증명이 흔히 들어가는
+    **파일의 꼴**로 걸어야 한다.
+    """
+    for command in (
+        r'"NOTEPAD.EXE" C:\a\server\config\settings.json',
+        r'type C:\pos\config\mgmt-credentials.ini',
+        r'powershell -c "gc C:\app\.env"',
+        r'notepad C:\svc\app.config',
+        r'more C:\web\appsettings.Production.json',
+        r'cat /opt/x/database.yml',
+        r'type conn_str.conf',
+    ):
+        record = _sysmon(1, Image=r"C:\Windows\system32\notepad.exe", CommandLine=command)
+        assert "credential_config_accessed" in flagging.apply(record)["flags"], command
+
+
+def test_an_ordinary_file_argument_is_not_a_credential_config():
+    """넓히면 필터가 일을 안 한다 — 세 노드 실측 16건(0.10%)이 상한이다."""
+    for command in (
+        r'notepad C:\Users\k\Documents\memo.txt',
+        r'app.exe --verbose C:\data\report.json',
+        r'setup.exe /log C:\t\install.log',
+        r'msbuild MyApp.csproj /p:Configuration=Release',
+    ):
+        record = _sysmon(1, Image=r"C:\x\app.exe", CommandLine=command)
+        assert "credential_config_accessed" not in flagging.apply(record)["flags"], command
+
+
+def test_the_pattern_does_not_span_across_path_separators():
+    r"""`.*` 를 쓰면 앞쪽 `config` 와 뒤쪽 `.json` 이 다른 토큰이어도 걸린다.
+
+    실측에서 그 차이가 36건 대 16건이었다.
+    """
+    record = _sysmon(1, Image=r"C:\x\app.exe",
+                     CommandLine=r'app.exe --config-dir C:\etc\svc /out C:\data\report.json')
+    assert "credential_config_accessed" not in flagging.apply(record)["flags"]
+
+
+def test_a_broken_regex_fails_at_load_time(tmp_path):
+    """오타가 "걸리는 레코드가 없다"로 나타나면 조용한 탐지 누락이다."""
+    import yaml
+
+    source = flagging.mappings_dir() / "_flags.yaml"
+    data = yaml.safe_load(source.read_text(encoding="utf-8"))
+    data["flags"]["credential_config_accessed"]["rule"]["when"][0]["values"] = ["(?i)(unclosed"]
+    (tmp_path / "_flags.yaml").write_text(
+        yaml.safe_dump(data, allow_unicode=True), encoding="utf-8"
+    )
+
+    with pytest.raises(flagging.VocabularyError, match="정규식"):
+        flagging.load_vocabulary(str(tmp_path))

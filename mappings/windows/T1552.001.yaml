@@ -1,0 +1,48 @@
+technique: T1552.001
+name: "Unsecured Credentials: Credentials In Files"
+os: windows
+
+# K-001 Stage 5·7-2 — 이 사건의 **자격증명 척추**다. POS 의 설정 파일에서
+# 관리서버 RDP 계정을, 관리서버의 설정 파일에서 DB 계정을 평문으로 얻는다.
+#
+# 실측(`K2L3-MGMT`, 2026-09-10)에서 이 기법이 없어 관측이 통째로 사라졌다.
+# 레코드는 있었고 flags 가 비어 있었다:
+#
+#   SYSMON#42071  2026-09-08T07:25:33
+#     "NOTEPAD.EXE" ...\management-server-app\server\config\settings.json
+#   SYSMON#42078  2026-09-08T07:26:18  (45초 뒤) SSMS.exe
+#
+# 설정 파일을 열고 45초 뒤 DB 관리 도구를 띄운 것이라, 두 레코드가 나란히
+# 있으면 뜻이 분명하다. 04단계의 `credential_config_accessed` 가 앞의 것에
+# 표시를 붙인다.
+#
+# **파일을 읽은 것 자체는 대개 안 남는다.** Object Access 감사(4663)가 켜져
+# 있어야 하는데 기본이 꺼져 있다. 그래서 근거는 "무엇으로 열었나"(명령행)와
+# "그 파일이 있었나·언제 건드려졌나"(파일시스템)로 나뉜다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: 설정 파일을 여는 명령행 — 무엇으로 무엇을 열었는지가 여기에만 있다
+
+  - name: $MFT
+    tier: 1
+    priority: 2
+    rationale: 자격증명이 든 설정 파일의 존재와 시각. 열람 자체는 안 남아도 파일은 남는다
+
+  - name: $UsnJrnl
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 설정 파일 접근이 확인되어 그 뒤 변경·삭제를 확인해야 하는 경우
+    rationale: 읽은 뒤 지웠거나 고쳤는지
+
+  # 대화형 셸에서 `type`·`cat` 으로 읽었다면 히스토리에 남는다.
+  # **이 사건에서는 안 남는다** — 리버스 셸이 비대화형이다(시나리오 주석).
+  # 그래도 거는 것은 이 기법이 이 사건 전용이 아니기 때문이다.
+  - name: psreadline_history
+    tier: 2
+    priority: 3
+    trigger: Tier1에서 설정 파일 접근이 확인되었으나 명령행을 특정하지 못한 경우
+    rationale: 대화형 세션에서 읽었다면 그 명령이 그대로 남는다

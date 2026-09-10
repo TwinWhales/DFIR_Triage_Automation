@@ -187,6 +187,28 @@ def test_all_shipped_mappings_load(mappings):
         # KNOWN_TECHNIQUES 에는 있었고 매핑만 없었다 — 이번에 생겼다.
         "T1016", "T1018", "T1021.002", "T1071.001",
         "T1082", "T1083", "T1105", "T1569.002", "T1059.001",
+        # K-001 실측 대조(2026-09-10)에서 **라벨이 없어** 관측을 정확히
+        # 하고도 T1059.003 같은 일반 코드로 뭉개지던 다섯. 시나리오
+        # 16개 기법 중 이 다섯이 카탈로그에 없었다.
+        #   T1046      nmap 포트 스캔
+        #   T1210      SMBGhost 원격 익스플로잇
+        #   T1552.001  설정 파일의 평문 자격증명
+        #   T1567.002  rclone 으로 클라우드 저장소 유출
+        #   T1036      "WindowsTelemetry" 예약 작업 위장
+        "T1046", "T1210", "T1552.001", "T1567.002", "T1036",
+        # 2026-09-10 에 다섯을 만들었다가 **넷을 도로 뺐다.**
+        #
+        # 매핑이 있으면 05단계 열거형에 들어간다(`candidate_techniques`).
+        # 그런데 이 증거에 관측이 0건인 기법을 넣자, 모델이 그것을 **고를 수
+        # 있는 오답**으로 썼다 — K2L6 실측에서 T1003.001 이 41개 라벨 중
+        # 9건을 가져갔고 전부 오답이었다(rundll32 실행·powershell 실행·
+        # notepad 실행에 "LSASS 메모리 덤프"를 붙였다).
+        #
+        # **증거 없는 기법의 매핑은 모델에게 오답을 공급한다.** 관측이 생기면
+        # 그때 되살린다 — 파일은 git 에 남아 있다.
+        #
+        # T1218.011 만 남긴 것은 rundll32 실행이 이 증거에 191건 있어서다.
+        "T1218.011",
     }
 
 
@@ -420,9 +442,18 @@ def test_an_artifact_already_selected_is_not_also_deferred(scenario, catalog, ma
 
 
 def test_the_same_request_is_deferred_when_nothing_selects_it(scenario, catalog, mappings):
+    """Tier 1 로 읽는 기법이 사라지면 그 요청은 유예로 남는다.
+
+    T1136.001 의 Tier 1 목록은 2026-09-10 에 늘었다 — 계정 생성 명령행이
+    Sysmon EID 1 에 있는데 그 채널을 요청하지 않고 있었다. 여기서 보는 것은
+    ``$MFT`` 의 유예이지 Tier 1 이 몇 개인가가 아니므로, 늘어난 쪽은 포함
+    관계로 본다.
+    """
     scenario["techniques"] = [t for t in scenario["techniques"] if t["id"] == "T1136.001"]
     got, _ = select(scenario, catalog, mappings)
-    assert {e["artifact"] for e in got["selected"]} == {"evtx:Security"}
+    selected = {e["artifact"] for e in got["selected"]}
+    assert "evtx:Security" in selected
+    assert "$MFT" not in selected
     assert "$MFT" in {e["artifact"] for e in got["deferred"]}
 
 
@@ -476,11 +507,15 @@ def test_a_technique_without_a_mapping_is_reported_not_silently_dropped(
     scenario, catalog, mappings
 ):
     # 재현율이 낮을 때 원인이 모델인지 매핑 결손인지 가르는 데이터다.
+    # **우리 카탈로그 밖의 실재 ATT&CK ID 다.** 예전에는 T1486 을 썼는데
+    # 2026-09-10 에 KNOWN_TECHNIQUES 전부가 매핑을 갖게 되어 예시가
+    # 사라졌다. 여기서 보는 것은 '매핑 파일이 없을 때 어떻게 되나'이므로,
+    # 저장소의 결손에 기대지 않고 범위 밖 ID 를 쓴다.
     scenario["techniques"].append(
-        {"id": "T1486", "name": "Data Encrypted for Impact", "confidence": 0.6, "evidence_text": "x"}
+        {"id": "T1499", "name": "Endpoint Denial of Service", "confidence": 0.6, "evidence_text": "x"}
     )
     _got, unmapped = select(scenario, catalog, mappings)
-    assert unmapped == ["T1486"]
+    assert unmapped == ["T1499"]
 
 
 def test_selection_is_deterministic(scenario, catalog, mappings):
@@ -512,8 +547,12 @@ def test_cli_reproduces_the_fixture(tmp_path):
 
 def test_cli_logs_unmapped_techniques_as_skipped(tmp_path):
     scenario = io.read_json(FIXTURES / "02_scenario.json")
+    # **우리 카탈로그 밖의 실재 ATT&CK ID 다.** 예전에는 T1486 을 썼는데
+    # 2026-09-10 에 KNOWN_TECHNIQUES 전부가 매핑을 갖게 되어 예시가
+    # 사라졌다. 여기서 보는 것은 '매핑 파일이 없을 때 어떻게 되나'이므로,
+    # 저장소의 결손에 기대지 않고 범위 밖 ID 를 쓴다.
     scenario["techniques"].append(
-        {"id": "T1486", "name": "Data Encrypted for Impact", "confidence": 0.6, "evidence_text": "x"}
+        {"id": "T1499", "name": "Endpoint Denial of Service", "confidence": 0.6, "evidence_text": "x"}
     )
     src = tmp_path / "02_scenario.json"
     io.write_json(src, scenario)
@@ -524,7 +563,7 @@ def test_cli_logs_unmapped_techniques_as_skipped(tmp_path):
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
     assert logged[0]["type"] == "empty_result"
     assert logged[0]["action"] == "skip"
-    assert logged[0]["detail"]["value"] == "T1486"
+    assert logged[0]["detail"]["value"] == "T1499"
 
 
 def test_cli_aborts_when_nothing_can_be_selected(tmp_path):
