@@ -529,3 +529,101 @@ def test_assembly_revalidation_keeps_cross_record_assertion_endpoints():
     }
     body = assemble_body([selection], records, ClaimFields(max_items=2, names=("path",)))
     assert body["findings"][0]["assertions"][0]["object"]["ref"] == "PF#1"
+
+
+def _rclone_record(ref="SYSMON#42124"):
+    """K2L8-MGMT 에서 소견 셋을 기각시킨 레코드와 같은 모양."""
+    return {
+        "ref": ref,
+        "artifact": "evtx:Sysmon",
+        "timestamp": "2026-09-08T07:40:03Z",
+        "fields": {"Image": "C:\\exfil\\rclone.exe"},
+        "canonical": {"hashes": "MD5=84AF3B0B5B230A161E49300C19C2BC4F,SHA256=033EEE51C9AD47C2DE2624B6674D355274BCD6CF0027A5F85DB4437BA24AE81C"},
+    }
+
+
+def test_same_hash_on_a_path_is_sent_back_instead_of_killing_the_finding():
+    """경로에 걸린 same_hash 는 06단계에서 소견 전체를 죽인다.
+
+    실측(``K2L8-MGMT``, 2026-09-10): 모델이 같은 사실을 ``same_path`` 와
+    ``same_hash`` 로 거듭 적었고, 경로에 걸린 뒤쪽이 거짓이 되어 클라우드
+    유출 목적지를 담은 소견 셋이 통째로 기각됐다. 기각 사유에는 두 값이
+    **똑같이** 찍혀 있었다 — 어긋난 것이 아니라 해시가 아니었다.
+    """
+    record = _rclone_record()
+    selection = {
+        "ref": record["ref"],
+        "reason": "C:\\exfil\\rclone.exe 가 실행됐다",
+        "severity": "high",
+        "technique": None,
+        "evidence_fields": ["fields.Image"],
+        "assertions": [{
+            "predicate": "same_hash",
+            "subject": {"ref": record["ref"], "field": "fields.Image"},
+            "object": "C:\\exfil\\rclone.exe",
+        }],
+    }
+    with pytest.raises(SelectionError, match="해시가 아닌") as caught:
+        validate_selection([selection], {record["ref"]: record})
+    assert "same_path" in caught.value.guidance, "무엇으로 고쳐 쓸지 알려 준다"
+
+
+def test_same_hash_on_a_real_digest_still_passes():
+    """막는 것은 해시 아닌 값이지 same_hash 자체가 아니다."""
+    record = _rclone_record()
+    selection = {
+        "ref": record["ref"],
+        "reason": "실행 파일의 해시가 알려진 값과 같다",
+        "severity": "high",
+        "technique": None,
+        "evidence_fields": ["canonical.hashes"],
+        "assertions": [{
+            "predicate": "same_hash",
+            "subject": {"ref": record["ref"], "field": "canonical.hashes"},
+            "object": "MD5=84AF3B0B5B230A161E49300C19C2BC4F,SHA256=033EEE51C9AD47C2DE2624B6674D355274BCD6CF0027A5F85DB4437BA24AE81C",
+        }],
+    }
+    validate_selection([selection], {record["ref"]: record})
+
+
+def test_packet_join_endpoints_are_exempt_because_06_rereads_the_records():
+    """``incident_packet.same_hash_refs`` 는 값이 ref 목록이라 해시가 아니다.
+
+    06단계의 ``_packet_join`` 이 그 형태를 알아보고 **원본 레코드의 해시를
+    다시 대조**하므로, 여기서 막으면 정상 경로를 막는 것이 된다.
+    """
+    anchor = _rclone_record()
+    other = _rclone_record("SYSMON#42148")
+    anchor["packet_id"] = other["packet_id"] = "PKT-1"
+    anchor["incident_packet"] = {"same_hash_refs": [other["ref"]]}
+    selection = {
+        "ref": anchor["ref"],
+        "reason": "같은 해시의 실행이 다른 아티팩트에도 있다",
+        "severity": "high",
+        "technique": None,
+        "evidence_fields": ["fields.Image"],
+        "assertions": [{
+            "predicate": "same_hash",
+            "subject": {"ref": anchor["ref"], "field": "incident_packet.same_hash_refs"},
+            "object": {"ref": other["ref"], "field": "canonical.hashes"},
+        }],
+    }
+    validate_selection([selection], {anchor["ref"]: anchor, other["ref"]: other})
+
+
+def test_same_path_on_a_path_is_untouched():
+    """고친 것은 same_hash 뿐이다 — 맞게 쓴 쌍이 함께 막히면 안 된다."""
+    record = _rclone_record()
+    selection = {
+        "ref": record["ref"],
+        "reason": "C:\\exfil\\rclone.exe 가 실행됐다",
+        "severity": "high",
+        "technique": None,
+        "evidence_fields": ["fields.Image"],
+        "assertions": [{
+            "predicate": "same_path",
+            "subject": {"ref": record["ref"], "field": "fields.Image"},
+            "object": "C:\\exfil\\rclone.exe",
+        }],
+    }
+    validate_selection([selection], {record["ref"]: record})
