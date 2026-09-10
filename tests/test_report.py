@@ -14,6 +14,7 @@ import pytest
 from src.common import io
 from src.stage07_report import report as report_mod
 from src.stage07_report.report import build_context, render
+from src.stage05_interpret import coverage as coverage_mod
 from casepaths import FIXTURES, GOLDEN
 
 PARSED = FIXTURES / "04_parsed"
@@ -91,6 +92,29 @@ def test_the_fixed_sections_are_always_present(docs):
         "### 확인하지 못한 아티팩트",
     ):
         assert heading in text
+
+
+def test_coverage_matrix_renders_all_behavior_families(docs):
+    ledger = coverage_mod.build(
+        docs["scenario"],
+        docs["findings"],
+        raw="웹서버에 침입한 뒤 데이터를 수집해 외부로 유출했습니다.",
+    )
+    ledger = coverage_mod.apply_verified(ledger, docs["findings"], docs["verified"])
+    context = build_context(
+        docs["verified"],
+        docs["findings"],
+        docs["selection"],
+        docs["scenario"],
+        coverage_doc=ledger,
+    )
+
+    text = render(context)
+
+    assert "## 조사 커버리지 매트릭스" in text
+    assert len(context["coverage"]) == 10
+    assert "Initial Access" in text
+    assert "Exfiltration" in text
 
 
 def test_sections_survive_an_empty_case(docs):

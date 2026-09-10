@@ -60,6 +60,15 @@ artifacts:
       event_ids: [5001, 5004, 5007]
     rationale: 실시간 보호 비활성(5001)·보호 비활성화 알림(5004)·구성 변경(5007) — 무력화 당사자의 로그
 
+  # Sysmon 1은 기본 수집 범위에 이미 들어 있다. Set-MpPreference 명령줄은
+  # 보안 도구 설정 변경 시도 자체를 직접 인용할 수 있는 근거이므로, 05단계가
+  # 이 레코드에 붙인 T1562.001을 06단계도 같은 아티팩트로 검증할 수 있어야 한다.
+  - name: evtx:Sysmon
+    tier: 1
+    scope_template:
+      event_ids: [1]
+    rationale: Set-MpPreference 등 보안 도구 설정 변경 명령의 프로세스 생성 기록
+
   - name: $MFT
     tier: 2
     trigger: Tier1에서 보안 서비스 비활성화가 확인되어 사용된 도구를 특정해야 하는 경우

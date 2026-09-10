@@ -265,6 +265,7 @@ def test_the_schemas_that_constrain_refs_are_the_ones_we_expect():
     names = [name for name, _ in _ref_patterns()]
     assert names == [
         "campaign.schema.json",
+        "coverage.schema.json",
         "findings.schema.json",
         "investigation.schema.json",
         "parsed_record.schema.json",

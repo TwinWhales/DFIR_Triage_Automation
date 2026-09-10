@@ -31,6 +31,7 @@ from ..common import attack, io, llm
 from ..common import errors as errlog
 from ..stage03_select import mapping_loader
 from . import record_filter
+from . import coverage as coverage_mod
 from .llm_client import InterpretClient
 
 __all__ = [
@@ -164,6 +165,7 @@ def collect(
     catalog: mapping_loader.Catalog,
     mappings_dir: str,
     manifest: "dict[str, Any] | None" = None,
+    coverage_doc: "dict[str, Any] | None" = None,
     queries: Any = None,
 ) -> "dict[str, Any] | None":
     """모델에게 묻고 ``05_requests.json`` 문서를 만든다.
@@ -178,8 +180,12 @@ def collect(
     artifacts = requestable_artifacts(
         scenario, selection, catalog, unavailable_artifacts(manifest)
     )
+    behaviors = (
+        coverage_mod.requestable_families(coverage_doc) if coverage_doc is not None else []
+    )
+    claims = list((coverage_doc or {}).get("scenario_claims") or [])
 
-    if not (table or techniques or artifacts):
+    if not (table or techniques or artifacts or behaviors):
         # 열거형이 전부 비면 모델이 낼 수 있는 요청이 없다. 빈 enum 을 주고
         # 묻는 것은 무엇을 내든 실패하는 질의를 보내는 것이다.
         log.record(
@@ -189,7 +195,7 @@ def collect(
                 "field": "investigation_requests",
                 "message": (
                     "요청할 수 있는 것이 없어 조사 요청 질의를 보내지 않았습니다 "
-                    "(추가 기법·아티팩트 없음, 시각을 가진 레코드 없음)."
+                    "(추가 기법·아티팩트·행위 범주 없음, 시각을 가진 레코드 없음)."
                 ),
             },
             action="skip",
@@ -203,6 +209,8 @@ def collect(
             pivots=table,
             techniques=techniques,
             artifacts=artifacts,
+            behaviors=behaviors,
+            claims=claims,
         )
     except (llm.LLMError, llm.MalformedOutput) as e:
         # **실패한 질의도 남긴다.** 무엇을 물었길래 이렇게 답했는지가

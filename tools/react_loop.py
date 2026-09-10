@@ -54,9 +54,10 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.common import io  # noqa: E402
+from src.common import io, schema  # noqa: E402
 from src.stage02_normalize.expand import EXIT_NOTHING_TO_DO  # noqa: E402
 from src.stage04_parse.parse import group_by_artifact, scope_key  # noqa: E402
+from src.stage05_interpret import behavior_search, coverage  # noqa: E402
 
 # ``EXIT_NOTHING_TO_DO`` 는 ``expand`` 의 값을 그대로 쓴다(위 import).
 # 부르는 쪽은 "요청이 없었다"와 "확장할 것이 없었다"를 갈라 볼 이유가 없다.
@@ -118,6 +119,46 @@ def selection_changed(first: Path, second: Path) -> bool:
     return any(scope_key(before[name]) != scope_key(after[name]) for name in after)
 
 
+def apply_behavior_requests(case: Path, requests_path: Path, mappings: str) -> set[str]:
+    """행위 요청만 먼저 실행하고 원장·요청 문서를 원자적 산출물처럼 갱신한다."""
+    requests_doc = io.read_json(requests_path)
+    if not any(item.get("type") == "request_behavior" for item in requests_doc.get("requests", [])):
+        return set()
+
+    scenario = io.read_json(case / "02_scenario.json")
+    findings = io.read_json(case / "05_findings.json")
+    raw = ""
+    input_path = case / "01_input.json"
+    if input_path.is_file():
+        raw_value = io.read_json(input_path).get("raw")
+        if isinstance(raw_value, str):
+            raw = raw_value
+
+    ledger_path = case / "05_coverage.json"
+    previous = io.read_json(ledger_path) if ledger_path.is_file() else None
+    ledger = coverage.build(
+        scenario,
+        findings,
+        raw=raw,
+        previous=previous,
+        mappings=mappings,
+        generator=io.make_generator("coverage.py / behavior_search.py"),
+    )
+    records = list(io.read_parsed_records(case / "04_parsed").values())
+    promoted = behavior_search.apply_requests(
+        requests_doc,
+        ledger,
+        records,
+        input_refs=set(findings.get("input_refs", [])),
+        mappings=mappings,
+    )
+    schema.validate(requests_doc, "investigation")
+    schema.validate(ledger, "coverage")
+    io.write_json(requests_path, requests_doc)
+    io.write_json(ledger_path, ledger)
+    return promoted
+
+
 def main(argv: "list[str] | None" = None) -> int:
     io.configure_console()
     args = _parse_args(argv)
@@ -130,6 +171,12 @@ def main(argv: "list[str] | None" = None) -> int:
             "질의가 실패했다. 1차로 끝난다.",
         )
         return EXIT_NOTHING_TO_DO
+
+    try:
+        behavior_refs = apply_behavior_requests(case, requests_path, args.mappings)
+    except (ValueError, KeyError) as exc:
+        print(f"행위 기반 재검색 실패: {exc}", file=sys.stderr)
+        return 2
 
     runner = Runner(args.python, quiet=args.quiet)
 
@@ -181,9 +228,10 @@ def main(argv: "list[str] | None" = None) -> int:
     if code != 0:
         return code
 
-    if not selection_changed(
+    changed = selection_changed(
         case / round1_name("03_selection.json"), case / "03_selection.json"
-    ):
+    )
+    if not changed and not behavior_refs:
         # 시나리오는 넓어졌는데 볼 것이 그대로다. 04·05를 돌려 봐야 같은
         # 결과가 나오므로 여기서 멈추고 1차를 정규 이름으로 되돌린다.
         for name in PRESERVED:
@@ -192,19 +240,22 @@ def main(argv: "list[str] | None" = None) -> int:
         return EXIT_NOTHING_TO_DO
 
     # ── 04 부분 재파싱 ─────────────────────────────────────────────
-    code = runner.run(
-        "루프백 04 파싱 (범위가 바뀐 것만)",
-        [
-            "-m", "src.stage04_parse.parse",
-            "--in", str(case / "03_selection.json"),
-            "--out", str(case / "04_parsed"),
-            "--evidence", args.evidence,
-            "--reuse-from", str(case / round1_name("03_selection.json")),
-            *(["--volume", str(args.volume)] if args.volume is not None else []),
-        ],
-    )
-    if code != 0:
-        return code
+    # request_behavior만 수용된 경우 04 데이터는 이미 있고, 달라진 것은
+    # 보장 레인 ref뿐이다. 같은 85만 건을 다시 파싱하지 않는다.
+    if changed:
+        code = runner.run(
+            "루프백 04 파싱 (범위가 바뀐 것만)",
+            [
+                "-m", "src.stage04_parse.parse",
+                "--in", str(case / "03_selection.json"),
+                "--out", str(case / "04_parsed"),
+                "--evidence", args.evidence,
+                "--reuse-from", str(case / round1_name("03_selection.json")),
+                *(["--volume", str(args.volume)] if args.volume is not None else []),
+            ],
+        )
+        if code != 0:
+            return code
 
     # ── 05 재해석 ──────────────────────────────────────────────────
     # **--investigate 를 주지 않는다**(가드레일 G1). --pin-refs 로 1차가
@@ -216,6 +267,7 @@ def main(argv: "list[str] | None" = None) -> int:
         "--selection", str(case / "03_selection.json"),
         "--out", str(case / "05_findings.json"),
         "--pin-refs", str(case / round1_name("05_findings.json")),
+        "--coverage", str(case / "05_coverage.json"),
         "--mode", args.mode,
         "--mappings", args.mappings,
         "--queries", str(case / "05_llm_queries_round2"),
@@ -260,7 +312,9 @@ def _summarize(case: Path) -> None:
     print(f"루프백 완료 — 요청 {len(requests_doc.get('requests', []))}건 중 {len(accepted)}건 수용")
     for request in accepted:
         detail = (request.get("disposition") or {}).get("detail", "")
-        print(f"  {request['type']:<18} {request['based_on_ref']:<16} {detail}")
+        based_on = request.get("based_on") or {}
+        ground = request.get("based_on_ref") or based_on.get("ref") or based_on.get("claim_id") or "-"
+        print(f"  {request['type']:<18} {str(ground):<16} {detail}")
     print(
         f"  전달 레코드 {len(first.get('input_refs', []))}건 → "
         f"{len(second.get('input_refs', []))}건 / "

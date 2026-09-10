@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import yaml
 
@@ -32,6 +32,7 @@ __all__ = [
     "load_catalog",
     "load_mapping",
     "load_all",
+    "technique_evidence_index",
     "BASELINE_FILE",
     "BaselineRequest",
     "load_baseline",
@@ -425,6 +426,50 @@ def load_all(mappings_dir: str | Path, target_os: str, catalog: Catalog) -> dict
             raise MappingError(f"기법 중복: {mapping.technique}")
         mappings[mapping.technique] = mapping
     return mappings
+
+
+def technique_evidence_index(
+    mappings: Iterable[Mapping],
+) -> tuple[
+    dict[str, frozenset[str]],
+    dict[tuple[str, str], "frozenset[str] | None"],
+]:
+    """Index the evidence contract shared by Stage 05 and Stage 06.
+
+    The first result answers whether an artifact can support a technique.  The
+    second retains request event scopes for candidate routing; ``None`` means
+    that the mapping intentionally accepts every event in that artifact.
+    Followups are indexed by the request's own technique, while
+    ``corroborates`` remains unscoped exactly as the verifier treats it.
+    """
+    supported: dict[str, set[str]] = {}
+    scoped: dict[tuple[str, str], set[str] | None] = {}
+    for mapping in mappings:
+        for request in mapping.requests:
+            technique = str(request.technique)
+            artifact = str(request.artifact)
+            supported.setdefault(technique, set()).add(artifact)
+            key = (technique, artifact)
+            event_ids = request.scope_template.get("event_ids") or []
+            if not event_ids:
+                scoped[key] = None
+            elif key not in scoped:
+                scoped[key] = {str(event_id) for event_id in event_ids}
+            elif scoped[key] is not None:
+                scoped[key].update(str(event_id) for event_id in event_ids)
+
+        for artifact in mapping.corroborates:
+            artifact = str(artifact)
+            supported.setdefault(mapping.technique, set()).add(artifact)
+            scoped[(mapping.technique, artifact)] = None
+
+    return (
+        {technique: frozenset(names) for technique, names in supported.items()},
+        {
+            key: None if event_ids is None else frozenset(event_ids)
+            for key, event_ids in scoped.items()
+        },
+    )
 
 
 #: 기법과 무관하게 여는 상관분석 바탕. 파일 자체의 설명은 그 안에 있다.
