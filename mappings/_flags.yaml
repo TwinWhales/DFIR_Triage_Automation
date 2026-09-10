@@ -20,6 +20,12 @@
 #               event_id       record["event_id"] 가 values 안에 있는가
 #               list_contains  record[field] (리스트) 가 values 와 겹치는가
 #               field_equals   record[field] 가 value 와 같은가 (최상위 키만)
+#               field_regex    field(점 표기) 의 값이 values 의 정규식 중
+#                              하나에 걸리는가. **어휘가 열려 있는 자리에만
+#                              쓴다** — 토큰 목록으로 되는 것을 이걸로 쓰면
+#                              이 파일만 읽어서 조건을 알기 어려워진다.
+#                              대소문자는 패턴이 정한다((?i) 를 직접 적는다).
+#                              로드할 때 컴파일해 보므로 오타는 그때 터진다.
 #               field_in       field(점 표기) 의 값이 values 중 하나와 정확히
 #                              같은가. 문자열로 맞춰 본다.
 #                              **포함 검사로 대신하면 안 되는 자리에 쓴다** —
@@ -526,38 +532,47 @@ flags:
       레코드가 나란히 있으면 뜻이 분명하다. 그런데 앞의 것에 flag 가 없어
       배분에서 밀렸다.
 
-      **파일 이름으로 건다.** 이 축에는 관용구가 없다 — 설정 파일을 여는 것은
-      `type`·`notepad`·`more` 무엇으로도 되고, 공통은 **무엇을 여느냐**뿐이다.
-      그래서 이 flag 는 다른 것들과 달리 이름 목록이고, 그만큼 환경에 붙어
-      있다(`_attention_signals.yaml` 이 실행 파일 이름을 피하는 것과 취지가
-      다르다 — 저쪽은 공격자가 고르는 이름이고 이쪽은 **방어자가 만든** 파일
-      이름이다).
+      **이 축에는 관용구가 없다.** 설정 파일을 여는 것은 `type`·`notepad`·
+      `more` 무엇으로도 되고, 공통은 **무엇을 여느냐**뿐이다.
 
-      적중 실측(세 노드, 2026-09-10): **11건** — KIOSK 4 · MGMT 7.
+      **그렇다고 파일 이름을 열거하지 않는다.** 처음에는 `settings.json`·
+      `mgmt-credentials`·`credentials.ini` 를 적었는데, 그것은 **이 랩의 파일
+      이름**이라 다음 사건에서 안 맞는다. `_attention_signals.yaml` 이 실행
+      파일 이름을 경계하는 것과 같은 종류의 과적합이다 — 저쪽은 공격자가
+      고르는 이름이고 이쪽은 방어자가 만든 이름이라는 차이는 있지만, 한
+      표본에서만 맞는 값이 남는다는 결과는 똑같다.
 
-      **그중 공격은 1건(`SYSMON#42071`)이고 나머지 10건은 랩 제작자 본인**이
-      2026-09-03 에 `git add server/config/settings.json` · `notepad
-      settings.json` 으로 이 환경을 만들며 남긴 것이다. 오탐률이 91% 다.
+      대신 **자격증명이 흔히 들어가는 파일의 꼴**로 건다. 어휘가 열려 있는
+      자리라 토큰 목록이 아니라 정규식이다(`field_regex` 의 설명).
 
-      **그래도 이름 목록을 좁히지 않는다.** 좁힐 축이 파일 이름밖에 없는데,
-      공격자와 제작자가 **같은 파일**을 열었기 때문이다. 레코드만 보고는 구별
-      되지 않는다 — 구별하는 것은 시각이고, 그것은 05단계의 앵커 거리 정렬이
-      할 일이다(`attention.burst_anchor`). 실제로 공격 건은 09-08 07:25 로
-      사건 앵커 옆이고 제작자 건은 5일 전이라, 대표 3자리는 공격 쪽이 가져간다.
+      **파일 이름 토큰 안에서만 맞춘다.** 앞을 `(?<![^\/:"\s])` 로 끊고
+      `[^\/:"\s]*` 로 구분자·공백·따옴표를 넘지 않게 했다. 안 그러면 `.*` 가
+      명령행을 가로질러 **앞쪽의 `config` 와 뒤쪽의 `.json` 이 서로 다른
+      토큰이어도** 걸린다. 실측에서 그 차이가 36건 대 16건이었다.
 
-      **`mgmt-credentials`·`credentials.ini` 는 0건이다.** 시나리오의 POS 쪽
-      자격증명 파일인데 이 수집본에 없다. 넣어 두는 것은 다음 수집을 위한
-      것이고, 지금 수치에 기여하지 않는다는 사실을 여기 적어 둔다.
+      낱말이 앞에 오든 뒤에 오든 걸리도록 **앞을 내다보는 조건**으로 썼다.
+      그래서 `settings.json`·`appsettings.Production.json`·
+      `mgmt-credentials.ini`·`app.config`·`.env`·`database.yml` 이 한 패턴에
+      다 들어온다. 그중 이 랩에 실제로 있는 것은 첫 번째뿐이다.
+
+      적중 실측(세 노드, Sysmon EID 1 명령행 15,605건): **16건(0.10%)**.
+      그중 공격은 1건(`SYSMON#42071`)이고, 나머지는 랩 제작자가 2026-09-03 에
+      환경을 만들며 남긴 `git add`·`notepad` 와 SQL Server 설치 관리자의
+      `/ConfigurationFile=...SqlServerInstallConfig.ini` 다.
+
+      **오탐이 15건(94%)이지만 좁히지 않는다.** 공격자와 제작자가 **같은
+      파일**을 열었기 때문이다 — 레코드만 보고는 구별되지 않는다. 가르는
+      것은 시각이고, 그것은 05단계의 앵커 거리 정렬이 할 일이다
+      (`attention.burst_anchor`). 신고에 사고 시각이 있으면 03단계의
+      time_range 가 그보다 앞에서 걸러 낸다.
     rule:
       when:
         - artifact: evtx:Sysmon
           event_ids: [1]
-          match: field_contains
+          match: field_regex
           field: fields.CommandLine
           values:
-            - 'settings.json'
-            - 'mgmt-credentials'
-            - 'credentials.ini'
+            - '(?i)(?<![^\\/:"\s])(?=[^\\/:"\s]*(?:settings|config|credential|secret|passw|database|conn_str|token|apikey|env))[^\\/:"\s]*\.(?:json|ini|env|xml|conf|config|ya?ml)(?![^\s",;)])'
 
   suspicious_c2_port_connection:
     artifacts: [evtx:Sysmon]

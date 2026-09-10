@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import functools
 import ntpath
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -368,6 +369,32 @@ def _match_field_in(record: dict[str, Any], clause: Clause) -> bool:
     return any(str(value).strip().casefold() == text for value in clause.values)
 
 
+@functools.lru_cache(maxsize=256)
+def _compiled(pattern: str) -> "re.Pattern[str]":
+    """정규식은 한 번만 컴파일한다. 룰 수가 적어 상한 256이면 넉넉하다."""
+    return re.compile(pattern)
+
+
+def _match_field_regex(record: dict[str, Any], clause: Clause) -> bool:
+    """``field`` 의 값이 ``values`` 의 정규식 중 하나와 걸리는가.
+
+    **어휘가 열려 있는 자리에만 씁니다.** 토큰 목록으로 되는 것을 이걸로
+    쓰면 ``_flags.yaml`` 만 읽어서는 무슨 조건인지 알기 어려워집니다
+    (``handler`` 를 아끼는 것과 같은 이유). 지금 쓰는 곳은 자격증명 설정
+    파일 하나이고, 거기서는 **이름을 열거하는 것이 곧 과적합**이었습니다 —
+    그 랩의 파일 이름이 코드에 남습니다.
+
+    ``values`` 는 패턴의 목록이고 하나라도 걸리면 참입니다. 대소문자는
+    패턴이 정합니다(``(?i)`` 를 직접 적습니다) — 다른 매처가 소문자로
+    맞추는 것과 다른데, 정규식은 그 판단을 패턴 안에서 해야 읽는 사람이
+    무엇이 무시되는지 알 수 있기 때문입니다.
+    """
+    actual = _dotted(record, str(clause.field))
+    if not isinstance(actual, str):
+        return False
+    return any(_compiled(str(value)).search(actual) for value in clause.values)
+
+
 #: ``match:`` 에 쓸 수 있는 이름. YAML 이 목록 밖을 부르면 로드가 실패한다.
 MATCHERS: dict[str, Callable[[dict[str, Any], Clause], bool]] = {
     "event_id": _match_event_id,
@@ -377,6 +404,7 @@ MATCHERS: dict[str, Callable[[dict[str, Any], Clause], bool]] = {
     "field_contains": _match_field_contains,
     "field_startswith": _match_field_startswith,
     "field_in": _match_field_in,
+    "field_regex": _match_field_regex,
 }
 
 #: ``match`` 별 필수 항목. 빠뜨리면 조건이 조용히 헐거워진다.
@@ -388,6 +416,7 @@ _MATCH_REQUIRES: dict[str, tuple[str, ...]] = {
     "field_contains": ("field", "values"),
     "field_startswith": ("field", "values"),
     "field_in": ("field", "values"),
+    "field_regex": ("field", "values"),
 }
 
 
@@ -730,6 +759,17 @@ def _build_clause(raw: Any, *, flag: str, where: str) -> Clause:
     values = (raw["value"],) if match == "field_equals" else tuple(raw["values"])
     if not values:
         raise VocabularyError(f"{where}: {flag} 의 values 가 비어 있음")
+
+    if match == "field_regex":
+        # **로드할 때 컴파일해 본다.** 안 그러면 오타가 "그 패턴에 걸리는
+        # 레코드가 하나도 없다"로 나타나고, 그것은 조용한 탐지 누락이다.
+        for value in values:
+            try:
+                _compiled(str(value))
+            except re.error as exc:
+                raise VocabularyError(
+                    f"{where}: {flag} 의 정규식을 컴파일하지 못함 — {value!r} ({exc})"
+                ) from exc
 
     if match == "event_id" and event_ids:
         raise VocabularyError(

@@ -808,3 +808,60 @@ def test_the_port_is_matched_whether_the_parser_gives_a_string_or_a_number():
         record = _sysmon(3, Image=r"C:\x\y.exe", DestinationIp="1.2.3.4",
                          DestinationPort=value)
         assert "suspicious_c2_port_connection" in flagging.apply(record)["flags"], repr(value)
+
+
+def test_the_credential_config_rule_is_not_tied_to_this_lab_filenames():
+    r"""이름을 열거하면 그 랩의 파일 이름이 룰에 남는다.
+
+    처음에는 `settings.json`·`mgmt-credentials`·`credentials.ini` 를
+    적었는데, 그러면 다음 사건에서 안 맞는다. 자격증명이 흔히 들어가는
+    **파일의 꼴**로 걸어야 한다.
+    """
+    for command in (
+        r'"NOTEPAD.EXE" C:\a\server\config\settings.json',
+        r'type C:\pos\config\mgmt-credentials.ini',
+        r'powershell -c "gc C:\app\.env"',
+        r'notepad C:\svc\app.config',
+        r'more C:\web\appsettings.Production.json',
+        r'cat /opt/x/database.yml',
+        r'type conn_str.conf',
+    ):
+        record = _sysmon(1, Image=r"C:\Windows\system32\notepad.exe", CommandLine=command)
+        assert "credential_config_accessed" in flagging.apply(record)["flags"], command
+
+
+def test_an_ordinary_file_argument_is_not_a_credential_config():
+    """넓히면 필터가 일을 안 한다 — 세 노드 실측 16건(0.10%)이 상한이다."""
+    for command in (
+        r'notepad C:\Users\k\Documents\memo.txt',
+        r'app.exe --verbose C:\data\report.json',
+        r'setup.exe /log C:\t\install.log',
+        r'msbuild MyApp.csproj /p:Configuration=Release',
+    ):
+        record = _sysmon(1, Image=r"C:\x\app.exe", CommandLine=command)
+        assert "credential_config_accessed" not in flagging.apply(record)["flags"], command
+
+
+def test_the_pattern_does_not_span_across_path_separators():
+    r"""`.*` 를 쓰면 앞쪽 `config` 와 뒤쪽 `.json` 이 다른 토큰이어도 걸린다.
+
+    실측에서 그 차이가 36건 대 16건이었다.
+    """
+    record = _sysmon(1, Image=r"C:\x\app.exe",
+                     CommandLine=r'app.exe --config-dir C:\etc\svc /out C:\data\report.json')
+    assert "credential_config_accessed" not in flagging.apply(record)["flags"]
+
+
+def test_a_broken_regex_fails_at_load_time(tmp_path):
+    """오타가 "걸리는 레코드가 없다"로 나타나면 조용한 탐지 누락이다."""
+    import yaml
+
+    source = flagging.mappings_dir() / "_flags.yaml"
+    data = yaml.safe_load(source.read_text(encoding="utf-8"))
+    data["flags"]["credential_config_accessed"]["rule"]["when"][0]["values"] = ["(?i)(unclosed"]
+    (tmp_path / "_flags.yaml").write_text(
+        yaml.safe_dump(data, allow_unicode=True), encoding="utf-8"
+    )
+
+    with pytest.raises(flagging.VocabularyError, match="정규식"):
+        flagging.load_vocabulary(str(tmp_path))
