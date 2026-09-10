@@ -354,6 +354,15 @@ def _require_hashes(
 
     packet 조인(``incident_packet.same_hash_refs``)은 값이 ref 목록이라
     예외다 — 그 형태는 06이 원본 레코드의 해시를 다시 대조한다.
+
+    **되묻기만으로는 안 됐다**(``K2L9-MGMT``, 같은 날). 안내문을 붙여 세 번
+    돌려보냈는데 모델이 같은 assertion 을 다시 썼고 노드 분석이 중단됐다.
+    그래서 Map 스키마의 술어 목록에서 ``same_hash`` 를 뺐다
+    (``llm_client.selection_schema``) — 이제 선별 응답에는 **나오지 않는다.**
+
+    이 검사는 그대로 남는다. 재생·수입된 소견과 묶음 경로(Reduce 가 넘긴
+    ``connections[].assertions``)는 스키마를 안 거치므로, 여기가 마지막
+    관문이다.
     """
     for endpoint in (assertion.get("subject"), assertion.get("object")):
         if not isinstance(endpoint, dict):

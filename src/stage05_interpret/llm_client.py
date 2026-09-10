@@ -255,9 +255,28 @@ def selection_schema(
         {"enum": [*techniques, None]} if techniques else {"type": ["string", "null"]}
     )
 
+    # **``same_hash`` 는 여기 없다.** 이 갈래는 ``subject.ref`` 를 그 레코드
+    # 하나로 못 박고 ``object`` 를 리터럴로 제한하므로, Map 이 쓸 수 있는
+    # ``same_hash`` 는 **한 레코드의 값 대 리터럴**뿐이다. 그것은 같은 값을
+    # 두 번 적은 항등식이거나, 우리에게 없는 외부 해시 DB 에 대한 주장이다
+    # (해시를 프롬프트에서 빼는 이유가 ``mappings/_flags.yaml`` 의
+    # ``prompt_drop_fields`` 에 적혀 있다 — "우리가 대조할 해시 DB 가 없다").
+    #
+    # 뜻이 있는 유일한 형태인 **교차 레코드 해시 대조는 이 스키마로 표현조차
+    # 안 된다** — ``object`` 가 ref 를 못 든다. 그 형태는 파이썬이
+    # ``incident_packet`` 에서 실제 해시로 만들어 relation_catalog 에 싣고,
+    # Reduce 는 술어를 쓰는 것이 아니라 그 id 를 고른다. 즉 이 이름을 빼도
+    # 시스템에서 ``same_hash`` 가 사라지지 않는다.
+    #
+    # 실측(``K2L7``~``K2L9``, 2026-09-10): 관측된 ``same_hash`` 6건이 전부
+    # 경로 필드(``fields.Image``·``fields.ParentImage``)에 걸렸고 유효한 것은
+    # 0건이었다. ``K2L9-MGMT`` 에서는 안내문을 붙여 세 번 되물었는데도 모델이
+    # 같은 것을 다시 써서 노드 분석이 중단됐다 — **되묻기로 못 고치는 것은
+    # 애초에 낼 수 없게 하는 것이 이 파이프라인의 방식**이다(constrained
+    # decoding, ``constrained_schema`` 의 ``ref`` 판단과 같다).
     predicate_names = [
         "equals", "contains", "list_contains", "under_path", "outside_path",
-        "same_path", "same_hash", "spawned", "before", "after", "within",
+        "same_path", "spawned", "before", "after", "within",
         "duration", "count",
     ]
     branches: list[dict[str, Any]] = []
