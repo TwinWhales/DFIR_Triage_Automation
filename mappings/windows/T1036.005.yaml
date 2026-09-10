@@ -1,0 +1,36 @@
+technique: T1036.005
+name: "Masquerading: Match Legitimate Name or Location"
+os: windows
+
+# 정상 이름을 쓰되 **자리가 다르거나**, 자리는 맞되 이름이 한 글자 다르다.
+#
+# **T1036(상위)과 남남이다.** 이 도구는 상하위 관계를 모르므로
+# (`attack.py` 의 주석) 둘을 따로 둔다. 저쪽은 예약 작업 이름처럼 파일이
+# 아닌 자리의 위장까지 받고, 이쪽은 **파일의 이름과 경로**를 본다.
+#
+# 판별은 한 레코드 안에서 끝난다 — `fields.Image` 의 파일 이름이 윈도우
+# 것인데 그 디렉터리가 시스템 자리가 아니면 그 자체가 신호다. 04단계의
+# execution_from_unusual_path·execution_outside_known_volume_root 가 같은
+# 레코드에 표시를 붙인다.
+#
+# 실측(K2L5 세 노드, 2026-09-10): 이름과 자리가 어긋난 실행은 **0건**이다.
+# 이 증거의 공격자는 위장 대신 자기 폴더를 만들어 썼다(C: 아래 별도 폴더).
+# 그 자리는 execution_outside_known_volume_root 가 잡는다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: 실행 파일의 이름과 그 파일이 있던 디렉터리 — 둘이 어긋나는지가 이 기법의 전부다
+
+  - name: $MFT
+    tier: 1
+    priority: 2
+    rationale: 윈도우 이름을 단 파일이 시스템 자리 밖에 있는지, 언제 놓였는지
+
+  - name: prefetch
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 이름·자리 불일치가 확인되어 실행 이력을 확인해야 하는 경우
+    rationale: 그 이름으로 실제 실행된 횟수와 최근 시각

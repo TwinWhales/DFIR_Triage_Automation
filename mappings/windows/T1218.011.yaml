@@ -1,0 +1,40 @@
+technique: T1218.011
+name: "System Binary Proxy Execution: Rundll32"
+os: windows
+
+# 서명된 윈도우 바이너리에 DLL 을 실어 자기 코드를 돌린다. 프로세스 이름은
+# `rundll32.exe` 라 실행 파일 이름만 보는 눈에는 정상으로 보이고, **무엇을
+# 돌렸는지는 명령행에만** 있다(DLL 경로와 내보내기 함수 이름).
+#
+# **K2L5 에서 라벨이 없어 뭉개진 자리다**(2026-09-10). 키오스크 소견
+# F1~F6 여섯 건이 전부 rundll32 였는데 붙일 이름이 없어 T1059.003 을
+# 받았다. 그 라벨은 "명령 셸"이라 rundll32 가 프록시로 쓰였다는 사실을
+# 지운다.
+#
+# 실측(K2L5 세 노드, Sysmon EID 1 15,605건): **191건**. 다만 이 증거에서
+# 본 것은 전부 윈도우 자신의 정상 사용이다 —
+# `AppxDeploymentClient.dll,AppxPreStageCleanup` · `acproxy.dll,
+# PerformAutochkOperations` 처럼 시스템 DLL 의 내보내기를 부른다.
+#
+# **그래서 이 매핑은 악성 판정이 아니다.** 191건이 전부 걸리지만, 05단계가
+# 볼 것은 "어느 DLL 의 어느 함수를 불렀나"이고 그 판단은 명령행에 있다.
+# 정상 사용이 많다는 사실 자체가 이 기법이 프록시로 쓰이는 이유다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: rundll32 의 명령행 — 실린 DLL 경로와 내보내기 함수 이름. 무엇을 돌렸는지가 여기에만 있다
+
+  - name: $MFT
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 시스템 자리 밖의 DLL 이 실린 것이 확인된 경우
+    rationale: 실린 DLL 의 자리와 생성 시각
+
+  - name: prefetch
+    tier: 2
+    priority: 3
+    trigger: Tier1에서 rundll32 사용이 확인되어 실행 이력을 확인해야 하는 경우
+    rationale: rundll32 실행 횟수와 최근 시각

@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from src.common import attack
+
 from src.common import errors as errlog
 from src.common import io, schema
 from src.stage02_normalize import expand as expand_mod
@@ -268,11 +270,20 @@ def test_a_real_but_unmapped_technique_is_rejected_separately(scenario, catalog,
     """**두 기각을 나눈다.** 지어낸 ID 는 프롬프트를 고칠 일이고, 매핑이 없는
     것은 매핑을 넓힐 일이다(``benchmark/rejections.yaml``).
 
-    ``T1486``(Data Encrypted for Impact)은 ``KNOWN_TECHNIQUES``에 있지만
-    ``mappings/windows/`` 에 파일이 없다.
+    **조건을 이 시험이 직접 만든다.** 예전에는 ``T1486`` 이 실제로 매핑이
+    없다는 사실에 기댔는데, 2026-09-10 에 ``KNOWN_TECHNIQUES`` 전부가
+    매핑을 갖게 되어 그 예시가 사라졌다. 저장소에 결손이 남아 있기를
+    바라는 시험은 결손이 닫히는 순간 못 쓰게 된다 — 여기서는 매핑 목록에서
+    하나를 빼서 그 상태를 만든다.
     """
-    assert "T1486" not in mapped, "매핑이 생겼다면 이 시험의 예시를 바꾼다"
-    outcome = run(scenario, [request_technique("T1486")], catalog=catalog, mapped=mapped)
+    absent = "T1486"
+    assert attack.is_known(absent), "KNOWN 이 아니면 unknown_technique 으로 갈린다"
+    outcome = run(
+        scenario,
+        [request_technique(absent)],
+        catalog=catalog,
+        mapped=mapped - {absent},
+    )
     assert reasons(outcome) == ["unmapped_technique"]
 
 

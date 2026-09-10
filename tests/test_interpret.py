@@ -503,8 +503,9 @@ def test_cli_says_so_when_the_budget_trims_seats(tmp_path, capsys):
             # 같은 예산이 나오도록 창을 함께 옮겼고(2026-09-03), 기법 라벨
             # 목록이 프롬프트에 들어오며 고정분이 2,034 → 3,853자가 되어
             # 5600 → 6550 으로 다시 옮겼고, 누락 기법 5종을 등재해 라벨이
-            # 41 → 46개가 되며 6550 → 6660 으로 또 옮겼다(둘 다 2026-09-10).
-            "--num-ctx", "6660",
+            # 41 → 46개가 되며 6550 → 6660, 남은 5종까지 등재해 51개가 되며
+            # 6660 → 6780 으로 옮겼다(전부 2026-09-10).
+            "--num-ctx", "6780",
             "--reserve-output-tokens", "4096",
         ]
     )
@@ -542,10 +543,10 @@ def test_replaying_a_reply_that_cites_a_trimmed_record_is_refused(tmp_path, caps
                 # 위 테스트와 같은 창이어야 같은 자르기가 일어난다.
                 # CHARS_PER_TOKEN 을 실측값으로 낮추면서 5300 → 5600
                 # (2026-09-03), 기법 라벨 목록이 들어오며 5600 → 6550,
-                # 누락 기법 5종 등재로 6550 → 6660 (2026-09-10). 예전 값으로 두면 예산이 한 건도 못 들여보내
+                # 누락 기법 등재로 6550 → 6660 → 6780 (2026-09-10). 예전 값으로 두면 예산이 한 건도 못 들여보내
                 # empty_result 로 죽고, 이 테스트가 보려던 claim_validation
                 # 관문에는 닿지도 못한다.
-                "--num-ctx", "6660",
+                "--num-ctx", "6780",
                 "--reserve-output-tokens", "4096",
             ]
         )
@@ -822,13 +823,13 @@ def test_each_chunk_is_asked_separately(monkeypatch, tmp_path):
     # 6200으로 재보정했다. 2026-09-10 기법 라벨 목록(41건, 1,819자)이
     # 프롬프트에 들어오며 고정분이 3,830 → 5,649자가 되어 7130 으로 옮겼다
     # (예산 419자로 거의 같다). 같은 날 누락 기법 5종을 등재해 라벨이
-    # 41 → 46개가 되며 7130 → 7240 으로 또 옮겼다(예산 415자).
+    # 41 → 46 → 51개가 되며 7130 → 7240 → 7360 으로 옮겼다(예산 429자).
     # 프롬프트를 또 고치면 여기도 같이 본다.
     code = _run_assembled(
         monkeypatch,
         tmp_path,
         backend,
-        extra=["--num-ctx", "7240", "--reserve-output-tokens", "4096"],
+        extra=["--num-ctx", "7360", "--reserve-output-tokens", "4096"],
     )
 
     assert code == 0

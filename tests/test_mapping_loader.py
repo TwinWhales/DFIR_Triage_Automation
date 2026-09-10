@@ -196,6 +196,15 @@ def test_all_shipped_mappings_load(mappings):
         #   T1567.002  rclone 으로 클라우드 저장소 유출
         #   T1036      "WindowsTelemetry" 예약 작업 위장
         "T1046", "T1210", "T1552.001", "T1567.002", "T1036",
+        # 2026-09-10: KNOWN_TECHNIQUES 에 있으나 매핑이 없던 마지막 다섯.
+        # 이로써 `attack.unmapped(KNOWN_TECHNIQUES)` 가 빈 목록이 된다 —
+        # 매핑 결손을 예시로 쓰던 시험들이 함께 바뀐 이유다.
+        #   T1218.011  rundll32 프록시 실행 (K2L5 키오스크 소견 6건이 이 자리)
+        #   T1036.005  정상 이름·위치 흉내
+        #   T1003.001  LSASS 메모리 덤프
+        #   T1486      데이터 암호화
+        #   T1490      복구 방해
+        "T1218.011", "T1036.005", "T1003.001", "T1486", "T1490",
     }
 
 
@@ -494,11 +503,15 @@ def test_a_technique_without_a_mapping_is_reported_not_silently_dropped(
     scenario, catalog, mappings
 ):
     # 재현율이 낮을 때 원인이 모델인지 매핑 결손인지 가르는 데이터다.
+    # **우리 카탈로그 밖의 실재 ATT&CK ID 다.** 예전에는 T1486 을 썼는데
+    # 2026-09-10 에 KNOWN_TECHNIQUES 전부가 매핑을 갖게 되어 예시가
+    # 사라졌다. 여기서 보는 것은 '매핑 파일이 없을 때 어떻게 되나'이므로,
+    # 저장소의 결손에 기대지 않고 범위 밖 ID 를 쓴다.
     scenario["techniques"].append(
-        {"id": "T1486", "name": "Data Encrypted for Impact", "confidence": 0.6, "evidence_text": "x"}
+        {"id": "T1499", "name": "Endpoint Denial of Service", "confidence": 0.6, "evidence_text": "x"}
     )
     _got, unmapped = select(scenario, catalog, mappings)
-    assert unmapped == ["T1486"]
+    assert unmapped == ["T1499"]
 
 
 def test_selection_is_deterministic(scenario, catalog, mappings):
@@ -530,8 +543,12 @@ def test_cli_reproduces_the_fixture(tmp_path):
 
 def test_cli_logs_unmapped_techniques_as_skipped(tmp_path):
     scenario = io.read_json(FIXTURES / "02_scenario.json")
+    # **우리 카탈로그 밖의 실재 ATT&CK ID 다.** 예전에는 T1486 을 썼는데
+    # 2026-09-10 에 KNOWN_TECHNIQUES 전부가 매핑을 갖게 되어 예시가
+    # 사라졌다. 여기서 보는 것은 '매핑 파일이 없을 때 어떻게 되나'이므로,
+    # 저장소의 결손에 기대지 않고 범위 밖 ID 를 쓴다.
     scenario["techniques"].append(
-        {"id": "T1486", "name": "Data Encrypted for Impact", "confidence": 0.6, "evidence_text": "x"}
+        {"id": "T1499", "name": "Endpoint Denial of Service", "confidence": 0.6, "evidence_text": "x"}
     )
     src = tmp_path / "02_scenario.json"
     io.write_json(src, scenario)
@@ -542,7 +559,7 @@ def test_cli_logs_unmapped_techniques_as_skipped(tmp_path):
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
     assert logged[0]["type"] == "empty_result"
     assert logged[0]["action"] == "skip"
-    assert logged[0]["detail"]["value"] == "T1486"
+    assert logged[0]["detail"]["value"] == "T1499"
 
 
 def test_cli_aborts_when_nothing_can_be_selected(tmp_path):

@@ -326,9 +326,15 @@ def test_known_catalogue_covers_every_mapping_file():
     assert mapped <= set(attack.KNOWN_TECHNIQUES)
 
 
-def test_unmapped_finds_techniques_without_a_mapping_table():
-    result = attack.unmapped(["T1505.003", "T1486"], REPO_ROOT / "mappings")
-    # T1486(랜섬웨어)은 카탈로그에는 있으나 매핑 파일이 아직 없다.
+def test_unmapped_finds_techniques_without_a_mapping_table(tmp_path):
+    # **디렉터리를 시험이 만든다.** 예전에는 저장소에 매핑 결손이 있다는
+    # 사실에 기댔는데(T1486), 2026-09-10 에 그 결손이 닫혀 예시가 사라졌다.
+    # 이 함수가 보는 것은 "파일이 있는가"뿐이므로 여기서 통제하면 된다.
+    root = tmp_path / "mappings" / "windows"
+    root.mkdir(parents=True)
+    (root / "T1505.003.yaml").write_text("technique: T1505.003", encoding="utf-8")
+
+    result = attack.unmapped(["T1505.003", "T1486"], tmp_path / "mappings")
     assert result == ["T1486"]
 
 

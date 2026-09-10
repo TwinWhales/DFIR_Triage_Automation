@@ -104,7 +104,14 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1552.001": "Unsecured Credentials: Credentials In Files",
     "T1567.002": "Exfiltration Over Web Service: Exfiltration to Cloud Storage",
     "T1036": "Masquerading",
-    # 매핑은 아직 없으나 시나리오에 자주 등장하는 기법
+    # 2026-09-10 에 이 다섯에도 매핑이 생겼다. **이제 KNOWN_TECHNIQUES 는
+    # 전부 매핑을 갖는다** — `attack.unmapped(KNOWN_TECHNIQUES)` 가 빈 목록
+    # 이다. 매핑 결손을 예시로 쓰던 시험들이 그때 함께 바뀌었다
+    # (조건을 저장소에 기대지 않고 시험이 직접 만들도록).
+    #
+    # 여기 새 ID 를 더할 때는 매핑 파일도 같이 만든다. 관문이 둘이라는 것은
+    # 위 HID/BadUSB 주석에 적혀 있고, 이번에는 반대 방향으로 걸렸다 —
+    # ID 만 있고 매핑이 없어 05단계가 그 라벨을 붙여도 06단계가 기각했다.
     "T1003.001": "OS Credential Dumping: LSASS Memory",
     "T1021.001": "Remote Services: Remote Desktop Protocol",
     "T1036.005": "Masquerading: Match Legitimate Name or Location",
