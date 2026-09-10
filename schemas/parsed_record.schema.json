@@ -53,6 +53,7 @@
           "shell_spawned",
           "lolbin_download",
           "uac_bypass_candidate",
+          "database_logon",
           "system_crash_recorded",
           "remote_interactive_logon",
           "credential_config_accessed",

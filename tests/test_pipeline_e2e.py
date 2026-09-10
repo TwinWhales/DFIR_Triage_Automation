@@ -71,11 +71,15 @@ def test_the_same_artifact_requested_twice_is_read_once():
 
 
 def test_real_selection_groups_cleanly():
-    # `evtx:Sysmon` 은 기법이 부른 것이 아니라 상관분석 바탕이다
-    # (`mappings/_baseline.yaml`). 웹셸 시나리오의 두 기법
-    # (T1505.003·T1136.001)은 Sysmon 을 요청하지 않는다.
+    # `evtx:Sysmon` 과 `evtx:Application` 은 기법이 부른 것이 아니라
+    # 상관분석 바탕이다(`mappings/_baseline.yaml`).
+    #
+    # Sysmon 은 2026-09-10 에 T1136.001 이 직접 요청하게 됐지만(계정 생성
+    # 명령행이 EID 1 에 있다), 바탕이 그 앞에서 이미 열고 있었다.
+    # Application 은 같은 날 바탕에 더한 것으로 이 시나리오의 어느 기법도
+    # 요청하지 않는다 — SQL Server 가 없는 기계에서는 0건이라 공짜다.
     grouped = group_by_artifact(io.read_json(GOLDEN / "03_selection.json"))
-    assert set(grouped) == {"$MFT", "evtx:Security", "evtx:Sysmon"}
+    assert set(grouped) == {"$MFT", "evtx:Security", "evtx:Sysmon", "evtx:Application"}
     assert grouped["$MFT"]["extensions"] == [".aspx", ".asp", ".ashx", ".asmx"]
 
 
@@ -113,7 +117,7 @@ def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
     skipped = {entry["detail"]["value"] for entry in logged if entry["action"] == "skip"}
     # 바탕으로 들어온 `evtx:Sysmon` 도 이 픽스처 증거에는 없어 함께 건너뛴다.
-    assert skipped == {"$MFT", "evtx:Security", "evtx:Sysmon"}
+    assert skipped == {"$MFT", "evtx:Security", "evtx:Sysmon", "evtx:Application"}
     assert logged[-1]["action"] == "abort"
     assert "--skip-existing" in logged[-1]["detail"]["message"]
 

@@ -72,7 +72,6 @@
 | evtx:AssignedAccessBroker | 식별된 기법에 매핑된 아티팩트가 아님 |
 | evtx:RDPConnection | 식별된 기법에 매핑된 아티팩트가 아님 |
 | evtx:RDPSession | 식별된 기법에 매핑된 아티팩트가 아님 |
-| evtx:Application | 식별된 기법에 매핑된 아티팩트가 아님 |
 | registry:SYSTEM | 식별된 기법에 매핑된 아티팩트가 아님 |
 | registry:SOFTWARE | 식별된 기법에 매핑된 아티팩트가 아님 |
 | registry:Amcache | 식별된 기법에 매핑된 아티팩트가 아님 |
@@ -92,6 +91,7 @@
 | $UsnJrnl | Tier 2 루프백 미구현으로 미평가 (조건: Tier1 $MFT에서 timestamp_mismatch 또는 deleted 플래그 발견 시) |
 | evtx:System | Tier 2 루프백 미구현으로 미평가 (조건: Tier1에서 서비스 관련 정황 발견 시) |
 | evtx:Sysmon | 선별됐으나 산출물에 없음 — 04단계가 사유를 남기지 않았습니다 |
+| evtx:Application | 선별됐으나 산출물에 없음 — 04단계가 사유를 남기지 않았습니다 |
 
 ### 입력 서술을 어떤 기법으로 읽었는가
 
@@ -113,4 +113,4 @@
 본 보고서는 자동 생성되었으며 수사상 참고 자료입니다. 포렌식 감정 결과나
 전문가 의견이 아니며, 해석의 타당성은 분석가 검토가 필요합니다.
 
-생성: 2026-09-08T12:38:03Z / report.py
+생성: 2026-09-10T08:27:25Z / report.py

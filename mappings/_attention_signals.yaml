@@ -173,6 +173,18 @@ attention_signals:
     match_fields: [fields.Image]
     max_representatives: 5
 
+  # **DB 에 누가 붙었나.** 시나리오의 Stage 8 이고, 이 사건에서 결제 데이터를
+  # 꺼내 간 계정의 로그인이 여기 있다. 04단계의 database_logon 이 붙인다.
+  #
+  # 상한이 3인 이유: MGMT 에 426건이 있는데 대부분이 애플리케이션 자신의
+  # 주기적 접속이다(1분 간격). 하나만 보내면 그 주기 중 하나가 뽑히고,
+  # 셋이면 실패(18456)나 시간대가 다른 것이 섞일 자리가 생긴다.
+  database_logon_observed:
+    must_review: true
+    flags: [database_logon]
+    match_fields: [fields.event_data, fields.Data]
+    max_representatives: 3
+
   credential_export_option_observed:
     must_review: true
     all_contains: [netsh, wlan, key=clear]
