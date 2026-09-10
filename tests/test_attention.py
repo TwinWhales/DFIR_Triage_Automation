@@ -144,3 +144,79 @@ def test_representative_tie_breaks_on_first_observation_not_ref_text():
     got = attention.apply([late, early])
     representative = [record["ref"] for record in got if record.get("must_review")]
     assert representative == ["SYSMON#1000"]
+
+
+def _timed(ref, command, when, *, flags=None, image="tool.exe"):
+    record = _record(ref, command, flags=flags)
+    record["timestamp"] = when
+    record["fields"]["Image"] = image
+    return record
+
+
+def test_identical_commands_do_not_eat_every_representative_seat():
+    """같은 명령행의 되풀이는 가짓수가 아니다.
+
+    실측(``K2L7``, 2026-09-10): ``execution_from_unusual_path`` 다섯 자리를
+    한 가지 명령행이 다섯 번 반복해 전부 가져갔다. 그 신호는 이름을 모르는
+    도구를 자리로 잡는 유일한 레인이라, 되풀이가 자리를 다 먹으면 레인이
+    통째로 무의미해진다.
+    """
+    repeated = [
+        _timed(f"SYSMON#{100 + i}", "collect --tsource C:", f"2026-09-08T0{i}:00:00Z",
+               flags=["execution_from_unusual_path"], image="repeat.exe")
+        for i in range(5)
+    ]
+    others = [
+        _timed(f"SYSMON#{200 + i}", f"other --{name}", f"2026-09-08T0{5 + i}:00:00Z",
+               flags=["execution_from_unusual_path"], image=f"{name}.exe")
+        for i, name in enumerate(("one", "two", "three"))
+    ]
+
+    chosen = [
+        record for record in attention.apply(repeated + others)
+        if "execution_from_unusual_path_observed" in (record.get("attention_signals") or [])
+    ]
+    commands = [record["fields"]["CommandLine"] for record in chosen]
+
+    assert len(chosen) == 5, "자릿수 자체는 그대로다 — 줄이는 것이 목적이 아니다"
+    assert commands.count("collect --tsource C:") == attention.MAX_IDENTICAL_COMMANDS
+    assert len(set(commands)) == 4, "남은 자리가 다른 가짓수에 열린다"
+
+
+def test_seats_are_refilled_when_there_is_nothing_else_to_show():
+    """가짓수가 자릿수보다 적으면 자리를 비워 두지 않는다.
+
+    실측(``K2L7-POS``)에서 그 신호의 후보 8건이 **전부** 같은 명령행이었다.
+    상한만 걸고 끝내면 다섯 자리가 두 자리로 줄어 관측이 조용히 사라진다.
+    """
+    only_one_kind = [
+        _timed(f"SYSMON#{300 + i}", "collect --tsource C:", f"2026-09-08T0{i}:00:00Z",
+               flags=["execution_from_unusual_path"], image="repeat.exe")
+        for i in range(8)
+    ]
+
+    chosen = [
+        record for record in attention.apply(only_one_kind)
+        if "execution_from_unusual_path_observed" in (record.get("attention_signals") or [])
+    ]
+    assert len(chosen) == 5, "되풀이밖에 없으면 되풀이로 채운다"
+
+
+def test_records_without_a_command_line_are_not_folded_together():
+    """명령행이 없는 아티팩트를 한 덩어리로 묶지 않는다.
+
+    레지스트리 키나 evtx 레코드는 ``Image``·``CommandLine`` 이 비어 있다.
+    빈 값을 열쇠로 쓰면 서로 다른 관측이 같은 행위가 되어 상한에 걸린다.
+    """
+    blank = []
+    for i in range(4):
+        record = _record(f"SYSMON#{400 + i}", None, flags=["execution_from_unusual_path"])
+        record["timestamp"] = f"2026-09-08T0{i}:00:00Z"
+        record["fields"] = {}
+        blank.append(record)
+
+    chosen = [
+        record for record in attention.apply(blank)
+        if "execution_from_unusual_path_observed" in (record.get("attention_signals") or [])
+    ]
+    assert len(chosen) == 4, "명령행이 없다는 이유로 되풀이 취급되지 않는다"

@@ -1379,3 +1379,59 @@ def test_without_a_reference_a_tie_still_goes_to_the_earlier_window():
         (_moment("2026-09-01T00:01:00"), frozenset({"b"})),
     ]
     assert attention.burst_anchor(observed) == _moment("2026-03-01T00:00:00")
+
+
+def test_exclusion_may_not_move_the_incident_to_another_day():
+    """제외가 사건을 창 밖으로 옮기면 제외 없는 답으로 되돌린다.
+
+    실측(``K2L7-MGMT``, 2026-09-10): ``execution_outside_known_volume_root``
+    를 빼자 앵커가 118.6시간 전 랩 제작일로 갔고, 그 신호의 대표 다섯 자리를
+    전부 그날의 설치 후처리 도구가 가져갔다. 같은 실행의 나머지 신호 여덟
+    종은 전역 앵커에서 0.8시간 안에 있었다 — 어긋난 것은 그 신호뿐이었다.
+    """
+    from src.stage05_interpret import attention
+
+    ranked = "ranked_signal"
+    observed = [
+        # 5일 전. ranked 를 빼면 종류가 더 많아 이긴다.
+        (_moment("2026-09-03T08:13:29"), frozenset({"a"})),
+        (_moment("2026-09-03T08:14:00"), frozenset({"b"})),
+        (_moment("2026-09-03T08:15:00"), frozenset({"c"})),
+        # 사고 당일. ranked 를 빼면 종류 둘만 남는다.
+        (_moment("2026-09-08T06:50:17"), frozenset({ranked})),
+        (_moment("2026-09-08T06:51:00"), frozenset({ranked})),
+        (_moment("2026-09-08T06:52:00"), frozenset({"d"})),
+        (_moment("2026-09-08T06:53:00"), frozenset({"e"})),
+    ]
+
+    incident = attention.burst_anchor(observed)
+    assert incident == _moment("2026-09-08T06:50:17"), "제외 없는 앵커는 사고 당일이다"
+
+    # 제외만 하면 5일 전으로 간다 — 이것이 실측에서 일어난 일이다.
+    assert attention.burst_anchor(observed, exclude=ranked) == _moment("2026-09-03T08:13:29")
+
+    # reference 를 주면 되돌아온다. 그 창을 d·e 가 받치고 있기 때문이다.
+    assert attention.burst_anchor(observed, exclude=ranked, reference=incident) == incident
+
+
+def test_a_lone_signal_still_cannot_pull_the_anchor_to_itself():
+    """되돌리기는 reference 가 **다른 종류로 받쳐질 때만** 일어난다.
+
+    ``test_the_reference_only_breaks_ties_and_never_beats_a_denser_window``
+    가 지키는 가드를 창 밖 되돌리기가 우회하지 못한다는 확인이다. 창 안에
+    ranked 밖에 없으면 그것은 자기정당화이므로 제외한 답이 그대로 남는다.
+    """
+    from src.stage05_interpret import attention
+
+    ranked = "lonely_signal"
+    observed = [
+        (_moment("2026-01-01T00:00:00"), frozenset({"a"})),
+        (_moment("2026-01-01T00:01:00"), frozenset({"b"})),
+        (_moment("2026-06-01T00:00:00"), frozenset({ranked})),
+        (_moment("2026-06-01T00:01:00"), frozenset({ranked})),
+    ]
+    lonely = _moment("2026-06-01T00:00:00")
+
+    assert attention.burst_anchor(observed, exclude=ranked, reference=lonely) == _moment(
+        "2026-01-01T00:00:00"
+    ), "혼자 난 신호는 창 밖 되돌리기로도 자기를 정당화하지 못한다"
