@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+import json
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,16 @@ def technique_request(technique_id="T1041"):
         "based_on_ref": "EVTX-SEC#40912",
         "rationale": "유출 여부를 봐야 한다",
         "technique_id": technique_id,
+    }
+
+
+def behavior_request():
+    return {
+        "type": "request_behavior",
+        "based_on": {"kind": "evidence_ref", "ref": "EVTX-SEC#40912"},
+        "rationale": "노출된 자격증명 파일을 전체 파싱 결과에서 다시 찾는다",
+        "category": "credential_access",
+        "pivots": [],
     }
 
 
@@ -159,6 +170,42 @@ def test_the_first_round_citations_are_pinned(case, capsys):
     }
     assert cited <= second, "1차가 인용한 레코드가 2차 전달 목록에 없다"
     assert first <= second
+
+
+def test_behavior_only_loop_reuses_parsed_data_and_pins_matches(case):
+    """선별 범위가 같아도 behavior ref가 있으면 2차 Stage05가 돌아야 한다."""
+    mft_path = case / "04_parsed" / "mft.jsonl"
+    rows = [json.loads(line) for line in mft_path.read_text(encoding="utf-8").splitlines()]
+    rows.append(
+        {
+            "ref": "MFT#12500",
+            "artifact": "$MFT",
+            "record_num": 12500,
+            "offset": "0x22000",
+            "path": "C:/ProgramData/mgmt-credentials.ini",
+            "allocated": True,
+            "is_directory": False,
+            "size": 128,
+            "si_ctime": "2026-07-20T03:23:00Z",
+            "si_mtime": "2026-07-20T03:23:00Z",
+            "si_atime": "2026-07-20T03:23:00Z",
+            "si_btime": "2026-07-20T03:23:00Z",
+            "fn_ctime": "2026-07-20T03:23:00Z",
+            "fn_mtime": "2026-07-20T03:23:00Z",
+            "fn_btime": "2026-07-20T03:23:00Z",
+            "flags": [],
+        }
+    )
+    io.write_jsonl(mft_path, rows)
+    io.write_json(case / "05_requests.json", _requests(behavior_request()))
+
+    assert run(case) == 0
+
+    ledger = io.read_json(case / "05_coverage.json")
+    credential = next(item for item in ledger["categories"] if item["id"] == "credential_access")
+    assert credential["status"] == "observed"
+    assert "MFT#12500" in credential["evidence_refs"]
+    assert "MFT#12500" in io.read_json(case / "05_findings.json")["input_refs"]
 
 
 # ==================================================== 돌지 않을 때

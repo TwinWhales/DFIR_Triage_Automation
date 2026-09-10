@@ -23,6 +23,20 @@
 {% for node in nodes %}
 | {{ node.node }} | {{ node.case_id }} | {{ node.role | default('미상', true) }} | {{ node.status }} | {{ node.host | default('미상', true) }} | {{ node.records | default(0, true) }} |
 {% endfor %}
+{% if coverage %}
+
+## 노드별 조사 커버리지 매트릭스
+
+| 행위 범주 |{% for node in coverage_nodes %} {{ node }} |{% endfor %} 캠페인 최고 상태 |
+|---|{% for node in coverage_nodes %}---|{% endfor %}---|
+{% for row in coverage %}
+| {{ row.label }} |{% for cell in row.cells %} {{ cell }} |{% endfor %} {{ row.overall }} |
+{% endfor %}
+
+`원장 없음`은 흔적이 없다는 뜻이 아니라 해당 노드에서 커버리지 원장이
+생성되지 않았다는 뜻입니다. 캠페인 최고 상태는 어느 한 노드에서 확인된
+최고 상태이며, 모든 노드의 조사가 끝났다는 의미는 아닙니다.
+{% endif %}
 
 ## 공격 체인
 

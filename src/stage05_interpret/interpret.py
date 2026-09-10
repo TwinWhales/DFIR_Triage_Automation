@@ -47,6 +47,7 @@ from . import (
     allocation,
     assembly,
     attention,
+    coverage,
     incident_context,
     incident_packet,
     investigation,
@@ -1109,6 +1110,14 @@ def _parse_args(
         default=None,
         help="05_requests.json 출력 경로. 생략하면 --out 옆",
     )
+    parser.add_argument(
+        "--coverage",
+        default=None,
+        help=(
+            "05_coverage.json 경로. 생략하면 --out 옆을 사용한다. 기존 원장이 "
+            "있으면 행위 재검색 이력을 보존하고 그 ref를 must_review 보장 레인에 올린다"
+        ),
+    )
 
     parser.add_argument(
         "--queries",
@@ -1373,7 +1382,25 @@ def main(
         for moment in previous.get("timeline", []):
             pinned.update(moment.get("refs", []))
 
-    contextual_records = incident_context.enrich(list(parsed.values()))
+    coverage_path = Path(args.coverage) if args.coverage else out_path.parent / "05_coverage.json"
+    previous_coverage: dict[str, Any] | None = None
+    if coverage_path.is_file():
+        previous_coverage = io.read_json(coverage_path)
+        try:
+            schema.validate(previous_coverage, "coverage")
+        except schema.SchemaViolation as violation:
+            log.abort(STAGE, "schema_violation", violation.as_detail())
+        pinned.update(coverage.promoted_refs(previous_coverage))
+
+    promoted = coverage.promoted_refs(previous_coverage)
+    source_records = [
+        {
+            **record,
+            **({"must_review": True, "coverage_promoted": True} if record.get("ref") in promoted else {}),
+        }
+        for record in parsed.values()
+    ]
+    contextual_records = incident_context.enrich(source_records)
     packetized_records = incident_packet.enrich(contextual_records)
     prepared_records = attention.apply(packetized_records, mappings=args.mappings)
     records, quotas, budget = allocation.allocate_records(
@@ -1481,6 +1508,28 @@ def main(
         findings,
     )
 
+    # 동결된 findings 문서에 상태 필드를 넣지 않고 별도 원장으로 남긴다.
+    # 2차 실행에서는 앞서 수행한 행위 재검색 이력을 합쳐 보존한다.
+    raw_input = ""
+    input_path = out_path.parent / "01_input.json"
+    if input_path.is_file():
+        raw_value = io.read_json(input_path).get("raw")
+        if isinstance(raw_value, str):
+            raw_input = raw_value
+    coverage_doc = coverage.build(
+        scenario,
+        findings,
+        raw=raw_input,
+        previous=previous_coverage,
+        mappings=args.mappings,
+        generator=io.make_generator("coverage.py"),
+    )
+    try:
+        schema.validate(coverage_doc, "coverage")
+    except schema.SchemaViolation as violation:
+        log.abort(STAGE, "schema_violation", violation.as_detail())
+    io.write_json(coverage_path, coverage_doc)
+
     # **findings 를 쓴 뒤에 묻는다.** 이 질의가 실패해도 1차 결과는 이미
     # 파일에 있다. 두 --mode 가 여기서 다시 만나므로 경로가 갈라지지 않는다.
     if args.investigate:
@@ -1500,6 +1549,7 @@ def main(
                 if (manifest_path := Path(args.in_path) / "_manifest.json").is_file()
                 else None
             ),
+            coverage_doc=coverage_doc,
             queries=queries,
         )
         if requests_doc is not None:

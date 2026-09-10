@@ -47,6 +47,7 @@ from typing import Any
 
 from ..common import errors as errlog
 from ..common import io, schema
+from ..stage05_interpret import coverage as coverage_mod
 from ..stage03_select import mapping_loader
 from . import checkers, runlog
 
@@ -111,23 +112,15 @@ def technique_artifacts(mappings_dir: "str | Path") -> dict[str, frozenset[str]]
     except (mapping_loader.MappingError, OSError):
         return {}
 
-    table: dict[str, set[str]] = {}
+    loaded_mappings = []
     for os_dir in sorted(p.name for p in directory.iterdir() if p.is_dir()):
         try:
             loaded = mapping_loader.load_all(directory, os_dir, catalog)
         except (mapping_loader.MappingError, OSError):
             continue
-        for mapping in loaded.values():
-            for request in mapping.requests:
-                # 파일의 기법이 아니라 **요청 자신의 기법**으로 묶는다.
-                # followups 는 다른 기법의 것이다 — 위 설명 참조.
-                table.setdefault(request.technique, set()).add(request.artifact)
-            # `corroborates:` 는 03단계가 수집하지 않지만 **근거로는 인정하는**
-            # 것이다. 파일 단위 선언이므로 그 파일의 기법으로 묶는다
-            # (`followups` 와 달리 자기 technique 을 갖지 않는다).
-            if mapping.corroborates:
-                table.setdefault(mapping.technique, set()).update(mapping.corroborates)
-    return {technique: frozenset(names) for technique, names in table.items()}
+        loaded_mappings.extend(loaded.values())
+    supported, _event_scopes = mapping_loader.technique_evidence_index(loaded_mappings)
+    return supported
 
 
 def verify(
@@ -320,6 +313,11 @@ def _parse_args(argv: "list[str] | None" = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--coverage",
+        default=None,
+        help="05_coverage.json 경로. 생략하면 --out 옆의 원장이 있을 때 자동 갱신한다",
+    )
+    parser.add_argument(
         "--tolerance-seconds",
         type=float,
         default=DEFAULT_TOLERANCE_SECONDS,
@@ -398,6 +396,26 @@ def main(argv: "list[str] | None" = None) -> int:
         log.abort(STAGE, "schema_violation", violation.as_detail())
 
     io.write_json(out_path, verified)
+
+    coverage_path = Path(args.coverage) if args.coverage else out_path.parent / "05_coverage.json"
+    if coverage_path.is_file():
+        try:
+            ledger = io.read_json(coverage_path)
+            schema.validate(ledger, "coverage")
+            ledger = coverage_mod.apply_verified(
+                ledger, findings_doc, verified, mappings=args.mappings
+            )
+            schema.validate(ledger, "coverage")
+            io.write_json(coverage_path, ledger)
+        except (ValueError, KeyError, schema.SchemaViolation) as exc:
+            # 핵심 06 산출물은 이미 유효하다. 선택적 사이드카 결함 때문에
+            # 검증 결과까지 버리지는 않고 명시적으로 기록한다.
+            log.record(
+                STAGE,
+                "schema_violation",
+                {"field": "05_coverage.json", "message": str(exc)},
+                action="skip",
+            )
 
     # **입구와 무관하게 남긴다.** 기각 상세는 이 파일에도 있지만 같은
     # case-id 를 다시 돌리면 덮인다. 매핑을 넓힐 근거는 여러 실행에 걸쳐

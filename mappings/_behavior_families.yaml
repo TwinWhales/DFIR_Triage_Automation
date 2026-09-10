@@ -1,0 +1,81 @@
+version: 1
+
+# ATT&CK 기법을 곧바로 "탐지 결과"로 쓰지 않고, 어떤 관측을 다시 찾아볼지
+# 정하는 조사 범주다. techniques 는 findings 를 범주에 투영할 때만 쓰고,
+# keywords/flags 는 이미 파싱된 레코드를 재검색할 때 쓴다.
+families:
+  - id: initial_access
+    label: Initial Access
+    techniques: [T1091, T1200, T1204.002, T1078, T1078.003]
+    scenario_terms: ['usb', '이동식', '삽입', '꽂', '초기 침투', '침입']
+    keywords: ['vid_[0-9a-f]{4}', 'pid_[0-9a-f]{4}', 'usb', 'removable', 'device.*connect']
+    flags: [device_connected, removable_media]
+
+  - id: execution
+    label: Execution
+    techniques: [T1059, T1059.001, T1059.003, T1105, T1197, T1569.002]
+    scenario_terms: ['실행', '명령', '스크립트', '셸', 'shell']
+    keywords: ['powershell(?:\.exe)?', 'cmd(?:\.exe)?', 'certutil(?:\.exe)?', 'mshta(?:\.exe)?', 'rundll32(?:\.exe)?', 'regsvr32(?:\.exe)?']
+    flags: [shell_spawned, script_execution, suspicious_command, lolbin_download]
+
+  - id: persistence
+    label: Persistence
+    techniques: [T1053.005, T1543.003, T1546.008, T1547.001, T1547.004, T1505.003, T1098]
+    scenario_terms: ['지속성', '예약 작업', '서비스 등록', '자동 실행']
+    keywords: ['schtasks(?:\.exe)?', 'new-service', 'sc(?:\.exe)?\s+(?:create|config)', '\\currentversion\\run', 'startup', 'taskcache']
+    flags: [scheduled_task, service_created, persistence, persistence_command]
+
+  - id: defense_evasion
+    label: Defense Evasion
+    techniques: [T1562.001, T1562.004, T1070.001, T1070.004, T1070.006, T1112, T1548]
+    scenario_terms: ['방어 회피', 'defender', '백신', '무력화', '로그 삭제', '우회']
+    keywords: ['set-mppreference', 'disable(?:realtime|behavior|script)', 'add-mppreference', 'wevtutil.*cl', 'clear-eventlog', 'fodhelper(?:\.exe)?', 'tamper']
+    flags:
+      - defender_changed
+      - log_cleared
+      - security_disabled
+      - firewall_changed
+      - security_tool_config_changed
+      - uac_bypass_candidate
+
+  - id: discovery
+    label: Discovery
+    techniques: [T1016, T1018, T1046, T1082, T1083]
+    scenario_terms: ['정찰', '스캔', '탐색', '네트워크 확인']
+    keywords: ['nmap(?:\.exe)?', 'masscan(?:\.exe)?', 'ipconfig(?:\.exe)?', 'systeminfo(?:\.exe)?', 'arp(?:\.exe)?\s+-a', 'netstat(?:\.exe)?', 'whoami(?:\.exe)?', 'wmic(?:\.exe)?']
+    flags: [network_scan, system_discovery, network_discovery]
+
+  - id: lateral_movement
+    label: Lateral Movement
+    techniques: [T1021.001, T1021.002, T1219, T1569.002]
+    scenario_terms: ['횡적', '이동', '지나', '거쳐', '포스기', 'pos', '관리서버', '관리 서버', 'rdp', 'smb']
+    keywords: ['mstsc(?:\.exe)?', 'psexec', '\\psexesvc', 'smb', 'port.?445', 'port.?3389', ':445\b', ':3389\b', 'remote desktop']
+    flags: [remote_session, lateral_movement]
+
+  - id: credential_access
+    label: Credential Access
+    techniques: [T1552]
+    scenario_terms: ['계정 탈취', '자격증명', '비밀번호', 'credential', 'password']
+    keywords: ['mimikatz', 'sekurlsa', 'lsass', 'credential', 'password', 'passwd', 'credentials?\.(?:ini|txt|json)', 'default\.rdp']
+    flags: [credential_access, sensitive_credential_file]
+
+  - id: collection
+    label: Collection
+    techniques: [T1005, T1074.001]
+    scenario_terms: ['데이터 수집', 'db 조회', '데이터베이스', '결제정보', '조회', '수집']
+    keywords: ['select\s+.+\s+from', 'sqlcmd(?:\.exe)?', 'settlements?', '\.csv\b', 'compress-archive', '7z(?:\.exe)?\s+a', '\\exfil(?:\\|\b)']
+    flags: [data_collection, archive_created, staging]
+
+  - id: exfiltration
+    label: Exfiltration
+    techniques: [T1041, T1048]
+    scenario_terms: ['유출', '외부 전송', '클라우드', 'google drive', '구글 드라이브']
+    keywords: ['rclone(?:\.exe)?', 'gdrive:', 'google(?:apis)?\.com', 'drive\.google\.com', '\b(?:copy|sync)\b.+(?:gdrive|drive|s3|dropbox|onedrive)', 'mega(?:\.exe)?', 'suspicious_c2_port_connection', '(?:destinationport|remote_port)\s+4444']
+    flags: [exfiltration, cloud_transfer, high_outbound_transfer]
+
+  - id: impact
+    label: Impact
+    techniques: [T1565.001, T1657]
+    scenario_terms: ['영향', '중단', '파괴', '암호화', '금전 탈취']
+    keywords: ['vssadmin.*delete', 'cipher(?:\.exe)?', 'wevtutil.*cl', 'shutdown(?:\.exe)?', 'bugcheck', 'memory\.dmp', 'ransom']
+    flags: [system_crash, data_destroyed, impact]
