@@ -46,8 +46,14 @@ _HASH_RE = re.compile(r"^(?:md5|sha1|sha256)\s*[:=]\s*", re.IGNORECASE)
 _DIGEST_RE = re.compile(r"^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
-def _hashes(value: Any) -> set[str]:
-    """Return normalized hash values without guessing algorithms."""
+def hashes(value: Any) -> set[str]:
+    """Return normalized hash values without guessing algorithms.
+
+    **05단계가 이것을 부른다** (``stage05_interpret/assembly.py``). ``same_hash``
+    가 해시 아닌 값에 걸리면 이 함수가 빈 집합을 돌려주어 소견 전체가
+    기각되므로, 조립이 그 assertion 을 만들기 전에 **여기에 물어본다.**
+    두 곳이 다른 잣대를 쓰면 05가 통과시킨 것을 06이 기각한다.
+    """
     if isinstance(value, dict):
         values = value.values()
     elif isinstance(value, (list, tuple, set)):
@@ -87,7 +93,7 @@ def _packet_join(assertion: dict[str, Any], subject: Any, other: Any, ctx: Check
     if predicate == "same_path":
         return bool(left.get("subject_path") and right.get("subject_path")) and _path(left["subject_path"]) == _path(right["subject_path"])
     if predicate == "same_hash":
-        return bool(_hashes(left.get("hashes")) & _hashes(right.get("hashes")))
+        return bool(hashes(left.get("hashes")) & hashes(right.get("hashes")))
     return None
 
 
@@ -116,7 +122,7 @@ def check(finding: dict[str, Any], ctx: CheckContext) -> CheckResult:
                 valid = packet_valid if packet_valid is not None else _path(subject) == _path(other)
             elif predicate == "same_hash":
                 packet_valid = _packet_join(assertion, subject, other, ctx)
-                valid = packet_valid if packet_valid is not None else bool(_hashes(subject) & _hashes(other))
+                valid = packet_valid if packet_valid is not None else bool(hashes(subject) & hashes(other))
             elif predicate == "spawned":
                 # Normal prompt form: the deterministic incident packet lists
                 # child refs, avoiding raw GUID token cost. Direct GUID endpoint

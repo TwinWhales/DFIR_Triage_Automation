@@ -39,6 +39,11 @@ from typing import Any
 
 from ..common.io import parse_timestamp
 from ..stage04_parse.flagging import FLAGS, ClaimFields, claim_fields
+# 06단계에게 "이 값을 해시로 볼 것인가"를 묻는다. 잣대를 여기 다시 적으면
+# 05가 통과시킨 assertion 을 06이 기각한다 — 실제로 그렇게 됐었다
+# (``_validate_selection`` 의 same_hash 절). ``interpret`` 이 같은 이유로
+# ``stage06_verify.comparators`` 를 부르는 것과 같은 방향이다.
+from ..stage06_verify.checkers.assertions import hashes as verifier_hashes
 from .record_filter import NO_TIME, activity_times
 
 __all__ = [
@@ -304,11 +309,87 @@ def validate_selection(
                         f"{ref} 의 {predicate} assertion이 서로 다른 incident packet을 연결한다.",
                         guidance="same_path/same_hash/spawned 교차 assertion은 같은 packet_id의 레코드에만 사용하십시오.",
                     )
+            if predicate == "same_hash":
+                _require_hashes(ref, assertion, records)
             if predicate == "within" and "tolerance_seconds" not in assertion:
                 raise SelectionError(
                     f"{ref} 의 within assertion에 tolerance_seconds가 없다.",
                     guidance="허용할 시간 간격(초)을 tolerance_seconds에 명시하십시오.",
                 )
+
+
+#: ``same_hash`` 의 endpoint 가 packet 조인일 때 쓰는 필드.
+#: 그때는 값이 ref 목록이라 해시가 아니고, 06단계도 해시를 안 본다
+#: (``checkers/assertions._packet_join``).
+_PACKET_HASH_FIELD = "incident_packet.same_hash_refs"
+
+
+def _require_hashes(
+    ref: str, assertion: dict[str, Any], records: dict[str, dict[str, Any]]
+) -> None:
+    """``same_hash`` 의 양끝이 실제로 해시인지 본다. 아니면 ``SelectionError``.
+
+    **왜 조립에서 막나.** 06단계는 해시를 못 찾으면 그 assertion 을 거짓으로
+    보고, "검증에 부분 통과는 없다"라서 **소견 전체가 기각된다.** 나머지
+    assertion 이 다 맞아도 그렇다.
+
+    실측(``K2L8-MGMT``, 2026-09-10): 모델이 같은 사실을 ``same_path`` 와
+    ``same_hash`` 로 한 번씩, 네 개의 assertion 으로 썼다. ``same_path`` 쌍은
+    맞았지만 같은 **경로 문자열**에 걸린 ``same_hash`` 쌍이 거짓이 되어 소견
+    셋이 통째로 기각됐고, 그 셋이 하필 클라우드 유출 목적지를 담은 것이었다:
+
+    .. code-block:: text
+
+        SYSMON#42100  rclone.exe config              통과
+        SYSMON#42124  rclone.exe ... lsd gdrive      기각  ← 목적지가 여기 있다
+        SYSMON#42148  rclone.exe ... lsd gdrive      기각
+        SYSMON#42151  rclone.exe ... copy C:\\exfil   기각
+
+    기각 사유에 찍힌 ``actual_subject`` 와 ``actual_object`` 는 **똑같았다** —
+    같은 경로였기 때문이다. 값이 어긋난 것이 아니라 **해시가 아니었다.**
+
+    **거르지 않고 되묻는다.** 모델이 쓴 assertion 을 조용히 버리면 그것은
+    폴백이고, 문장은 남고 검산식만 사라져 06이 볼 것이 없어진다. 안내문을
+    들고 재시도로 보내면 모델이 ``same_path`` 로 고쳐 쓸 수 있다.
+
+    packet 조인(``incident_packet.same_hash_refs``)은 값이 ref 목록이라
+    예외다 — 그 형태는 06이 원본 레코드의 해시를 다시 대조한다.
+
+    **되묻기만으로는 안 됐다**(``K2L9-MGMT``, 같은 날). 안내문을 붙여 세 번
+    돌려보냈는데 모델이 같은 assertion 을 다시 썼고 노드 분석이 중단됐다.
+    그래서 Map 스키마의 술어 목록에서 ``same_hash`` 를 뺐다
+    (``llm_client.selection_schema``) — 이제 선별 응답에는 **나오지 않는다.**
+
+    이 검사는 그대로 남는다. 재생·수입된 소견과 묶음 경로(Reduce 가 넘긴
+    ``connections[].assertions``)는 스키마를 안 거치므로, 여기가 마지막
+    관문이다.
+    """
+    for endpoint in (assertion.get("subject"), assertion.get("object")):
+        if not isinstance(endpoint, dict):
+            # 리터럴 값. 그 자체가 해시여야 한다.
+            if endpoint is not None and not verifier_hashes(endpoint):
+                raise SelectionError(
+                    f"{ref} 의 same_hash assertion 이 해시가 아닌 값을 든다: {endpoint!r}",
+                    guidance=_SAME_HASH_GUIDANCE,
+                )
+            continue
+        field = str(endpoint.get("field") or "")
+        if field == _PACKET_HASH_FIELD:
+            continue
+        found, value = walk_field(records.get(endpoint.get("ref"), {}), field)
+        if found and not verifier_hashes(value):
+            raise SelectionError(
+                f"{ref} 의 same_hash assertion 이 해시가 아닌 필드를 든다: "
+                f"{endpoint.get('ref')}:{field}",
+                guidance=_SAME_HASH_GUIDANCE,
+            )
+
+
+_SAME_HASH_GUIDANCE = (
+    "same_hash 는 해시 값끼리만 비교합니다. 경로가 같다는 주장이면 same_path 를, "
+    "교차 아티팩트 대조라면 incident_packet.same_hash_refs 를 subject 로 쓰십시오. "
+    "같은 사실을 두 술어로 거듭 적지 마십시오."
+)
 
 
 def _sort_time(record: dict[str, Any]) -> datetime:
@@ -424,6 +505,10 @@ def assemble_body(
                 packet_ids = {records[endpoint_ref].get("packet_id") for endpoint_ref in endpoint_refs}
                 if None in packet_ids or len(packet_ids) != 1:
                     raise SelectionError("묶음 관계 assertion이 서로 다른 incident packet을 동일 대상으로 단정한다.")
+            # 선택 경로와 같은 잣대다(``_require_hashes``). 여기서 빠뜨리면
+            # Reduce 가 만든 묶음 소견만 같은 이유로 기각된다.
+            if assertion.get("predicate") == "same_hash":
+                _require_hashes("묶음", assertion, records)
             catalog_refs = set()
             for relation_id in assertion_ids:
                 catalog_refs.update(relations_by_id[relation_id].get("refs", []))
