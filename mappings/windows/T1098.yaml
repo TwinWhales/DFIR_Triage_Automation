@@ -7,6 +7,18 @@ os: windows
 # 4732(로컬 그룹 추가)가 권한 상승의 결정적 근거다. privileged_group_add
 # 플래그가 대상 그룹이 특권 그룹인지까지 판정한다(mappings/_flags.yaml).
 artifacts:
+  # 그룹에 넣는 행위도 같은 자리다. Security 4732 가 감사에 달려 있는 것과
+  # 달리 명령행은 감사 설정과 무관하게 남는다.
+  #
+  # 실측(K2L5-KIOSK, 2026-09-10): **1건**뿐이다
+  # (net1 localgroup Users testuser /add). 근거가 얇다는 것을 적어 둔다 —
+  # 다른 증거에서 더 나오면 그때 이 수를 고친다.
+  - name: evtx:Sysmon
+    tier: 1
+    scope_template:
+      event_ids: [1]
+    rationale: net localgroup /add 등 계정의 권한을 바꾸는 명령행
+
   - name: evtx:Security
     tier: 1
     priority: 1

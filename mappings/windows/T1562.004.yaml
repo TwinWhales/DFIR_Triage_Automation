@@ -3,6 +3,16 @@ name: "Impair Defenses: Disable or Modify System Firewall"
 os: windows
 
 artifacts:
+  # 방화벽도 명령행으로 만진다. evtx:Firewall 은 구성 변경의 결과를 보고
+  # 이쪽은 **누가 무엇으로 바꿨는지**를 본다.
+  #
+  # 실측(K2L5-MGMT, 2026-09-10): 9건. netsh advfirewall 계열이다.
+  - name: evtx:Sysmon
+    tier: 1
+    scope_template:
+      event_ids: [1]
+    rationale: netsh advfirewall 등 방화벽 구성을 바꾸는 명령행
+
   # 방화벽은 "껐다"와 "구멍을 냈다"가 다르고, 남는 자리도 다르다.
   # 끈 것은 프로필 설정(2003)과 레지스트리 EnableFirewall 값에,
   # 구멍은 규칙 추가(2004)에 남는다. 둘 다 봐야 한다.

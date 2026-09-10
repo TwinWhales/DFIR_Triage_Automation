@@ -429,9 +429,18 @@ def test_an_artifact_already_selected_is_not_also_deferred(scenario, catalog, ma
 
 
 def test_the_same_request_is_deferred_when_nothing_selects_it(scenario, catalog, mappings):
+    """Tier 1 로 읽는 기법이 사라지면 그 요청은 유예로 남는다.
+
+    T1136.001 의 Tier 1 목록은 2026-09-10 에 늘었다 — 계정 생성 명령행이
+    Sysmon EID 1 에 있는데 그 채널을 요청하지 않고 있었다. 여기서 보는 것은
+    ``$MFT`` 의 유예이지 Tier 1 이 몇 개인가가 아니므로, 늘어난 쪽은 포함
+    관계로 본다.
+    """
     scenario["techniques"] = [t for t in scenario["techniques"] if t["id"] == "T1136.001"]
     got, _ = select(scenario, catalog, mappings)
-    assert {e["artifact"] for e in got["selected"]} == {"evtx:Security"}
+    selected = {e["artifact"] for e in got["selected"]}
+    assert "evtx:Security" in selected
+    assert "$MFT" not in selected
     assert "$MFT" in {e["artifact"] for e in got["deferred"]}
 
 

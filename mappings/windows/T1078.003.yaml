@@ -3,6 +3,19 @@ name: "Valid Accounts: Local Accounts"
 os: windows
 
 artifacts:
+  # 훔친 계정을 **쓰는 순간**이 명령행에 남는 경우가 있다. 아래 Security 는
+  # 로그온을 보는데, 원격 공유 접속이나 runas 는 로그온 이벤트보다 명령행이
+  # 먼저이고 더 구체적이다(계정 이름이 인자에 있다).
+  #
+  # 실측(K2L5, 2026-09-10): 21건.
+  #   SYSMON#2599  runas.exe /user:testuser cmd
+  #   SYSMON#301   net.exe use (원격 공유) /user:Admin
+  - name: evtx:Sysmon
+    tier: 1
+    scope_template:
+      event_ids: [1]
+    rationale: runas·net use 등 다른 계정으로 무언가를 하는 명령행 — 인자에 계정 이름
+
   # 4624 성공 / 4625 실패 / 4672 특권 로그온.
   # 4672는 관리자 세션이 열릴 때 4624 직후에 따라붙는 동반 이벤트다.
   # 단일 계정으로 상시 로그온된 키오스크에서는 "평소 쓰지 않는 계정의
