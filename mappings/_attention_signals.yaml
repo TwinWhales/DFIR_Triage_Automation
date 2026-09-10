@@ -113,6 +113,38 @@ attention_signals:
     flags: [execution_from_unusual_path]
     match_fields: [fields.Image]
     max_representatives: 5
+  # **자격증명 척추 셋.** K2L3 실측에서 시나리오의 Stage 1(리버스 셸)·
+  # Stage 3(POS 착지)·Stage 6(RDP 진입)·Stage 7(DB 자격증명 열람)이 보고서에
+  # 한 줄도 없었는데, 레코드는 넷 다 04단계에 있었다. 04 가 붙이는 flag 가
+  # 너무 넓어(`logon_success` 2,945건 · `network_connection` 362건) 배분에서
+  # 밀린 것이라, 좁은 flag 를 새로 만들고 그 자리를 여기서 보장한다.
+  #
+  # 상한이 셋 다 3인 이유가 다르다 —
+  #   remote_interactive_logon      전량이 6건이고 2건씩 짝을 이룬다(세 세션).
+  #   credential_config_accessed    11건 중 10건이 랩 제작자의 5일 전 작업이라,
+  #                                 앵커 거리 정렬이 공격 건을 앞으로 보낸다.
+  #   suspicious_c2_port_connection 전량이 3건(키오스크 2 · POS 1)이다.
+  remote_interactive_logon_observed:
+    must_review: true
+    flags: [remote_interactive_logon]
+    match_fields: [fields.TargetUserName, fields.IpAddress, fields.LogonType]
+    max_representatives: 3
+
+  credential_config_accessed_observed:
+    must_review: true
+    flags: [credential_config_accessed]
+    match_fields: [fields.Image, fields.CommandLine]
+    max_representatives: 3
+
+  # **representative_images 를 비워 둔다.** 리버스 셸을 받는 프로세스 이름은
+  # 공격자가 고르는 것이라(이 증거에서도 powershell.exe 와 spoolsv.exe 로
+  # 서로 다르다) 여기 적으면 그 표본에서만 맞는 값이 된다.
+  suspicious_c2_port_connection_observed:
+    must_review: true
+    flags: [suspicious_c2_port_connection]
+    match_fields: [fields.Image, fields.DestinationIp, fields.DestinationPort]
+    max_representatives: 3
+
   # **이 사건의 목적이 여기 있었다.** K2L-20260908 에서 결제 정산 테이블을
   # CSV 로 빼는 행위(SQLCMD ... SELECT * FROM ...settlements -o C:\exfil\...)
   # 에 flag 가 없어 05단계 배분에서 밀렸고, 관리서버 보고서는 수집 도구와

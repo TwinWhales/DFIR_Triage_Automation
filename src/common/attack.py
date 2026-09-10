@@ -94,6 +94,16 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1083": "File and Directory Discovery",
     "T1105": "Ingress Tool Transfer",
     "T1569.002": "System Services: Service Execution",
+    # K-001 실측 대조(2026-09-10)에서 **라벨 자체가 없어** 못 붙이던 기법들.
+    # 시나리오의 16개 기법 중 다섯이 여기 없어, 05단계가 관측을 정확히 하고도
+    # T1059.003 같은 일반 코드로 뭉갰다(docs/limitations.md 3-1 ②의 다른 얼굴).
+    # **관문 1이 여기다** — 매핑 YAML 만 만들면 02단계가 그 기법을 못 내서
+    # 매핑이 도달 불가가 된다. 위 HID/BadUSB 주석의 선례와 같은 자리다.
+    "T1046": "Network Service Discovery",
+    "T1210": "Exploitation of Remote Services",
+    "T1552.001": "Unsecured Credentials: Credentials In Files",
+    "T1567.002": "Exfiltration Over Web Service: Exfiltration to Cloud Storage",
+    "T1036": "Masquerading",
     # 매핑은 아직 없으나 시나리오에 자주 등장하는 기법
     "T1003.001": "OS Credential Dumping: LSASS Memory",
     "T1021.001": "Remote Services: Remote Desktop Protocol",
