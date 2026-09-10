@@ -70,7 +70,7 @@ families:
     label: Exfiltration
     techniques: [T1041, T1048]
     scenario_terms: ['유출', '외부 전송', '클라우드', 'google drive', '구글 드라이브']
-    keywords: ['rclone(?:\.exe)?', 'gdrive:', 'google(?:apis)?\.com', 'drive\.google\.com', '\b(?:copy|sync)\b.+(?:gdrive|drive|s3|dropbox|onedrive)', 'mega(?:\.exe)?']
+    keywords: ['rclone(?:\.exe)?', 'gdrive:', 'google(?:apis)?\.com', 'drive\.google\.com', '\b(?:copy|sync)\b.+(?:gdrive|drive|s3|dropbox|onedrive)', 'mega(?:\.exe)?', 'suspicious_c2_port_connection', '(?:destinationport|remote_port)\s+4444']
     flags: [exfiltration, cloud_transfer, high_outbound_transfer]
 
   - id: impact

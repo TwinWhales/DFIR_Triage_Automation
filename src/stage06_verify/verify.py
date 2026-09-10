@@ -112,23 +112,15 @@ def technique_artifacts(mappings_dir: "str | Path") -> dict[str, frozenset[str]]
     except (mapping_loader.MappingError, OSError):
         return {}
 
-    table: dict[str, set[str]] = {}
+    loaded_mappings = []
     for os_dir in sorted(p.name for p in directory.iterdir() if p.is_dir()):
         try:
             loaded = mapping_loader.load_all(directory, os_dir, catalog)
         except (mapping_loader.MappingError, OSError):
             continue
-        for mapping in loaded.values():
-            for request in mapping.requests:
-                # 파일의 기법이 아니라 **요청 자신의 기법**으로 묶는다.
-                # followups 는 다른 기법의 것이다 — 위 설명 참조.
-                table.setdefault(request.technique, set()).add(request.artifact)
-            # `corroborates:` 는 03단계가 수집하지 않지만 **근거로는 인정하는**
-            # 것이다. 파일 단위 선언이므로 그 파일의 기법으로 묶는다
-            # (`followups` 와 달리 자기 technique 을 갖지 않는다).
-            if mapping.corroborates:
-                table.setdefault(mapping.technique, set()).update(mapping.corroborates)
-    return {technique: frozenset(names) for technique, names in table.items()}
+        loaded_mappings.extend(loaded.values())
+    supported, _event_scopes = mapping_loader.technique_evidence_index(loaded_mappings)
+    return supported
 
 
 def verify(

@@ -11,12 +11,16 @@
 from __future__ import annotations
 
 import json
+import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from ..common import attack, schema
 from ..common.llm import Backend, MalformedOutput, extract_json, output_schema
+from ..stage03_select import mapping_loader
 from ..stage04_parse.flagging import prompt_drop_fields
+from . import coverage
 from .allocation import MAX_LIST_ITEMS, for_prompt
 
 __all__ = [
@@ -27,6 +31,7 @@ __all__ = [
     "MAX_INVESTIGATION_REQUESTS",
     "InterpretClient",
     "candidate_techniques",
+    "candidate_techniques_for_records",
     "constrained_schema",
     "investigation_schema",
 ]
@@ -105,8 +110,13 @@ def constrained_schema(
         # 못 받았다"는 앞 단계의 문제를 05단계 환각으로 둔갑시킨다.
         built["$defs"]["ref"] = {"enum": sorted(set(refs))}
 
-    techniques = [tid for tid, _name in candidate_techniques(scenario, mappings)]
-    if techniques:
+    techniques = [
+        tid
+        for tid, _name in candidate_techniques_for_records(
+            scenario, records, mappings
+        )
+    ]
+    if techniques or records:
         built["properties"]["findings"]["items"]["properties"]["technique"] = {
             "enum": [*techniques, None]
         }
@@ -162,6 +172,129 @@ def candidate_techniques(
     return sorted(
         (tid, str(named.get(tid) or attack.name_of(tid) or tid)) for tid in ids
     )
+
+
+def _walk_strings(value: Any):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, nested in value.items():
+            yield str(key)
+            yield from _walk_strings(nested)
+    elif isinstance(value, (list, tuple, set)):
+        for nested in value:
+            yield from _walk_strings(nested)
+    elif value is not None:
+        yield str(value)
+
+
+@lru_cache(maxsize=16)
+def _candidate_routing_context(
+    mappings_dir: str, target_os: str
+) -> tuple[
+    dict[str, dict[str, Any]],
+    dict[str, frozenset[str]],
+    dict[tuple[str, str], "frozenset[str] | None"],
+]:
+    """Load the two declarative tables used to route a record to techniques.
+
+    ``supported`` intentionally has the same construction as Stage 06's
+    ``technique_artifacts``: request-owned technique IDs (including followups)
+    plus ``corroborates``.  ``scopes`` additionally retains event IDs so a
+    generic artifact such as Sysmon does not turn every event into every mapped
+    technique.
+    """
+    table = coverage.family_table(mappings_dir)
+    catalog = mapping_loader.load_catalog(mappings_dir)
+    loaded = mapping_loader.load_all(mappings_dir, target_os, catalog)
+    supported, scoped = mapping_loader.technique_evidence_index(loaded.values())
+    return table, supported, scoped
+
+
+def _record_behavior_families(
+    record: dict[str, Any], table: dict[str, dict[str, Any]]
+) -> set[str]:
+    """Return behavior families evidenced by this record's flags or content."""
+    flags = {str(flag).casefold() for flag in (record.get("flags") or [])}
+    blob = " ".join(_walk_strings(record)).casefold()
+    found: set[str] = set()
+    for family_id, spec in table.items():
+        wanted = {str(flag).casefold() for flag in (spec.get("flags") or [])}
+        if wanted & flags or any(
+            re.search(str(pattern), blob, re.IGNORECASE)
+            for pattern in (spec.get("keywords") or [])
+        ):
+            found.add(family_id)
+    return found
+
+
+def candidate_techniques_for_records(
+    scenario: dict[str, Any],
+    records: list[dict[str, Any]],
+    mappings: "str | None" = None,
+) -> "list[tuple[str, str]]":
+    """Narrow the global technique vocabulary to evidence in this batch.
+
+    Behavior-bearing records use ``_behavior_families.yaml`` and the same
+    artifact support declared to Stage 06.  Records without a behavior match
+    fall back to the mapping request's artifact/event scope.  If routing data
+    cannot be loaded, the old global vocabulary is retained so a configuration
+    problem cannot silently erase every technique from an investigation.
+    """
+    global_candidates = candidate_techniques(scenario, mappings)
+    if not records:
+        return global_candidates
+
+    root = Path(mappings or DEFAULT_MAPPINGS).resolve()
+    target_os = str(scenario.get("target_os") or "windows")
+    try:
+        table, supported, scopes = _candidate_routing_context(str(root), target_os)
+    except (OSError, ValueError, mapping_loader.MappingError, re.error):
+        return global_candidates
+
+    names = {tid: name for tid, name in global_candidates}
+    global_ids = set(names)
+    scenario_ids = {
+        str(item["id"])
+        for item in scenario.get("techniques", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    selected: set[str] = set()
+
+    for record in records:
+        artifact = str(record.get("artifact") or "")
+        if not artifact:
+            # Legacy/replay fixtures may not carry artifact provenance.  The
+            # prior behavior is safer than pretending that no label applies.
+            selected.update(global_ids)
+            continue
+
+        artifact_ids = {
+            technique
+            for technique, artifacts in supported.items()
+            if artifact in artifacts and technique in global_ids
+        }
+        families = _record_behavior_families(record, table)
+        if families:
+            family_ids = {
+                str(technique)
+                for family_id in families
+                for technique in (table[family_id].get("techniques") or [])
+            }
+            # Mappingless scenario labels are retained only when the record's
+            # behavior family names them.  This preserves explicit hypotheses
+            # without exposing them to every unrelated record in the chunk.
+            selected.update((artifact_ids | (scenario_ids - set(supported))) & family_ids)
+            continue
+
+        event_id = record.get("event_id")
+        event_key = None if event_id in (None, "") else str(event_id)
+        for technique in artifact_ids:
+            allowed_events = scopes.get((technique, artifact))
+            if allowed_events is None or event_key is None or event_key in allowed_events:
+                selected.add(technique)
+
+    return sorted((tid, names[tid]) for tid in selected if tid in names)
 
 
 def evidence_field_names(
@@ -250,11 +383,6 @@ def selection_schema(
     (변환기가 정규식을 못 삼킨다), 배열에는 상한을 건다(없으면 맴돈다),
     ``ref`` 를 맨 앞에 둔다(문법이 선언 순서대로 내보낸다).
     """
-    techniques = [tid for tid, _name in candidate_techniques(scenario, mappings)]
-    technique_schema: dict[str, Any] = (
-        {"enum": [*techniques, None]} if techniques else {"type": ["string", "null"]}
-    )
-
     predicate_names = [
         "equals", "contains", "list_contains", "under_path", "outside_path",
         "same_path", "same_hash", "spawned", "before", "after", "within",
@@ -265,6 +393,13 @@ def selection_schema(
         ref = record.get("ref")
         if not ref:
             continue
+        techniques = [
+            tid
+            for tid, _name in candidate_techniques_for_records(
+                scenario, [record], mappings
+            )
+        ]
+        technique_schema: dict[str, Any] = {"enum": [*techniques, None]}
         names = record_field_names(record, allowed_fields)
         evidence: dict[str, Any] = (
             {
@@ -690,7 +825,11 @@ class InterpretClient:
     def name(self) -> str:
         return self.backend.name
 
-    def _technique_labels(self, scenario: dict[str, Any]) -> str:
+    def _technique_labels(
+        self,
+        scenario: dict[str, Any],
+        records: "list[dict[str, Any]] | None" = None,
+    ) -> str:
         """붙일 수 있는 기법 라벨 전체. **이름을 함께 보낸다.**
 
         ID 만 보내면 모델이 ``T1548`` 이 무엇인지 모르는 채로 고른다
@@ -702,9 +841,14 @@ class InterpretClient:
         사건 서술에서 나왔고 어느 것이 우리가 열어 둔 어휘인지는 다른
         정보다 — 섞으면 모델이 사건 서술을 넓게 읽은 것으로 오해한다.
         """
+        candidates = (
+            candidate_techniques(scenario, self.mappings)
+            if not records
+            else candidate_techniques_for_records(scenario, records, self.mappings)
+        )
         return ", ".join(
             f"{tid}({name})"
-            for tid, name in candidate_techniques(scenario, self.mappings)
+            for tid, name in candidates
         )
 
     def _note_prompt(self, chars: int) -> None:
@@ -744,7 +888,7 @@ class InterpretClient:
             "### 시나리오\n"
             f"- 대상 OS: {scenario.get('target_os', '?')}\n"
             f"- 사건 서술에서 나온 기법: {techniques or '없음'}\n"
-            f"- 붙일 수 있는 기법 라벨(이 중에서만 고릅니다): {self._technique_labels(scenario)}\n"
+            f"- 붙일 수 있는 기법 라벨(이 중에서만 고릅니다): {self._technique_labels(scenario, records)}\n"
             f"- 분석 기간: {time_range.get('start', '?')} ~ {time_range.get('end', '?')}",
             "### 레코드 ("
             f"{len(records)}건, 이 목록에 없는 ref 는 쓸 수 없습니다{self._trim_notice()})\n"
@@ -1250,7 +1394,7 @@ class InterpretClient:
             "### 시나리오\n"
             f"- 대상 OS: {scenario.get('target_os', '?')}\n"
             f"- 사건 서술에서 나온 기법: {techniques or '없음'}\n"
-            f"- 붙일 수 있는 기법 라벨(이 중에서만 고릅니다): {self._technique_labels(scenario)}\n"
+            f"- 붙일 수 있는 기법 라벨(이 중에서만 고릅니다): {self._technique_labels(scenario, records)}\n"
             f"- 분석 기간: {time_range.get('start', '?')} ~ {time_range.get('end', '?')}",
             # 레코드를 JSONL로 준다. 한 줄이 한 레코드라 모델이 경계를
             # 헷갈리지 않고, 토큰도 들여쓰기 JSON보다 적게 든다.

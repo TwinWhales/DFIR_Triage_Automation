@@ -353,6 +353,16 @@ def test_followups_are_attributed_to_their_own_technique(mappings):
     assert followup.tier == 2
 
 
+def test_technique_evidence_index_preserves_owner_and_event_scope(mappings):
+    supported, event_scopes = mapping_loader.technique_evidence_index(mappings.values())
+
+    # The web-shell mapping's followup belongs to the service technique.
+    assert "evtx:System" in supported["T1543.003"]
+    assert event_scopes[("T1059.001", "evtx:Sysmon")] == frozenset({"1", "3"})
+    # An unscoped request must remain unscoped, not become an empty enum.
+    assert event_scopes[("T1548", "evtx:Sysmon")] is None
+
+
 # ================================================ flags 어휘 이중 관리 방지
 
 
