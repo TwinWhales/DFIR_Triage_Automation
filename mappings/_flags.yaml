@@ -611,41 +611,52 @@ flags:
           values:
             - '(?i)(?<![^\\/:"\s])(?=[^\\/:"\s]*(?:settings|config|credential|secret|passw|database|conn_str|token|apikey|env))[^\\/:"\s]*\.(?:json|ini|env|xml|conf|config|ya?ml)(?![^\s",;)])'
 
-  suspicious_c2_port_connection:
+  uncommon_destination_port:
     artifacts: [evtx:Sysmon]
-    condition: Sysmon 3 중 목적지 포트가 4444 인 연결
+    condition: Sysmon 3 중 목적지 포트가 알려진 서비스 포트도 임시 포트도 아닌 것
     note: |
-      **리버스 셸의 착지점이다.** 시나리오는 공격자가 netcat 을 4444 로 열어
-      두고 키오스크·POS 양쪽에서 셸을 받는다. 두 노드 모두 레코드가 있었고
+      **리버스 셸의 착지점이다.** 시나리오는 공격자가 netcat 을 열어 두고
+      키오스크·POS 양쪽에서 셸을 받는다. 두 노드 모두 레코드가 있었고
       `network_connection` 만 붙어 있었다 — 그 flag 는 EID 3 전량(노드당
-      360~380건)에 붙으므로 신호가 되지 못한다.
+      75~529건)에 붙으므로 신호가 되지 못한다.
 
-      실측(세 노드, 2026-09-10). 포트 4444 로 나간 연결 **3건이 전부**다:
+      **전신은 `목적지 포트 == 4444` 였다**(2026-09-10). 그 룰의 note 가 스스로
+      한계를 적고 있었다 — *"4444 는 도구 기본값의 관용이지 공격의 정의가
+      아니다. 공격자가 포트를 바꾸면 조용히 0건이 된다."* 이 랩의 실측 3건을
+      근거로 숫자 하나를 박은 것이라 **명백한 과적합이었고**, 2026-09-11 에
+      축을 뒤집었다.
 
-        KIOSK  SYSMON#22245  2026-09-07T13:38:18  powershell.exe -> 192.168.0.153
-        KIOSK  SYSMON#22326  2026-09-07T13:39:58  powershell.exe -> 192.168.0.153
-        POS    SYSMON#920    2026-09-08T07:18:33  spoolsv.exe    -> 100.67.251.20
+      **공격 포트가 아니라 정상 포트를 열거한다.** 그러면 공격자가 숫자를
+      바꾸는 행위 자체가 목록 밖으로 나가는 행위가 된다. 판정은
+      `flagging.py` 의 `uncommon_destination_port` handler 이고, 무엇이 정상
+      서비스인가는 아래 `service_ports` 다.
+
+      실측(`Test1` 세 노드, 2026-09-11) — Sysmon EID 3 전량 966건 중:
+
+        KIOSK  529건 -> 10건   4444 x3 · 8000 x2 · 5000/5001 x3 · 5357 x2
+        POS     75건 ->  6건   4444 x1 (spoolsv.exe) · 5002 x5
+        MGMT   362건 ->  1건   없음 (52268 은 임시 포트라 빠진다)
+
+      **전신이 놓치던 것을 잡는다.** 4444 룰은 같은 데이터에서 4건이었고,
+      이 룰은 그 4건을 포함하면서 공격자 HTTP 서버(`:8000`, Stage 1 의
+      certutil 다운로드 착지점)와 nmap 의 스캔 포트를 함께 잡는다.
 
       **POS 쪽이 특히 이 flag 로만 보인다.** SMBGhost 는 사전 인증 RCE 라
-      로그온 이벤트가 남지 않아(시나리오 Stage 5 주석) 착지 자체를 말해 주는
-      것이 이 아웃바운드뿐이다. 부모가 `spoolsv.exe` 인 것도 그 자리와 맞다.
+      로그온 이벤트가 남지 않아 착지 자체를 말해 주는 것이 이 아웃바운드뿐이다.
+      부모가 `spoolsv.exe` 인 것도 그 자리와 맞다.
 
-      **포트 하나를 박아 두는 것이 이 룰의 한계다.** 4444 는 도구 기본값의
-      관용이지 공격의 정의가 아니다(`certutil -urlcache` 와 같은 부류로 보되,
-      그쪽은 옵션이고 이쪽은 숫자라 더 약하다). 공격자가 포트를 바꾸면 조용히
-      0건이 된다. **넓히려면 목록을 늘리는 것이 아니라 다른 축이 필요하다** —
-      "어느 포트인가"가 아니라 "셸이 바깥으로 나갔는가"이고, 그것은 부모-자식
-      관계와 방향을 함께 봐야 해서 handler 자리다. 실측 근거가 쌓이면 그때
-      옮긴다.
+      **오탐이 남는다.** 5000~5002 는 이 환경 앱의 API 포트라 8건이 걸린다.
+      그것이 정상임을 아는 것은 사이트 지식이므로 `service_ports` 에 적으면
+      빠진다 — 코드가 아니라 어휘의 자리다. **여기 적지 않은 것은 의도다**:
+      이 저장소의 데이터셋이 하나뿐이라, 지금 적으면 그 역시 이 랩에만 맞는
+      값이 된다.
 
-      **악성 판정이 아니다.** 4444 를 정상으로 쓰는 서비스가 있으면 걸린다.
+      **악성 판정이 아니다.** "흔히 보는 서비스 포트가 아니다"만 말한다.
     rule:
       when:
         - artifact: evtx:Sysmon
           event_ids: [3]
-          match: field_in
-          field: fields.DestinationPort
-          values: ['4444', 4444]
+      handler: uncommon_destination_port
 
   database_table_dumped:
     artifacts: [evtx:Sysmon]
@@ -1236,6 +1247,16 @@ window_independent:
 # **이 목록에 적는 것은 "여기 있으면 정상"이라고 선언하는 것이다.** 공격자가
 # 그 폴더에 파일을 놓으면 이 flag 는 침묵한다. 그래서 실제로 그 앱이 설치된
 # 자리만 적고, 넓게 잡지 않는다.
+# 이 사이트에서 정상으로 볼 목적지 포트. uncommon_destination_port handler 가
+# 기본 목록(flagging.DEFAULT_SERVICE_PORTS) **위에** 얹는다 — 대체가 아니라
+# 합집합이라, 여기에 443 을 다시 적을 필요가 없다.
+#
+# **지금은 비워 둔다.** Test1 에서 이 환경 앱의 API 포트(5000·5001·5002)가
+# 8건 걸리는데, 그것을 여기 적으면 이 랩에만 맞는 값이 된다. 데이터셋이
+# 하나뿐이라 그 값이 맞는지 잴 수단이 없다(`docs/limitations.md` 3-5).
+# 운영 환경에 얹을 때 그 사이트의 서비스 포트를 적는 자리다.
+service_ports: []
+
 known_volume_roots:
   - kiosk
 
