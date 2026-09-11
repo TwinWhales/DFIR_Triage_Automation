@@ -67,6 +67,11 @@
 > 근거: {{ line }}
 {% endfor %}
 {% endif %}
+{% if finding.evidence_details %}
+{% for detail in finding.evidence_details %}
+> 원본: {{ detail }}
+{% endfor %}
+{% endif %}
 {% for line in finding.verified_details %}
 > 검증값: {{ line }}
 {% endfor %}
@@ -99,6 +104,11 @@
 
 {% for line in finding.evidence %}
 > 근거: {{ line }}
+{% endfor %}
+{% endif %}
+{% if finding.evidence_details %}
+{% for detail in finding.evidence_details %}
+> 원본: {{ detail }}
 {% endfor %}
 {% endif %}
 {% for line in finding.verified_details %}

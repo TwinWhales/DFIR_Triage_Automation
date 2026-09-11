@@ -75,7 +75,9 @@ families:
 
   - id: impact
     label: Impact
-    techniques: [T1565.001, T1657]
-    scenario_terms: ['영향', '중단', '파괴', '암호화', '금전 탈취']
-    keywords: ['vssadmin.*delete', 'cipher(?:\.exe)?', 'wevtutil.*cl', 'shutdown(?:\.exe)?', 'bugcheck', 'memory\.dmp', 'ransom']
-    flags: [system_crash, data_destroyed, impact]
+    techniques: [T1565.001, T1657, T1529]
+    scenario_terms: ['영향', '중단', '파괴', '암호화', '금전 탈취', '재부팅', '재기동', '블루스크린', '크래시', '다운']
+    keywords: ['vssadmin.*delete', 'cipher(?:\.exe)?', 'wevtutil.*cl', 'shutdown(?:\.exe)?', 'bugcheck', 'memory\.dmp', 'ransom', '비정상\s*종료', '재부팅', '재기동', '블루스크린', '크래시']
+    flags: [system_crash, system_crash_recorded, data_destroyed, impact]
+
+

@@ -122,6 +122,7 @@ KNOWN_TECHNIQUES: dict[str, str] = {
     "T1218.011": "System Binary Proxy Execution: Rundll32",
     "T1486": "Data Encrypted for Impact",
     "T1490": "Inhibit System Recovery",
+    "T1529": "System Shutdown/Reboot",
 }
 
 

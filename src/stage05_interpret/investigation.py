@@ -52,12 +52,20 @@ STAGE = "05_interpret"
 DOCUMENT_STAGE = "05_investigate"
 
 
-def pivots(records: list[dict[str, Any]]) -> dict[str, str]:
+def pivots(
+    records: list[dict[str, Any]],
+    cited_refs: "set[str] | None" = None,
+) -> dict[str, str]:
     """``ref`` → 그 레코드의 활동 시각. 시각이 없는 레코드는 빠진다.
 
     **모델에게 ``pivot_time`` 을 묻지 않기 위한 표다.** 어느 레코드를 근거로
     들었는지만 받으면 그 레코드가 언제인지는 우리가 안다 — ``input_refs`` 를
     묻지 않는 것과 같은 이유이고, 타임스탬프를 지어낼 자리가 사라진다.
+
+    루프백 시간 확장의 근거(pivot)는 아무 배경 로그나 삼을 수 없다.
+    1차 소견에 인용된 레코드(cited_refs)이거나, 04단계 룰 엔진이 플래그(flags)를
+    붙여 의심 신호가 있는 레코드만 축으로 삼아 정상 노이즈에 의한 시간 왜곡을
+    방지한다.
 
     ``$MFT`` 처럼 시각을 넷 들고 있는 레코드는 **가장 이른 것**을 쓴다.
     범위를 넓히는 축이므로, 여러 후보 중 앞선 것을 잡아야 그 사이가 덮인다
@@ -68,6 +76,10 @@ def pivots(records: list[dict[str, Any]]) -> dict[str, str]:
         ref = record.get("ref")
         if not ref:
             continue
+        # cited_refs 가 주어지면, 1차 소견에 인용되었거나 flags 가 있는 의심 레코드만 남긴다.
+        if cited_refs is not None:
+            if str(ref) not in cited_refs and not record.get("flags"):
+                continue
         times = record_filter.activity_times(record)
         if times:
             table[str(ref)] = min(times).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -175,7 +187,10 @@ def collect(
     만든다** — "물었고 더 볼 것이 없다고 했다"는 것과 "묻지 않았다"는 다르고,
     그 차이가 2차를 안 돌린 이유가 된다.
     """
-    table = pivots(records)
+    cited = set(findings.get("input_refs", []))
+    table = pivots(records, cited_refs=cited)
+    if not table and records:
+        table = pivots(records)
     techniques = requestable_techniques(scenario, mappings_dir)
     artifacts = requestable_artifacts(
         scenario, selection, catalog, unavailable_artifacts(manifest)

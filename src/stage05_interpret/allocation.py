@@ -77,11 +77,13 @@ from .record_filter import (
     AnchorIndex,
     activity_times,
     is_signal,
+    should_drop_record,
 )
 
 __all__ = [
     "CHARS_PER_TOKEN",
     "MAX_LIST_ITEMS",
+    "MAX_IDENTICAL_RECORDS",
     "RESERVE_FINDINGS_TOKENS",
     "RESERVE_SELECTION_TOKENS",
     "PRIORITY_WEIGHT",
@@ -555,7 +557,11 @@ def priorities_from_selection(selection: dict[str, Any]) -> dict[str, int]:
 
 
 def allocate_seats(
-    candidates: dict[str, int], priorities: dict[str, int], limit: int
+    candidates: dict[str, int],
+    priorities: dict[str, int],
+    limit: int,
+    *,
+    surplus_caps: dict[str, int] | None = None,
 ) -> dict[str, int]:
     """아티팩트별 자릿수를 정한다. 후보가 있는 곳은 최소 한 자리.
 
@@ -565,7 +571,8 @@ def allocate_seats(
     손으로 따라갈 수 있고, 자리마다 누가 왜 가져갔는지 말할 수 있다.
 
     후보 수가 상한이다. 가진 것보다 많이 받지 않고, 남은 자리는 다른
-    아티팩트로 돌아간다.
+    아티팩트로 돌아간다. surplus_caps가 주어지면 바닥 한 자리를 채운 뒤의
+    잉여 자리는 그 캡(시간 내/유효 신호 수)까지만 받는다.
     """
     seats = {artifact: 0 for artifact in candidates}
     remaining = max(0, limit)
@@ -582,11 +589,27 @@ def allocate_seats(
             remaining -= 1
 
     while remaining > 0:
-        open_artifacts = [a for a in candidates if seats[a] < candidates[a]]
+        open_artifacts = [
+            a for a in candidates
+            if seats[a] < (max(1, surplus_caps[a]) if surplus_caps is not None and a in surplus_caps else candidates[a])
+        ]
         if not open_artifacts:
             break
         # 동점은 이름순으로 가른다. 근거가 있어서가 아니라 **같은 입력에
         # 같은 배분이 나와야** 재현율이 모델 성능의 지표가 되기 때문이다.
+        winner = min(
+            open_artifacts,
+            key=lambda a: (-Fraction(weight(a), seats[a] + 1), a),
+        )
+        seats[winner] += 1
+        remaining -= 1
+
+    # 2차 배분: 창 안 신호와 유지 플래그를 모두 채우고도 전체 자리가 남을 때만
+    # 창 밖 일반 후보가 남은 자리를 채운다 ("버리는 것이 아니라 후순위").
+    while remaining > 0:
+        open_artifacts = [a for a in candidates if seats[a] < candidates[a]]
+        if not open_artifacts:
+            break
         winner = min(
             open_artifacts,
             key=lambda a: (-Fraction(weight(a), seats[a] + 1), a),
@@ -733,6 +756,93 @@ def _process_context(
     return distances, seed_times
 
 
+#: 동일 행위 레코드의 기본 최대 허용치 (주기성 확인을 위해 최소 2건 유지).
+MAX_IDENTICAL_RECORDS = 2
+
+
+def _repeat_key(record: dict[str, Any]) -> str:
+    """되풀이 판정 키. 같은 행위가 슬롯을 독점하는 것을 방지하기 위해 사용."""
+    fields = record.get("fields") if isinstance(record.get("fields"), dict) else {}
+    canonical = record.get("canonical") if isinstance(record.get("canonical"), dict) else {}
+
+    # 1. 네트워크 연결: (Image, DestinationIp, DestinationPort)
+    dest_ip = str(fields.get("DestinationIp") or canonical.get("remote_ip") or "").strip()
+    dest_port = str(fields.get("DestinationPort") or canonical.get("remote_port") or "").strip()
+    if dest_ip or dest_port:
+        image = str(fields.get("Image") or canonical.get("process_image") or "").strip().casefold()
+        return f"net:{image}:{dest_ip}:{dest_port}"
+
+    # 2. 프로세스 실행 / 명령행: (Image, CommandLine)
+    cmdline = str(fields.get("CommandLine") or canonical.get("command_line") or "").strip().casefold()
+    image = str(fields.get("Image") or canonical.get("process_image") or "").strip().casefold()
+    if cmdline or image:
+        return f"proc:{image}:{cmdline}"
+
+    # 3. 파일 ($MFT, $UsnJrnl)
+    name = str(record.get("name") or fields.get("FileName") or "").strip().casefold()
+    if name:
+        return f"file:{name}"
+
+    # 4. 레지스트리 / 파일 경로
+    path = str(record.get("path") or canonical.get("subject_path") or "").strip().casefold()
+    if path:
+        return f"path:{path}"
+
+    # 5. 파워셸 스크립트 블록
+    script = str(fields.get("ScriptBlockText") or "").strip()
+    if script:
+        return f"script:{script[:100].casefold()}"
+
+    return ""
+
+
+def _select_diverse(
+    entries: list[tuple[Any, datetime, dict[str, Any]]],
+    limit: int,
+    max_identical: int = MAX_IDENTICAL_RECORDS,
+) -> list[tuple[Any, datetime, dict[str, Any]]]:
+    """앞에서부터 ``limit`` 건을 고르되 동일 행위는 ``max_identical`` 건까지 우선 선발.
+
+    2-pass 선발 방식:
+    1차: 동일 키 기준 max_identical(기본 2) 건까지만 선발하고 초과분은 deferred에 대기.
+    2차: 다양성을 확보하고도 좌석(limit)이 남으면 deferred에서 순서대로 충원.
+    이를 통해 반복 공격(예: 포트 스캔, 무차별 대입, Brute-force)의 주기성은 보존하면서도
+    단일 반복 행위가 전체 쿼터를 고갈시켜 다른 공격 단서를 밀어내는 현상을 방지한다.
+    """
+    if limit <= 0 or not entries:
+        return []
+    chosen: list[tuple[Any, datetime, dict[str, Any]]] = []
+    seen: dict[str, int] = {}
+    deferred: list[tuple[Any, datetime, dict[str, Any]]] = []
+
+    for item in entries:
+        if len(chosen) >= limit:
+            break
+        record = item[2]
+        key = _repeat_key(record)
+        if key and seen.get(key, 0) >= max_identical:
+            deferred.append(item)
+            continue
+        chosen.append(item)
+        if key:
+            seen[key] = seen.get(key, 0) + 1
+
+    hard_cap = max_identical * 2  # 동일 행위는 1·2차 통틀어 최대 hard_cap건까지만 허용
+
+    for item in deferred:
+        if len(chosen) >= limit:
+            break
+        record = item[2]
+        key = _repeat_key(record)
+        if key and seen.get(key, 0) >= hard_cap:
+            continue
+        chosen.append(item)
+        if key:
+            seen[key] = seen.get(key, 0) + 1
+
+    return chosen
+
+
 def allocate_records(
     records: Iterable[dict[str, Any]],
     *,
@@ -774,6 +884,8 @@ def allocate_records(
 
     by_artifact: dict[str, list[dict[str, Any]]] = {}
     for record in records:
+        if should_drop_record(record):
+            continue
         by_artifact.setdefault(record.get("artifact", ""), []).append(record)
 
     # 앵커는 **플래그가 붙은 레코드의 활동 시각**이다. 아티팩트를 가리지
@@ -855,14 +967,19 @@ def allocate_records(
             if ref in by_ref:
                 guaranteed.setdefault(ref, by_ref[ref])
 
+    surplus_caps = {
+        artifact: sum(1 for entry in entries if entry[0][3] < 2)
+        for artifact, entries in ranked.items()
+    }
+
     def pick(seat_limit: int) -> tuple[dict[str, int], list[tuple[datetime, dict[str, Any]]], int]:
         """자릿수 하나에 대한 배분·선택·글자수."""
-        seats = allocate_seats(counts, priorities, seat_limit)
+        seats = allocate_seats(counts, priorities, seat_limit, surplus_caps=surplus_caps)
         picked: list[tuple[datetime, dict[str, Any]]] = []
         chars = 0
         picked_refs: set[str] = set()
         for artifact in sorted(ranked):
-            for _key, moment, record in ranked[artifact][: seats[artifact]]:
+            for _key, moment, record in _select_diverse(ranked[artifact], seats[artifact]):
                 picked.append((moment, record))
                 chars += record_chars(record, max_list_items)
                 picked_refs.add(str(record.get("ref", "")))
@@ -1036,8 +1153,14 @@ def _rank(
         # 애초에 ``is_signal`` 을 통과해 0순위로 간다. 1·2순위에서 이 항은
         # 항상 거짓이다. 그래도 식을 하나로 두는 이유는 **갈라 두면
         # 언젠가 한쪽만 고쳐지기 때문**이다 — 0순위에만 띠를 걸었다가
-        # 1순위에서 물린 것이 바로 이 자리다.
-        band = int(OUTSIDE_WINDOW in flags and not (flags & keep_outside))
+        # 창 안이 0, 창 밖이지만 유지할 신호(window_independent)가 1,
+        # 창 밖 일반 잡음이 2다.
+        if OUTSIDE_WINDOW not in flags:
+            band = 0
+        elif flags & keep_outside:
+            band = 1
+        else:
+            band = 2
         # 이름이 맞은 실행 자체, 그 자손, 나머지 순이다. 이름이 없으면
         # 모두 예전 값 1을 써 기존 정렬을 그대로 보존한다.
         if not entity_names:

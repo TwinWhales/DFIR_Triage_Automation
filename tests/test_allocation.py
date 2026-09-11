@@ -1435,3 +1435,266 @@ def test_a_lone_signal_still_cannot_pull_the_anchor_to_itself():
     assert attention.burst_anchor(observed, exclude=ranked, reference=lonely) == _moment(
         "2026-01-01T00:00:00"
     ), "혼자 난 신호는 창 밖 되돌리기로도 자기를 정당화하지 못한다"
+
+
+def test_benign_powershell_boilerplate_is_dropped_from_allocation():
+    """윈도우 기본 Cmdletization 스크립트 블록은 배분 후보에서 원천 배제된다."""
+    benign_rec = {
+        "ref": "EVTX-PS#1329",
+        "artifact": "evtx:PowerShell",
+        "flags": ["powershell_logged"],
+        "timestamp": _at(seconds=10),
+        "fields": {
+            "Provider": "Microsoft-Windows-PowerShell",
+            "MessageNumber": "3",
+            "MessageTotal": "4",
+            "ScriptBlockId": "ca5eb6fc-4dcc-433c-b396-933e73f27235",
+            "ScriptBlockText": "param(...) $__cmdletization_defaultValue ... Enable-NetAdapterPowerManagement",
+        },
+    }
+    malicious_rec = {
+        "ref": "EVTX-PS#9999",
+        "artifact": "evtx:PowerShell",
+        "flags": ["powershell_logged"],
+        "timestamp": _at(seconds=20),
+        "fields": {
+            "Provider": "Microsoft-Windows-PowerShell",
+            "MessageNumber": "1",
+            "MessageTotal": "1",
+            "ScriptBlockId": "11111111-2222-3333-4444-555555555555",
+            "ScriptBlockText": "powershell.exe -ExecutionPolicy Bypass -File C:\\ProgramData\\.sys\\s.ps1",
+        },
+    }
+
+    assert record_filter.is_benign_powershell(benign_rec) is True
+    assert record_filter.should_drop_record(benign_rec) is True
+    assert record_filter.is_signal(benign_rec) is False
+
+    assert record_filter.is_benign_powershell(malicious_rec) is False
+    assert record_filter.should_drop_record(malicious_rec) is False
+    assert record_filter.is_signal(malicious_rec) is True
+
+    # allocate_records 에 두 레코드를 넣으면 정상 레코드는 제외되고 악성 레코드만 남는다
+    allocated, _, _ = allocation.allocate_records([benign_rec, malicious_rec], limit=10)
+    refs = [r["ref"] for r in allocated]
+    assert "EVTX-PS#1329" not in refs
+    assert "EVTX-PS#9999" in refs
+
+
+def test_powershell_metadata_dropped_in_for_prompt():
+    """for_prompt 통과 시 MessageNumber, MessageTotal, ScriptBlockId 가 드롭된다."""
+    rec = {
+        "ref": "EVTX-PS#1",
+        "artifact": "evtx:PowerShell",
+        "fields": {
+            "MessageNumber": "1",
+            "MessageTotal": "2",
+            "ScriptBlockId": "uuid-1234",
+            "ScriptBlockText": "Get-Process",
+        },
+    }
+    trimmed = allocation.for_prompt(rec)
+    fields = trimmed["fields"]
+    assert "MessageNumber" not in fields
+    assert "MessageTotal" not in fields
+    assert "ScriptBlockId" not in fields
+    assert fields.get("ScriptBlockText") == "Get-Process"
+
+
+def test_eventvwr_and_benign_noise_dropped():
+    """eventvwr.exe 및 기타 시스템 관리/정상 도구 노이즈가 원천 배제된다."""
+    # 1. Sysmon eventvwr.exe 직접 실행
+    ev1 = {
+        "ref": "SYSMON#10",
+        "artifact": "evtx:Sysmon",
+        "fields": {
+            "Image": "C:\\Windows\\System32\\eventvwr.exe",
+            "CommandLine": '"C:\\Windows\\system32\\eventvwr.exe"',
+        },
+        "flags": ["unexpected_parent_process"],
+    }
+    assert record_filter.should_drop_record(ev1) is True
+    assert record_filter.is_signal(ev1) is False
+
+    # 2. Sysmon mmc.exe eventvwr.msc (ParentImage: eventvwr.exe)
+    ev2 = {
+        "ref": "SYSMON#14",
+        "artifact": "evtx:Sysmon",
+        "fields": {
+            "Image": "C:\\Windows\\System32\\mmc.exe",
+            "CommandLine": '"C:\\Windows\\system32\\mmc.exe" "C:\\Windows\\system32\\eventvwr.msc"',
+            "ParentImage": "C:\\Windows\\System32\\eventvwr.exe",
+        },
+        "flags": ["shell_spawned"],
+    }
+    assert record_filter.should_drop_record(ev2) is True
+    assert record_filter.is_signal(ev2) is False
+
+    # 3. Prefetch / MFT / USNJRNL eventvwr
+    ev_pf = {
+        "ref": "PF#1",
+        "artifact": "prefetch",
+        "name": "EVENTVWR.EXE",
+        "fields": {"prefetch_file": "EVENTVWR.EXE-12345678.pf"},
+        "flags": ["outside_time_range"],
+    }
+    assert record_filter.should_drop_record(ev_pf) is True
+
+    # 4. DismHost, KAPE, VMware Tools 배치
+    dism = {
+        "ref": "SYSMON#22636",
+        "artifact": "evtx:Sysmon",
+        "fields": {
+            "Image": "C:\\Windows\\Temp\\GUID\\DismHost.exe",
+            "CommandLine": "C:\\Windows\\Temp\\GUID\\dismhost.exe {GUID}",
+        },
+        "flags": ["execution_from_unusual_path"],
+    }
+    assert record_filter.should_drop_record(dism) is True
+
+    kape = {
+        "ref": "SYSMON#43959",
+        "artifact": "evtx:Sysmon",
+        "fields": {
+            "Image": "\\\\100.86.202.1\\KAPE_Tools\\KAPE\\kape.exe",
+            "CommandLine": '"\\\\100.86.202.1\\KAPE_Tools\\KAPE\\kape.exe" --tsource C:',
+        },
+        "flags": ["execution_from_unusual_path"],
+    }
+    assert record_filter.should_drop_record(kape) is True
+
+    vmware = {
+        "ref": "SYSMON#66",
+        "artifact": "evtx:Sysmon",
+        "fields": {
+            "Image": "C:\\Windows\\System32\\cmd.exe",
+            "CommandLine": 'cmd.exe /c ""C:\\Program Files\\VMware\\VMware Tools\\resume-vm-default.bat""',
+        },
+        "flags": ["shell_spawned"],
+    }
+    # 5. AM_Delta_Patch 및 mpengine.dll 윈도우 디펜더 업데이트 노이즈
+    am_rec = {
+        "ref": "USN#587357056",
+        "artifact": "$UsnJrnl",
+        "name": "AM_Delta_Patch_1.459.111.0.exe",
+        "flags": ["file_created"],
+    }
+    assert record_filter.should_drop_record(am_rec) is True
+
+    mp_rec = {
+        "ref": "USN#587362392",
+        "artifact": "$UsnJrnl",
+        "name": "mpengine.dll",
+        "flags": ["file_created"],
+    }
+    assert record_filter.should_drop_record(mp_rec) is True
+
+    # 6. 악성 공격 명령은 정상 유지 (whoami, sqlcmd, schtasks 등)
+    attack_rec = {
+        "ref": "SYSMON#13983",
+        "artifact": "evtx:Sysmon",
+        "fields": {
+            "Image": "C:\\Windows\\System32\\whoami.exe",
+            "CommandLine": "whoami /groups",
+        },
+        "flags": ["discovery_command"],
+    }
+    assert record_filter.should_drop_record(attack_rec) is False
+    assert record_filter.is_signal(attack_rec) is True
+
+    # 7. wazuh-agent 및 wazuh 구성요소 제외
+    wazuh_agent = {
+        "ref": "SYSMON#8220",
+        "artifact": "evtx:Sysmon",
+        "fields": {
+            "Image": "C:\\Program Files (x86)\\ossec-agent\\wazuh-agent.exe",
+            "DestinationIp": "100.94.214.25",
+            "DestinationPort": "1514",
+        },
+        "flags": ["network_connection"],
+    }
+    assert record_filter.should_drop_record(wazuh_agent) is True
+
+    wazuh_child = {
+        "ref": "SYSMON#3883",
+        "artifact": "evtx:Sysmon",
+        "fields": {
+            "Image": "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "CommandLine": 'powershell "$null = secedit /export /cfg $env:temp/secexport.cfg"',
+            "ParentImage": "C:\\Program Files (x86)\\ossec-agent\\wazuh-agent.exe",
+        },
+        "flags": ["shell_spawned"],
+    }
+    assert record_filter.should_drop_record(wazuh_child) is True
+
+    wazuh_dll = {
+        "ref": "USN#133231264",
+        "artifact": "$UsnJrnl",
+        "name": "libwazuhext.dll",
+        "flags": ["file_created"],
+    }
+    assert record_filter.should_drop_record(wazuh_dll) is True
+
+
+def test_select_diverse_limits_repetitive_records_and_preserves_variety():
+    """_select_diverse가 동일 반복 이벤트를 2건으로 제한하고 다양한 공격 명령을 우선 선발하는지 검증."""
+    from src.stage05_interpret.allocation import _select_diverse
+
+    dt = datetime(2026, 9, 10, 10, 0, 0, tzinfo=timezone.utc)
+    # 동일 SMB 네트워크 연결 10건
+    net_items = [
+        (
+            (0, i),
+            dt,
+            {
+                "ref": f"SYSMON#NET{i}",
+                "artifact": "evtx:Sysmon",
+                "fields": {
+                    "Image": "C:\\Python310\\python.exe",
+                    "DestinationIp": "100.70.51.80",
+                    "DestinationPort": "445",
+                },
+            },
+        )
+        for i in range(10)
+    ]
+    # 서로 다른 공격 명령행 3건
+    attack_items = [
+        (
+            (0, 10 + i),
+            dt,
+            {
+                "ref": f"SYSMON#ATTACK{i}",
+                "artifact": "evtx:Sysmon",
+                "fields": {
+                    "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                    "CommandLine": f"powershell.exe -f attack{i}.ps1",
+                },
+            },
+        )
+        for i in range(3)
+    ]
+
+    all_entries = net_items + attack_items
+
+    # 5자리를 배분할 때:
+    # 예전 방식(단순 slice)이라면 net 5건이 전부 독점함.
+    # 2-pass 다양성 선발은: net 2건 + attack 3건 = 5건을 선발해야 함.
+    chosen = _select_diverse(all_entries, limit=5, max_identical=2)
+    assert len(chosen) == 5
+    refs = [item[2]["ref"] for item in chosen]
+    assert refs == ["SYSMON#NET0", "SYSMON#NET1", "SYSMON#ATTACK0", "SYSMON#ATTACK1", "SYSMON#ATTACK2"]
+
+    # 12자리를 배분할 때 (다양성 후보보다 좌석이 많더라도 hard_cap에 의해 과도한 동일 반복 방지):
+    # 1차: net 2건 + attack 3건 = 5건
+    # 2차: deferred된 net은 hard_cap(4건)까지만 2건 추가 = 총 7건 선발 (무의미한 중복 채우기 방지)
+    chosen_12 = _select_diverse(all_entries, limit=12, max_identical=2)
+    assert len(chosen_12) == 7
+    refs_12 = [item[2]["ref"] for item in chosen_12]
+    assert "SYSMON#ATTACK0" in refs_12
+    assert "SYSMON#ATTACK1" in refs_12
+    assert "SYSMON#ATTACK2" in refs_12
+    assert refs_12.count("SYSMON#NET0") == 1
+    assert [r for r in refs_12 if "NET" in r] == ["SYSMON#NET0", "SYSMON#NET1", "SYSMON#NET2", "SYSMON#NET3"]
+
+

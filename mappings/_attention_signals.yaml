@@ -207,3 +207,13 @@ attention_signals:
     # 한 자리를 먹는다 (2026-09-08 실측 확인).
     match_fields: [timestamp]
     any_contains: ['1970-']
+
+  # **시스템 비정상 종료 및 블루스크린 크래시.**
+  # SMBGhost 등 커널 취약점 익스플로잇이나 장애로 인한 잦은 재부팅을
+  # 모델이 무시하지 않고 반드시 보고하도록 보장 레인에 올린다.
+  system_crash_observed:
+    must_review: true
+    flags: [system_crash_recorded]
+    match_fields: [fields.Provider, fields.param1, fields.param2]
+    max_representatives: 3
+

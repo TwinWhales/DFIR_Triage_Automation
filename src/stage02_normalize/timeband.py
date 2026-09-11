@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+import csv
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -236,11 +237,57 @@ _COPYLOG = re.compile(
 _COPYLOG_DEPTH = 2
 
 
+def _read_copylog_max_timestamp(path: Path) -> datetime | None:
+    """CopyLog.csv 내용에서 가장 늦은 복사 시각(CopiedTimestamp)을 읽는다.
+
+    KAPE 파일명 앞머리는 '수집 시작' 시각이라 수집 도중(수 분~수십 분)에 발생한
+    아티팩트나 수집 직전의 활동보다 이를 수 있다. CSV 내부의 CopiedTimestamp
+    중 최댓값을 읽어 실제 수집 완료 시점까지 상한을 넓힌다.
+    """
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            if not header:
+                return None
+            try:
+                col_idx = [h.strip().lstrip("\ufeff").lower() for h in header].index("copiedtimestamp")
+            except ValueError:
+                return None
+
+            max_ts: datetime | None = None
+            for row in reader:
+                if len(row) <= col_idx:
+                    continue
+                raw_val = row[col_idx].strip()
+                if not raw_val:
+                    continue
+                dt_part = raw_val.split(".")[0].rstrip("Z")
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+                    try:
+                        ts = datetime.strptime(dt_part, fmt).replace(
+                            tzinfo=timezone.utc
+                        )
+                        if max_ts is None or ts > max_ts:
+                            max_ts = ts
+                        break
+                    except ValueError:
+                        pass
+            return max_ts
+    except Exception:
+        return None
+
+
 def collection_time(evidence_root: "str | None") -> "datetime | None":
     """증거를 언제 수집했나. 못 찾으면 ``None``.
 
     **못 찾으면 지어내지 않는다.** 상한이 없는 것과 틀린 상한이 있는 것은
     다르다 — 틀린 상한은 조용히 레코드를 잘라 낸다.
+
+    KAPE 로그 파일명 앞머리는 수집 '시작' 시각이다. 수집이 수 분~수십 분간
+    진행되므로, CopyLog.csv 내부의 실제 복사 시각(CopiedTimestamp) 중 가장
+    늦은 값을 읽어 수집 완료 시점을 상한선으로 삼는다. 파일 내용에서 시각을
+    읽지 못하면 파일명의 시작 시각으로 물러선다.
     """
     if not evidence_root:
         return None
@@ -249,18 +296,27 @@ def collection_time(evidence_root: "str | None") -> "datetime | None":
         if not here.is_dir():
             here = here.parent
             continue
+        found: list[datetime] = []
         for entry in sorted(here.glob("*_CopyLog.csv")):
+            candidates: list[datetime] = []
+            csv_ts = _read_copylog_max_timestamp(entry)
+            if csv_ts is not None:
+                candidates.append(csv_ts)
             match = _COPYLOG.match(entry.name)
-            if not match:
-                continue
-            try:
-                return datetime(
-                    int(match["y"]), int(match["m"]), int(match["d"]),
-                    int(match["H"]), int(match["M"]), int(match["S"]),
-                    tzinfo=timezone.utc,
-                )
-            except ValueError:
-                continue
+            if match:
+                try:
+                    fname_ts = datetime(
+                        int(match["y"]), int(match["m"]), int(match["d"]),
+                        int(match["H"]), int(match["M"]), int(match["S"]),
+                        tzinfo=timezone.utc,
+                    )
+                    candidates.append(fname_ts)
+                except ValueError:
+                    pass
+            if candidates:
+                found.append(max(candidates))
+        if found:
+            return max(found)
         here = here.parent
     return None
 

@@ -198,6 +198,15 @@ def enforce_grounding(
             action="record",
         )
 
+    restored_tech = grounding.restore_transit_techniques(scenario, raw)
+    if restored_tech:
+        log.record(
+            STAGE,
+            "uncovered_input",
+            {"field": "techniques", "restored": restored_tech},
+            action="record",
+        )
+
     ungrounded = grounding.ungrounded_techniques(scenario, raw)
     if not ungrounded:
         return scenario

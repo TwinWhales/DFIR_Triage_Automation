@@ -209,6 +209,8 @@ def test_all_shipped_mappings_load(mappings):
         #
         # T1218.011 만 남긴 것은 rundll32 실행이 이 증거에 191건 있어서다.
         "T1218.011",
+        # 시스템 종료 및 재부팅 (POS 등의 잦은 재부팅 / 커널 크래시 / BugCheck)
+        "T1529",
     }
 
 
