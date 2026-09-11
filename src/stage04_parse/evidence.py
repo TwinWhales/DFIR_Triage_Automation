@@ -153,6 +153,46 @@ _NON_USER_PROFILES = frozenset({"public", "default", "default user", "all users"
 #: 볼륨 루트 여부를 판정할 때 훑을 하위 폴더 수 상한.
 _MAX_ROOT_ENTRIES = 200
 
+#: 이벤트 채널 이름의 ``/`` 는 온디스크에서 ``%4`` 로 인코딩된다. 그런데 그
+#: ``%`` 가 수집·전송 과정에서 치환되어 오는 경우가 있다.
+#:
+#: **실측(2026-09-10).** 같은 날 같은 도구로 받은 수집물 셋 중 둘이 ``_4``
+#: 였다 — KIOSK 는 evtx 135개 중 127개, POS 는 109개 중 103개. MGMT 만
+#: ``%4`` 였다. 그래서 KIOSK 의 64MB 짜리 Sysmon 로그가 통째로 "증거에
+#: 없음(수집 누락)" 으로 보고됐고, 그 보고가 **거짓이었다** — 파일은 거기
+#: 있었다. 같은 코드가 ``%4`` 인 MGMT 에서는 정상 동작했다.
+#:
+#: 후보를 아티팩트마다 손으로 늘리면 다음 채널을 추가할 때 빠뜨린다. 그래서
+#: 자리표시자 하나가 변형 전부를 편다(``ArtifactLocation.__post_init__``).
+#: 또 다른 치환이 오면 여기 한 줄 더한다.
+#:
+#: **하이픈 형(``Sysmon-Operational.evtx``)은 여기 없다.** ``%4`` 를 빼는
+#: 것이 아니라 다른 글자로 바꾸는 변형만 담는다 — 하이픈 형은 글자 수가
+#: 달라 기계적으로 펼 수 없어 ``FILE_LAYOUT`` 에 손으로 적혀 있다.
+_SEPARATOR_CANONICAL = "%4"
+_SEPARATOR_VARIANTS: tuple[str, ...] = ("%4", "_4", "%254", "#4")
+
+
+def _expand_separator(names: "tuple[str, ...]") -> "tuple[str, ...]":
+    """``%4`` 가 든 이름마다 표기 변형을 뒤에 덧붙인다. 순서는 지킨다.
+
+    선언된 이름이 **먼저** 온다. 정상 표기를 먼저 시도해야 변형이 우연히
+    맞는 다른 파일을 집어 드는 일이 없다.
+    """
+    expanded: list[str] = []
+    for name in names:
+        for variant in _SEPARATOR_VARIANTS:
+            candidate = (
+                name.replace(_SEPARATOR_CANONICAL, variant)
+                if _SEPARATOR_CANONICAL in name
+                else name
+            )
+            if candidate not in expanded:
+                expanded.append(candidate)
+            if _SEPARATOR_CANONICAL not in name:
+                break
+    return tuple(expanded)
+
 
 @dataclass(frozen=True)
 class ArtifactLocation:
@@ -187,6 +227,17 @@ class ArtifactLocation:
     #: 폴더 전체를 한 아티팩트로 묶을 수 있었지만, SQLite 에는 그런 값이
     #: 없습니다. 고르지 않은 프로필은 매니페스트에 실려 되짚을 수 있습니다.
     user_paths: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """``%4`` 가 든 후보마다 표기 변형을 편다(``_expand_separator``).
+
+        **선언한 자리에서 펴지 않고 여기서 펴는 이유.** ``FILE_LAYOUT`` 은
+        사람이 읽는 표라, 채널 하나에 후보가 네 줄씩 늘면 무엇이 정본인지
+        알 수 없게 된다. 새 채널을 추가하는 사람도 변형을 적어야 한다는
+        것을 모른다 — 그래서 그 일을 자료구조가 한다.
+        """
+        object.__setattr__(self, "relative_paths", _expand_separator(self.relative_paths))
+        object.__setattr__(self, "filenames", _expand_separator(self.filenames))
 
     @property
     def is_directory(self) -> bool:
@@ -427,6 +478,54 @@ def _user_expectations(location: ArtifactLocation) -> "tuple[str, ...]":
     return tuple(f"{USER_ROOT}/<사용자>/{relative}" for relative in location.user_paths)
 
 
+def _near_misses(root: Path, location: ArtifactLocation) -> "tuple[str, ...]":
+    """기대 폴더에 **이름만 다른** 파일이 있는지 본다. 찾아도 읽지 않는다.
+
+    ``_expand_separator`` 가 아는 변형은 이미 후보로 펴 두었으므로, 여기까지
+    왔다는 것은 **우리가 모르는 표기**가 왔다는 뜻이다. 그래서 변형 목록으로
+    찾지 않고 채널 이름까지의 접두어와 그 뒤의 꼬리로 찾는다 — 가운데가
+    무엇으로 치환됐든 걸린다.
+
+    **왜 읽지 않고 알리기만 하나.** 이름이 다른 파일을 말없이 집어 들면
+    "우리가 무엇을 읽었는가" 가 흐려진다. 이 도구의 보고서는 어느 파일에서
+    나온 레코드인지를 매니페스트에 적는데, 추측으로 고른 파일이 거기 실리면
+    그 기록이 근거가 아니라 짐작이 된다. 사람이 보고 판단할 자리다.
+
+    **이 자리가 있는 이유.** 2026-09-10 수집물에서 ``%4`` 가 ``_4`` 로 와
+    64MB 짜리 Sysmon 로그가 "증거에 없음(수집 누락)" 으로 보고됐다. 그
+    문장은 거짓이었고, 그것을 믿은 분석은 "수집을 다시 해야 한다"는 틀린
+    결론으로 갔다. **못 본 것을 못 봤다고 밝히는 것으로는 부족하고, 못 본
+    이유가 맞아야 한다.**
+    """
+    found: list[str] = []
+    for relative in location.relative_paths:
+        if _SEPARATOR_CANONICAL not in relative:
+            continue
+        head, _, tail = relative.rpartition("/")
+        prefix, _, suffix = tail.partition(_SEPARATOR_CANONICAL)
+        folder = _resolve_directory(root, head) if head else root
+        if folder is None:
+            continue
+        try:
+            children = sorted(folder.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            continue
+        for child in children:
+            name = child.name.lower()
+            if not name.startswith(prefix.lower()) or not name.endswith(suffix.lower()):
+                continue
+            if name == tail.lower() or not child.is_file():
+                continue
+            try:
+                size = child.stat().st_size
+            except OSError:
+                continue
+            entry = f"{child.relative_to(root)} ({size:,}바이트)"
+            if entry not in found:
+                found.append(entry)
+    return tuple(found)
+
+
 @dataclass(frozen=True)
 class Located:
     """찾아낸 아티팩트와 **어떻게 찾았는지**.
@@ -642,7 +741,20 @@ class FileSource:
             expected = ", ".join(f"{d}/*{location.directory_suffix}" for d in location.directory_paths)
         else:
             expected = ", ".join(location.relative_paths + _user_expectations(location))
-        raise ArtifactNotFound(f"{artifact}: {self.root} 에서 찾지 못함 (기대 위치: {expected})")
+        message = f"{artifact}: {self.root} 에서 찾지 못함 (기대 위치: {expected})"
+        if location is not None and not location.is_directory:
+            # 이름만 다른 파일이 거기 있으면 **"수집 누락"이 아니다.** 사유를
+            # 틀리게 적으면 분석이 "다시 수집하라"로 가는데, 다시 수집해도
+            # 같은 이름으로 올 뿐이다(`_near_misses`).
+            nearby = _near_misses(self.root, location)
+            if nearby:
+                message += (
+                    f". **다만 이름이 다른 파일이 같은 자리에 있습니다: "
+                    f"{', '.join(nearby)}.** 수집이 누락된 것이 아니라 표기가 "
+                    f"다를 수 있습니다 — 같은 채널이 맞는지 확인하고, 맞으면 "
+                    f"evidence.py 의 _SEPARATOR_VARIANTS 에 그 표기를 더하십시오"
+                )
+        raise ArtifactNotFound(message)
 
     def available(self) -> list[str]:
         """제자리 또는 루트에서 바로 찾을 수 있는 아티팩트.

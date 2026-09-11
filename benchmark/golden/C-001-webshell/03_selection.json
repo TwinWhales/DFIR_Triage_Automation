@@ -2,7 +2,7 @@
   "case_id": "C-001",
   "stage": "03_select",
   "schema_version": "1.0",
-  "generated_at": "2026-09-10T08:25:59Z",
+  "generated_at": "2026-09-11T06:03:13Z",
   "generator": "select.py",
   "mapping_table_version": "1.4",
   "selected": [
@@ -55,9 +55,21 @@
       "priority": 2,
       "scope": {
         "event_ids": [
+          1102,
+          4624,
+          4625,
+          4672,
+          4698,
+          4699,
+          4702,
           4720,
           4728,
-          4732
+          4732,
+          4738,
+          4778,
+          4779,
+          5140,
+          5145
         ],
         "time_range": {
           "start": "2026-07-18T00:00:00Z",
@@ -66,7 +78,7 @@
       },
       "reason": {
         "technique": "T1136.001",
-        "rationale": "계정 생성 및 권한 그룹 추가"
+        "rationale": "계정 생성 및 권한 그룹 추가 (바탕으로 1102, 4624, 4625, 4672, 4698, 4699, 4702, 4738, 4778, 4779, 5140, 5145 추가)"
       }
     },
     {
@@ -88,6 +100,25 @@
       "reason": {
         "technique": "T1505.003",
         "rationale": "상관분석 바탕 — 애플리케이션 로그인 성공·실패와 감사 — 윈도우 로그온에는 없는 축. 이번 시나리오의 어떤 기법도 요청하지 않았다"
+      }
+    },
+    {
+      "artifact": "evtx:PowerShell",
+      "tier": 1,
+      "priority": 3,
+      "scope": {
+        "event_ids": [
+          4103,
+          4104
+        ],
+        "time_range": {
+          "start": "2026-07-18T00:00:00Z",
+          "end": "2026-07-22T23:59:59Z"
+        }
+      },
+      "reason": {
+        "technique": "T1505.003",
+        "rationale": "상관분석 바탕 — 스크립트블록·모듈 로깅 — 난독화된 명령의 실제 내용이 남는 자리. 이번 시나리오의 어떤 기법도 요청하지 않았다"
       }
     }
   ],
@@ -177,10 +208,6 @@
       "reason": "식별된 기법에 매핑된 아티팩트가 아님"
     },
     {
-      "artifact": "evtx:PowerShell",
-      "reason": "식별된 기법에 매핑된 아티팩트가 아님"
-    },
-    {
       "artifact": "kiosk_app_config",
       "reason": "본 버전 미지원 (커스텀 JSON 파서 없음 — 추후 구현 시 교체)"
     },
@@ -218,8 +245,8 @@
     }
   ],
   "stats": {
-    "selected_count": 4,
+    "selected_count": 5,
     "deferred_count": 2,
-    "excluded_count": 26
+    "excluded_count": 25
   }
 }

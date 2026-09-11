@@ -177,6 +177,66 @@ def test_alternate_usnjrnl_names_are_recognised(tmp_path):
     assert "$UsnJrnl" in evidence.FileSource(root).available()
 
 
+# ------------------------------------------ 채널 이름의 %4 표기 (실측 회귀)
+
+
+def test_an_underscore_separator_is_still_the_same_channel(tmp_path):
+    """실측 회귀 (docs/limitations-log.md).
+
+    2026-09-10 수집물 셋 중 둘에서 ``%4`` 가 ``_4`` 로 왔다. 그 때문에
+    64MB 짜리 Sysmon 로그가 통째로 "증거에 없음(수집 누락)"으로 보고됐다.
+    파일은 거기 있었다.
+    """
+    root = tmp_path / "C"
+    logs = "Windows/System32/winevt/Logs"
+    _write(root / f"{logs}/Microsoft-Windows-Sysmon_4Operational.evtx", b"evtx")
+
+    found = evidence.FileSource(root).locate("evtx:Sysmon")
+    assert found is not None
+    assert found.path.name == "Microsoft-Windows-Sysmon_4Operational.evtx"
+
+
+def test_the_declared_spelling_wins_when_both_are_present(tmp_path):
+    # 변형은 정본 뒤에 붙는다. 둘 다 있으면 정본을 읽어야 한다 —
+    # 그러지 않으면 어느 파일을 읽었는지가 수집물마다 달라진다.
+    root = tmp_path / "C"
+    logs = "Windows/System32/winevt/Logs"
+    _write(root / f"{logs}/Microsoft-Windows-Sysmon%4Operational.evtx", b"canonical")
+    _write(root / f"{logs}/Microsoft-Windows-Sysmon_4Operational.evtx", b"variant")
+
+    with evidence.FileSource(root).open("evtx:Sysmon") as stream:
+        assert stream.read() == b"canonical"
+
+
+def test_an_unknown_separator_is_reported_as_a_near_miss_not_a_missing_file(tmp_path):
+    """모르는 표기로 와도 **"수집 누락"이라고 말하지 않는다.**
+
+    사유를 틀리게 적으면 분석이 "다시 수집하라"로 가는데, 다시 수집해도
+    같은 이름으로 올 뿐이다. 읽지는 않는다 — 사람이 판단할 자리다.
+    """
+    root = tmp_path / "C"
+    logs = "Windows/System32/winevt/Logs"
+    _write(root / f"{logs}/Microsoft-Windows-Sysmon@@4Operational.evtx", b"evtx")
+
+    with pytest.raises(evidence.ArtifactNotFound) as caught:
+        evidence.FileSource(root).open("evtx:Sysmon")
+
+    message = str(caught.value)
+    assert "이름이 다른 파일이 같은 자리에 있습니다" in message
+    assert "Microsoft-Windows-Sysmon@@4Operational.evtx" in message
+
+
+def test_a_genuinely_missing_channel_still_reads_as_missing(tmp_path):
+    # 근접 이름 경고가 "없다"를 "있을지도 모른다"로 바꾸면 안 된다.
+    root = tmp_path / "C"
+    _write(root / "Windows/System32/winevt/Logs/Security.evtx", b"evtx")
+
+    with pytest.raises(evidence.ArtifactNotFound) as caught:
+        evidence.FileSource(root).open("evtx:Sysmon")
+
+    assert "이름이 다른 파일" not in str(caught.value)
+
+
 # ------------------------------------------- 0바이트 껍데기 (실측 회귀)
 
 

@@ -78,8 +78,18 @@ def test_real_selection_groups_cleanly():
     # 명령행이 EID 1 에 있다), 바탕이 그 앞에서 이미 열고 있었다.
     # Application 은 같은 날 바탕에 더한 것으로 이 시나리오의 어느 기법도
     # 요청하지 않는다 — SQL Server 가 없는 기계에서는 0건이라 공짜다.
+    #
+    # `evtx:PowerShell` 도 같은 자리다(2026-09-11). 스크립트블록 로깅이
+    # 꺼진 기계에서는 0건이라 공짜이고, 켜져 있으면 난독화된 명령의 실제
+    # 내용이 거기에만 남는다.
     grouped = group_by_artifact(io.read_json(GOLDEN / "03_selection.json"))
-    assert set(grouped) == {"$MFT", "evtx:Security", "evtx:Sysmon", "evtx:Application"}
+    assert set(grouped) == {
+        "$MFT",
+        "evtx:Security",
+        "evtx:Sysmon",
+        "evtx:Application",
+        "evtx:PowerShell",
+    }
     assert grouped["$MFT"]["extensions"] == [".aspx", ".asp", ".ashx", ".asmx"]
 
 
@@ -116,8 +126,15 @@ def test_parse_records_which_artifacts_it_could_not_read(tmp_path, capsys):
 
     logged = list(io.read_jsonl(tmp_path / "errors.jsonl"))
     skipped = {entry["detail"]["value"] for entry in logged if entry["action"] == "skip"}
-    # 바탕으로 들어온 `evtx:Sysmon` 도 이 픽스처 증거에는 없어 함께 건너뛴다.
-    assert skipped == {"$MFT", "evtx:Security", "evtx:Sysmon", "evtx:Application"}
+    # 바탕으로 들어온 `evtx:Sysmon`·`evtx:PowerShell` 도 이 픽스처 증거에는
+    # 없어 함께 건너뛴다.
+    assert skipped == {
+        "$MFT",
+        "evtx:Security",
+        "evtx:Sysmon",
+        "evtx:Application",
+        "evtx:PowerShell",
+    }
     assert logged[-1]["action"] == "abort"
     assert "--skip-existing" in logged[-1]["detail"]["message"]
 
