@@ -407,7 +407,7 @@ def test_behavior_routing_preserves_reverse_shell_and_defender_candidates():
             "DestinationIp": "192.0.2.10",
             "DestinationPort": "4444",
         },
-        "flags": ["suspicious_c2_port_connection", "network_connection"],
+        "flags": ["uncommon_destination_port", "network_connection"],
     }
     defender = {
         "ref": "SYSMON#4",

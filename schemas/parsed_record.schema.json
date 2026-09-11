@@ -57,7 +57,7 @@
           "system_crash_recorded",
           "remote_interactive_logon",
           "credential_config_accessed",
-          "suspicious_c2_port_connection",
+          "uncommon_destination_port",
           "database_table_dumped",
           "security_tool_config_changed",
           "persistence_command",

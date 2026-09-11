@@ -785,29 +785,89 @@ def test_an_ordinary_command_is_not_a_credential_config_access():
 def test_a_connection_to_the_reverse_shell_port_is_flagged():
     r"""`network_connection` 은 EID 3 전량에 붙어 신호가 되지 못한다.
 
-    실측(세 노드): 4444 로 나간 연결은 **3건이 전부**다 —
-    키오스크의 powershell 둘(Stage 1)과 POS 의 spoolsv 하나(Stage 3).
     POS 쪽은 SMBGhost 가 사전 인증 RCE 라 로그온 이벤트가 없어, 착지를
     말해 주는 것이 이 아웃바운드뿐이다.
     """
     record = _sysmon(3, Image=r"C:\Windows\System32\spoolsv.exe",
                      DestinationIp="100.67.251.20", DestinationPort="4444")
-    assert "suspicious_c2_port_connection" in flagging.apply(record)["flags"]
+    assert "uncommon_destination_port" in flagging.apply(record)["flags"]
 
 
-def test_a_port_that_merely_contains_4444_is_not_flagged():
-    """14444 는 유효한 포트다 — 포함 검사로 쓰면 걸린다."""
-    record = _sysmon(3, Image=r"C:\app\svc.exe", DestinationIp="10.0.0.5",
-                     DestinationPort="14444")
-    assert "suspicious_c2_port_connection" not in flagging.apply(record)["flags"]
+def test_the_rule_does_not_depend_on_the_attacker_choosing_4444():
+    """**이 룰의 요지다.** 전신은 포트 4444 하나를 박아 둔 과적합이었다.
+
+    공격자가 포트를 바꾸면 조용히 0건이 되던 자리라, 축을 뒤집어 **정상
+    포트를 열거하고 그 밖**을 본다. 그러면 숫자를 바꾸는 행위 자체가 목록
+    밖으로 나가는 행위가 된다.
+    """
+    for port in ("4444", "9001", "1337", "31337", "8000", "5357"):
+        record = _sysmon(3, Image=r"C:\tools\x.exe", DestinationIp="1.2.3.4",
+                         DestinationPort=port)
+        assert "uncommon_destination_port" in flagging.apply(record)["flags"], port
+
+
+def test_ordinary_service_ports_are_not_flagged():
+    """열거가 정상 쪽이므로 흔한 서비스는 조용해야 한다."""
+    for port in ("443", "80", "53", "445", "3389", "1433", "5355", "137"):
+        record = _sysmon(3, Image=r"C:\tools\x.exe", DestinationIp="1.2.3.4",
+                         DestinationPort=port)
+        assert "uncommon_destination_port" not in flagging.apply(record)["flags"], port
+
+
+def test_ephemeral_destination_ports_are_not_flagged():
+    """목적지가 임시 포트면 **받은 쪽이 고른 번호**이지 열어 둔 서비스가 아니다.
+
+    실측(Test1): 이 선이 없으면 svchost 의 SSDP·WSD 탐색이 키오스크에서만
+    19건 걸린다. 선을 그으면 그 19건이 전부 빠진다.
+    """
+    for port in ("49152", "52268", "57335", "65535"):
+        record = _sysmon(3, Image=r"C:\Windows\system32\svchost.exe",
+                         DestinationIp="192.168.0.1", DestinationPort=port)
+        assert "uncommon_destination_port" not in flagging.apply(record)["flags"], port
+
+
+def test_an_unreadable_port_falls_silent_instead_of_flagging_everything():
+    """부정 조건이지만 전량을 잡지 않는다 — 형식 가정이 긍정 쪽에 있다.
+
+    파서가 포트를 다른 모양으로 주면 이 handler 는 조용히 0건이 되어야지,
+    EID 3 전량이 되면 안 된다.
+    """
+    for value in (None, "", "n/a", "-", "포트없음"):
+        record = _sysmon(3, Image=r"C:\tools\x.exe", DestinationIp="1.2.3.4",
+                         DestinationPort=value)
+        assert "uncommon_destination_port" not in flagging.apply(record)["flags"], repr(value)
 
 
 def test_the_port_is_matched_whether_the_parser_gives_a_string_or_a_number():
     """evtx 파서가 숫자로 줄지 문자열로 줄지는 이 룰이 답할 질문이 아니다."""
     for value in ("4444", 4444):
-        record = _sysmon(3, Image=r"C:\x\y.exe", DestinationIp="1.2.3.4",
+        record = _sysmon(3, Image=r"C:\tools\x.exe", DestinationIp="1.2.3.4",
                          DestinationPort=value)
-        assert "suspicious_c2_port_connection" in flagging.apply(record)["flags"], repr(value)
+        assert "uncommon_destination_port" in flagging.apply(record)["flags"], repr(value)
+
+
+def test_a_site_can_declare_its_own_service_ports_in_the_vocabulary():
+    """오탐을 코드가 아니라 어휘로 끈다 — known_volume_roots 와 같은 규약.
+
+    이 환경 앱의 API 포트(5000~5002)가 8건 걸리는데, 그것이 정상임을 아는
+    것은 사이트 지식이다. 시험이 조건을 직접 만들어 저장소 상태에 기대지
+    않는다.
+    """
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "_flags.yaml").write_text(
+            "version: 1\nservice_ports: [5000, 5001, 5002]\n", encoding="utf-8"
+        )
+        flagging.service_ports.cache_clear()
+        try:
+            ports = flagging.service_ports(tmp)
+            assert 5002 in ports, "사이트가 적은 포트가 정상으로 들어온다"
+            assert 443 in ports, "기본 목록을 대체하지 않고 더한다"
+            assert 4444 not in ports, "공격자가 고른 포트는 여전히 목록 밖이다"
+        finally:
+            flagging.service_ports.cache_clear()
 
 
 def test_the_credential_config_rule_is_not_tied_to_this_lab_filenames():

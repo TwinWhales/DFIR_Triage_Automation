@@ -624,6 +624,93 @@ def known_volume_roots(directory: str | None = None) -> frozenset[str]:
 
 
 
+#: 목적지 포트로 "서비스"라고 볼 것들. 사이트 목록이 ``_flags.yaml`` 의
+#: ``service_ports`` 로 얹힌다(``known_volume_roots`` 와 같은 규약).
+#:
+#: **열거는 정상 쪽이다.** 공격 포트를 열거하면 공격자가 숫자 하나만 바꿔도
+#: 0건이 되지만(이 룰의 전신이 4444 하나였다), 정상 쪽을 열거하면 바꾼 숫자가
+#: 오히려 목록 밖으로 나온다.
+DEFAULT_SERVICE_PORTS = frozenset({
+    20, 21, 22, 23, 25, 53, 67, 68, 69, 80, 88, 110, 123, 135, 137, 138, 139,
+    143, 161, 162, 389, 443, 445, 464, 465, 514, 546, 547, 587, 593, 636,
+    993, 995, 1433, 1434, 1701, 1723, 1900, 3268, 3269, 3389, 3702, 5353,
+    5355, 5985, 5986, 8080, 8443,
+})
+
+#: 동적·사설 포트의 바닥(IANA, 그리고 Vista 이후 윈도우의 기본 임시 포트
+#: 범위). 목적지가 이 위면 **연결을 받은 쪽이 고른 번호**이지 누군가 열어 둔
+#: 서비스가 아니다.
+#:
+#: 실측(Test1 세 노드, 2026-09-11): 이 선이 없으면 svchost 의 SSDP·WSD 탐색이
+#: 키오스크에서만 19건 걸린다(fe80::·게이트웨이로 57335·62952·59357·49401).
+#: 선을 그으면 그 19건이 전부 빠지고 남는 것이 10건이다.
+EPHEMERAL_PORT_FLOOR = 49152
+
+
+@functools.lru_cache(maxsize=None)
+def service_ports(directory: str | None = None) -> frozenset[int]:
+    """서비스로 볼 목적지 포트. ``_flags.yaml`` 을 기본값 **위에** 얹는다.
+
+    ``known_volume_roots`` 와 같은 이유로 대체가 아니라 합집합이다 — 사이트
+    목록이 443 을 다시 적어야 한다면 한 줄 빠뜨리는 순간 HTTPS 전량이 걸린다.
+    """
+    path = Path(directory or mappings_dir()) / "_flags.yaml"
+    if not path.is_file():
+        return DEFAULT_SERVICE_PORTS
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    extra: set[int] = set()
+    for value in data.get("service_ports") or []:
+        try:
+            extra.add(int(str(value).strip()))
+        except (TypeError, ValueError):
+            continue
+    return DEFAULT_SERVICE_PORTS | extra
+
+
+def _uncommon_destination_port(record: dict[str, Any], ctx: Context) -> bool:
+    """나간 연결의 목적지가 **알려진 서비스도, 임시 포트도 아닌가.**
+
+    전신은 ``목적지 포트 == 4444`` 였다. 그 룰의 note 가 스스로 한계를 적어
+    두고 있었다 — *"4444 는 도구 기본값의 관용이지 공격의 정의가 아니다.
+    공격자가 포트를 바꾸면 조용히 0건이 된다"*. 이 랩의 실측 3건을 근거로
+    숫자 하나를 박은 것이라, 그 숫자를 바꾼 다음 사건에서는 아무것도 못 잡는다.
+
+    **축을 뒤집는다.** 공격 포트를 열거하는 대신 **정상 포트를 열거하고 그
+    밖을 본다.** 그러면 공격자가 숫자를 바꾸는 행위 자체가 목록 밖으로
+    나가는 행위가 된다.
+
+    실측(``Test1`` 세 노드, 2026-09-11) — Sysmon EID 3 전량 966건 중:
+
+    .. code-block:: text
+
+        KIOSK  529건 → 10건   4444 ×3 · 8000 ×2 · 5000/5001 ×3 · 5357 ×2
+        POS     75건 →  6건   4444 ×1(spoolsv.exe) · 5002 ×5
+        MGMT   362건 →  1건   (없음 — 52268 은 임시 포트라 빠진다)
+
+    **전신이 놓치던 것을 잡는다.** 같은 데이터에서 4444 룰은 4건이었고, 이
+    룰은 그 4건을 포함하면서 공격자 HTTP 서버(`:8000`, 시나리오 Stage 1 의
+    certutil 다운로드 착지점)와 nmap 의 스캔 포트를 함께 잡는다.
+
+    **오탐이 남는다.** 5000~5002 는 이 환경 앱의 API 포트라 8건이 걸린다.
+    그것이 정상임을 아는 것은 사이트 지식이므로 ``_flags.yaml`` 의
+    ``service_ports`` 에 적으면 빠진다 — **코드가 아니라 어휘의 자리다.**
+
+    **악성 판정이 아니다.** "흔히 보는 서비스 포트가 아니다"만 말한다.
+
+    부정 조건이지만 전량을 잡지 않는다. 형식 가정이 긍정 쪽에 있어서다 —
+    포트를 정수로 못 읽으면 참이 아니라 **거짓**을 낸다. 파서가 필드를 다른
+    이름으로 주면 이 handler 는 조용히 0건이 되지, 966건이 되지 않는다.
+    """
+    raw = (record.get("fields") or {}).get("DestinationPort")
+    try:
+        port = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return False
+    if port <= 0 or port >= EPHEMERAL_PORT_FLOOR:
+        return False
+    return port not in service_ports()
+
+
 def _outside_known_volume_root(record: dict[str, Any], ctx: Context) -> bool:
     r"""실행 파일이 **사람이 만든 최상위 폴더** 안에 있는가.
 
@@ -729,6 +816,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any], Context], bool]] = {
     "outside_selected_time_range": _outside_selected_time_range,
     "parent_is_another_program": _parent_is_another_program,
     "outside_known_volume_root": _outside_known_volume_root,
+    "uncommon_destination_port": _uncommon_destination_port,
 }
 
 
