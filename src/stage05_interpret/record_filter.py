@@ -40,10 +40,16 @@ __all__ = [
     "NO_TIME",
     "OUTSIDE_WINDOW",
     "SI_TIME_FIELDS",
+    "BENIGN_POWERSHELL_PATTERNS",
+    "BENIGN_IMAGE_PATTERNS",
+    "BENIGN_COMMAND_PATTERNS",
+    "BENIGN_FILENAMES",
     "AnchorIndex",
     "activity_times",
+    "is_benign_powershell",
     "is_signal",
     "nearest",
+    "should_drop_record",
 ]
 
 #: 전달할 최대 레코드 수.
@@ -71,6 +77,52 @@ OUTSIDE_WINDOW = "outside_time_range"
 #: 선별 범위 밖 레코드가 우선 전달되어, 시간 범위를 좁힌 의미가 사라진다.
 NON_SIGNAL_FLAGS = frozenset({OUTSIDE_WINDOW})
 
+BENIGN_POWERSHELL_PATTERNS = (
+    "$__cmdletization",
+    "Microsoft.PowerShell.Cmdletization",
+    "UtilityFunctions.ps1",
+    "CL_Utility.ps1",
+    "CL_LocalizationData",
+)
+
+BENIGN_POWERSHELL_PATHS = (
+    "\\windows\\temp\\sdiag_",
+    "\\windows\\diagnostics\\",
+    "utilityfunctions.ps1",
+    "cl_utility.ps1",
+    "__psscriptpolicytest",
+)
+BENIGN_IMAGE_PATTERNS = (
+    "\\eventvwr.exe",
+    "\\dismhost.exe",
+    "\\kape.exe",
+    "\\wazuh-agent.exe",
+    "\\restart-wazuh.exe",
+)
+
+BENIGN_COMMAND_PATTERNS = (
+    "eventvwr.exe",
+    "eventvwr.msc",
+    "resume-vm-default.bat",
+    "suspend-vm-default.bat",
+    "\\kape.exe",
+    "\\kape_tools",
+    "wazuh-agent.exe",
+    "restart-wazuh.exe",
+)
+
+BENIGN_FILENAMES = (
+    "eventvwr.exe",
+    "eventvwr.msc",
+    "dismhost.exe",
+    "kape.exe",
+    "mpengine.dll",
+    "wazuh-agent.exe",
+    "restart-wazuh.exe",
+    "libwazuhext.dll",
+    "libwazuhshared.dll",
+)
+
 #: MFT 레코드에서 "활동 시각"으로 볼 필드.
 #:
 #: ``$FN``은 제외한다. $SI와 어긋나는 것이 타임스탬프 조작의 신호이지
@@ -83,17 +135,73 @@ SI_TIME_FIELDS = ("si_btime", "si_ctime", "si_mtime", "si_atime")
 #: **tz-aware여야 한다.** 시각이 있는 신호와 같은 리스트에서 정렬되므로
 #: naive를 쓰면 정렬이 ``can't compare offset-naive and offset-aware
 #: datetimes``로 터지고 05단계가 통째로 멈춘다.
-#:
-#: 드문 경우가 아니다. ``$SI`` 타임스탬프가 전부 0인 레코드는
-#: ``filetime_to_datetime``이 ``None``을 주고, 04단계가 거기에
-#: ``zero_timestamp`` 플래그를 붙인다 — 즉 **시각이 없다는 사실 자체가
-#: 그 레코드를 신호로 만든다.** 타임스탬프 조작 흔적이 있는 증거에서
-#: 반드시 만나게 된다.
 NO_TIME = datetime.max.replace(tzinfo=timezone.utc)
+
+
+def is_benign_powershell(record: dict[str, Any]) -> bool:
+    """윈도우 기본 파워셸 모듈 로딩 및 문제해결사 진단 스크립트 레코드인가."""
+    if record.get("artifact") != "evtx:PowerShell":
+        return False
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        return False
+    script = fields.get("ScriptBlockText")
+    if isinstance(script, str) and any(pattern in script for pattern in BENIGN_POWERSHELL_PATTERNS):
+        return True
+    path = fields.get("Path")
+    if isinstance(path, str):
+        path_lower = path.lower()
+        if any(pattern in path_lower for pattern in BENIGN_POWERSHELL_PATHS):
+            return True
+    return False
+
+
+def should_drop_record(record: dict[str, Any]) -> bool:
+    """05단계 sLLM 전달 후보에서 원천 배제할 정상 잡음 레코드인가."""
+    if is_benign_powershell(record):
+        return True
+
+    # 1. 파일명 기반 ($UsnJrnl, $MFT 등)
+    name = str(record.get("name") or record.get("fields", {}).get("FileName", "")).lower()
+    if (
+        name.startswith("__psscriptpolicytest_")
+        or name in BENIGN_FILENAMES
+        or name.startswith("am_delta_patch")
+        or name.startswith("am_engine")
+        or name.startswith("am_base")
+    ):
+        return True
+
+    # 2. 프로세스 실행 / 부모 프로세스 / 명령행 / 파일 경로 기반
+    fields = record.get("fields") if isinstance(record.get("fields"), dict) else {}
+    canonical = record.get("canonical") if isinstance(record.get("canonical"), dict) else {}
+
+    image = str(fields.get("Image") or canonical.get("process_image") or "").lower()
+    parent = str(fields.get("ParentImage") or canonical.get("parent_image") or "").lower()
+    cmdline = str(fields.get("CommandLine") or canonical.get("command_line") or "").lower()
+    path = str(record.get("path") or canonical.get("subject_path") or "").lower()
+
+    if any(image.endswith(pat) or image == pat.lstrip("\\") for pat in BENIGN_IMAGE_PATTERNS):
+        return True
+    if any(pat in cmdline for pat in BENIGN_COMMAND_PATTERNS):
+        return True
+    if any(parent.endswith(pat) for pat in ("\\eventvwr.exe", "\\wazuh-agent.exe")):
+        return True
+    if any(path.endswith(pat) for pat in BENIGN_IMAGE_PATTERNS) or path.endswith("\\mpengine.dll"):
+        return True
+
+    # 3. 프리패치 파일명
+    prefetch_file = str(fields.get("prefetch_file") or "").lower()
+    if any(prefetch_file.startswith(fn.replace(".exe", "")) for fn in ("eventvwr.exe", "dismhost.exe", "kape.exe", "am_delta_patch", "wazuh")):
+        return True
+
+    return False
 
 
 def is_signal(record: dict[str, Any]) -> bool:
     """볼 만하다고 룰이 판정한 레코드인가."""
+    if should_drop_record(record):
+        return False
     return bool(set(record.get("flags") or []) - NON_SIGNAL_FLAGS)
 
 

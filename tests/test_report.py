@@ -785,3 +785,62 @@ def test_every_request_kind_has_a_label():
         for branch in document["properties"]["requests"]["items"]["oneOf"]
     }
     assert kinds == set(report_mod.REQUEST_LABELS)
+
+
+def test_record_detail_formats_process_network_and_security():
+    # 1. Process
+    proc_detail = report_mod._record_detail("SYSMON#1", {
+        "timestamp": "2026-09-10T11:13:23Z",
+        "fields": {
+            "CommandLine": "powershell.exe -ep bypass -f test.ps1",
+            "ParentImage": r"C:\Windows\System32\svchost.exe",
+            "User": r"CORP\admin",
+        }
+    })
+    assert "[2026-09-10T11:13:23Z] SYSMON#1" in proc_detail
+    assert "명령행: `powershell.exe -ep bypass -f test.ps1`" in proc_detail
+    assert "부모: `svchost.exe`" in proc_detail
+    assert "계정: CORP\\admin" in proc_detail
+
+    # 2. Network
+    net_detail = report_mod._record_detail("SYSMON#2", {
+        "timestamp": "2026-09-10T10:17:00Z",
+        "fields": {
+            "Image": r"C:\Python311\python.exe",
+            "SourceIp": "100.68.248.78",
+            "SourcePort": "55274",
+            "DestinationIp": "100.70.51.80",
+            "DestinationPort": "445",
+            "DestinationHostname": "pos-smb.net",
+        }
+    })
+    assert "실행: `python.exe`" in net_detail
+    assert "네트워크: 100.68.248.78:55274 -> 100.70.51.80:445 (pos-smb.net)" in net_detail
+
+    # 3. Security event
+    sec_detail = report_mod._record_detail("EVTX-SEC#100", {
+        "event_id": 4720,
+        "fields": {
+            "TargetUserName": "backdoor",
+            "SubjectUserName": r"IIS APPPOOL\Default",
+        },
+        "flags": ["account_created"],
+    })
+    assert "대상계정: backdoor" in sec_detail
+    assert "주체계정: IIS APPPOOL\\Default" in sec_detail
+    assert "이벤트ID: 4720 (account_created)" in sec_detail
+
+
+def test_report_renders_raw_evidence_details(docs):
+    records = {
+        "MFT#12345": {
+            "ref": "MFT#12345",
+            "path": r"C:\inetpub\upload\shell.aspx",
+        }
+    }
+    context = build_context(
+        docs["verified"], docs["findings"], docs["selection"], docs["scenario"], records=records
+    )
+    text = render(context)
+    assert "> 원본: MFT#12345 — 경로: `C:\\inetpub\\upload\\shell.aspx`" in text
+

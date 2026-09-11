@@ -15,6 +15,7 @@
 웹루트 하위 upload 디렉터리에 shell.aspx가 2026-07-20 03:14:22에 생성되었으며, $SI와 $FN 타임스탬프가 일치하지 않아 타임스탬프 조작 정황이 확인됩니다.
 
 > 근거: $MFT 레코드 12345 (오프셋 0x1E000)
+> 원본: MFT#12345 — 경로: `C:\inetpub\wwwroot\upload\shell.aspx`
 
 ### F2 — T1136.001 Create Account: Local Account [높음]
 
@@ -22,6 +23,8 @@
 
 > 근거: evtx:Security 레코드 40912 (오프셋 0x2A1000)
 > 근거: evtx:Security 레코드 40915 (오프셋 0x2A1D40)
+> 원본: [2026-07-20T03:22:15.0000000Z] EVTX-SEC#40912 — 대상계정: svc_backup | 주체계정: IIS APPPOOL\DefaultAppPool | 이벤트ID: 4720 (account_created)
+> 원본: [2026-07-20T03:22:19.0000000Z] EVTX-SEC#40915 — 대상계정: Administrators | 이벤트ID: 4732 (privileged_group_add)
 
 ## 타임라인
 
@@ -113,4 +116,4 @@
 본 보고서는 자동 생성되었으며 수사상 참고 자료입니다. 포렌식 감정 결과나
 전문가 의견이 아니며, 해석의 타당성은 분석가 검토가 필요합니다.
 
-생성: 2026-09-11T06:06:15Z / report.py
+생성: 2026-09-11T13:24:51Z / report.py

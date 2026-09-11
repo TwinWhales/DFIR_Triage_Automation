@@ -1,0 +1,37 @@
+technique: T1529
+name: "System Shutdown/Reboot"
+os: windows
+
+# 시스템 종료 또는 재부팅(정상/비정상/블루스크린) 관측.
+# POS 등 단말에서 잦은 재부팅, 커널 크래시(BugCheck), 악의적인 시스템 재시작을 포착한다.
+artifacts:
+  - name: evtx:System
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1001, 1074, 6008]
+    rationale: BugCheck(1001), 예기치 않은 종료(6008), 사용자/프로세스에 의한 정상 종료 및 재부팅(1074)
+
+  - name: evtx:Sysmon
+    tier: 1
+    priority: 1
+    scope_template:
+      event_ids: [1]
+    rationale: shutdown.exe 등 재부팅/종료 프로세스 실행 추적
+
+  - name: prefetch
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 재부팅 실행 도구가 확인된 경우
+    rationale: shutdown.exe 등 재부팅 도구 실행 흔적
+
+  - name: $MFT
+    tier: 2
+    priority: 2
+    trigger: Tier1에서 BugCheck 또는 예기치 않은 종료가 확인된 경우
+    scope_template:
+      path_prefix: ["{crashdump_root}"]
+    rationale: 블루스크린 크래시 덤프 생성 시각 및 크기
+
+defaults:
+  crashdump_root: 'C:\Windows\Minidump'

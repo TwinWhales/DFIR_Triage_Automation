@@ -143,3 +143,21 @@ def test_collection_time_is_none_without_a_copylog(tmp_path):
 @pytest.mark.parametrize("value", [None, ""])
 def test_collection_time_handles_a_missing_root(value):
     assert timeband.collection_time(value) is None
+
+
+def test_collection_time_prefers_latest_copied_timestamp_from_csv(tmp_path):
+    """파일명의 시작 시각(11:35)보다 늦은 실제 복사 시각(11:47)을 상한선으로 읽는다."""
+    root = tmp_path / "MGMT_snapshotB" / "C"
+    root.mkdir(parents=True)
+    copylog = tmp_path / "MGMT_snapshotB" / "2026-09-10T11_35_37_9433724_CopyLog.csv"
+    csv_content = (
+        "CopiedTimestamp,SourceFile,DestinationFile\n"
+        "2026-09-10 11:36:00.1234567,C:\\Windows\\a.evtx,\\\\dest\\a.evtx\n"
+        "2026-09-10 11:47:44.9999999,C:\\Windows\\b.evtx,\\\\dest\\b.evtx\n"
+        "2026-09-10 11:40:18.0000000,C:\\Windows\\c.evtx,\\\\dest\\c.evtx\n"
+    )
+    copylog.write_text(csv_content, encoding="utf-8-sig")
+
+    expected = datetime(2026, 9, 10, 11, 47, 44, tzinfo=timezone.utc)
+    assert timeband.collection_time(str(root)) == expected
+

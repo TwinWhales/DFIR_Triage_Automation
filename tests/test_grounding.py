@@ -142,3 +142,20 @@ def test_the_restored_name_survives_the_ungrounded_entity_check():
     scenario = _scenario("T1204.002")
     grounding.restore_named_processes(scenario, RAW_518)
     assert coverage.ungrounded_entities(scenario, RAW_518) == {}
+
+
+def test_restore_transit_techniques_detects_lateral_movement_cues():
+    raw = "2026년 9월 10일, 키오스크에 USB가 꽂힌 뒤 포스기를 지나 관리서버까지 공격이 진행되었습니다."
+    scenario = _scenario("T1091")
+    restored = grounding.restore_transit_techniques(scenario, raw)
+    assert restored == ["T1210"]
+    tech_ids = [t["id"] for t in scenario["techniques"]]
+    assert "T1210" in tech_ids
+    assert "T1091" in tech_ids
+
+
+def test_restore_transit_techniques_does_not_duplicate_if_already_present():
+    raw = "포스기를 지나 관리서버까지 공격이 진행되었습니다."
+    scenario = _scenario("T1210")
+    assert grounding.restore_transit_techniques(scenario, raw) == []
+

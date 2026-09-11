@@ -41,6 +41,7 @@ __all__ = [
     "PROCESS_EXTENSIONS",
     "named_processes",
     "restore_named_processes",
+    "restore_transit_techniques",
     "ungrounded_techniques",
 ]
 
@@ -181,3 +182,50 @@ def ungrounded_techniques(scenario: dict[str, Any], raw: str) -> list[dict[str, 
             }
         )
     return found
+
+
+TRANSIT_KEYWORDS: tuple[str, ...] = (
+    "지나",
+    "거쳐",
+    "경유",
+    "전파",
+    "이동하",
+    "침투하",
+)
+
+
+def restore_transit_techniques(scenario: dict[str, Any], raw: str) -> list[str]:
+    """입력에 원격 횡적 이동이나 경유 서술이 있는데 기법이 누락된 경우 복원한다.
+
+    '키오스크에 USB가 꽂힌 뒤 포스기를 지나 관리서버까지'처럼 한 문장에
+    초기 침투와 횡적 이동이 겹쳐 있을 때 모델이 첫 기법(T1091)만 고르고
+    경유지 공격(T1210: Exploitation of Remote Services)을 누락하는
+    것을 보완한다.
+    """
+    raw_lower = raw.lower()
+    if not any(kw in raw_lower for kw in TRANSIT_KEYWORDS):
+        return []
+
+    techniques = scenario.setdefault("techniques", [])
+    current_ids = {str(t.get("id")) for t in techniques}
+
+    # 이미 횡적이동이나 원격 서비스 기법이 있으면 건드리지 않는다.
+    if any(tid.startswith(("T1021", "T1210")) for tid in current_ids):
+        return []
+
+    # 원문에서 경유 키워드가 포함된 절을 추출
+    evidence_text = raw
+    for clause in re.split(r"[,.\n]", raw):
+        if any(kw in clause.lower() for kw in TRANSIT_KEYWORDS):
+            evidence_text = clause.strip()
+            break
+
+    techniques.append(
+        {
+            "id": "T1210",
+            "name": "Exploitation of Remote Services",
+            "confidence": 0.6,
+            "evidence_text": evidence_text,
+        }
+    )
+    return ["T1210"]

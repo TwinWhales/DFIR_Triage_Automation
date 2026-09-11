@@ -154,6 +154,69 @@ def test_zeroed_timestamps_are_omitted_not_null_not_1601(parser):
     assert "si_btime" not in records[9]
 
 
+def test_win32_long_name_is_preferred_over_dos_short_name():
+    """8.3 단축 이름(DOS)이 긴 이름(Win32)을 덮어쓰지 않아야 한다."""
+    from tests.test_mft_structs import _filetime, _resident_attribute, m
+    from third_party.analyzeMFT.mft_record import MftRecord
+
+    default = dt.datetime(2026, 7, 20, 3, 14, 22, 123456, tzinfo=UTC)
+    fn_win32 = b"".join([
+        m.struct.pack("<QQQQQQQII", 5 | (1 << 48), _filetime(default), _filetime(default), _filetime(default), _filetime(default), 4096, 100, 0x20, 0),
+        bytes([len("exfiltration.py"), 1]),
+        "exfiltration.py".encode("utf-16-le"),
+    ])
+    fn_dos = b"".join([
+        m.struct.pack("<QQQQQQQII", 5 | (1 << 48), _filetime(default), _filetime(default), _filetime(default), _filetime(default), 4096, 100, 0x20, 0),
+        bytes([len("EXFIL~1.PY"), 2]),
+        "EXFIL~1.PY".encode("utf-16-le"),
+    ])
+
+    # Case 1: Win32 first, DOS second
+    si = b"\x00" * 0x30
+    attrs = (
+        _resident_attribute(m.AttributeType.STANDARD_INFORMATION, si, 0)
+        + _resident_attribute(m.AttributeType.FILE_NAME, fn_win32, 1)
+        + _resident_attribute(m.AttributeType.FILE_NAME, fn_dos, 2)
+        + m.struct.pack("<I", m.END_OF_ATTRIBUTES)
+    )
+    data = bytearray(1024)
+    data[0:4] = m.FILE_SIGNATURE
+    m.struct.pack_into("<HHQHHHHIIQHHI", data, 0x04, 0x30, 3, 0, 1, 1, 0x38, 1, 0x38 + len(attrs), 1024, 0, 3, 0, 12345)
+    data[0x38 : 0x38 + len(attrs)] = attrs
+    rec = MftRecord(bytes(data))
+    assert rec.filename == "exfiltration.py"
+    assert rec.dos_name == "EXFIL~1.PY"
+
+    # Case 2: DOS first, Win32 second
+    attrs2 = (
+        _resident_attribute(m.AttributeType.STANDARD_INFORMATION, si, 0)
+        + _resident_attribute(m.AttributeType.FILE_NAME, fn_dos, 1)
+        + _resident_attribute(m.AttributeType.FILE_NAME, fn_win32, 2)
+        + m.struct.pack("<I", m.END_OF_ATTRIBUTES)
+    )
+    data2 = bytearray(1024)
+    data2[0:4] = m.FILE_SIGNATURE
+    m.struct.pack_into("<HHQHHHHIIQHHI", data2, 0x04, 0x30, 3, 0, 1, 1, 0x38, 1, 0x38 + len(attrs2), 1024, 0, 3, 0, 12345)
+    data2[0x38 : 0x38 + len(attrs2)] = attrs2
+    rec2 = MftRecord(bytes(data2))
+    assert rec2.filename == "exfiltration.py"
+    assert rec2.dos_name == "EXFIL~1.PY"
+
+    # Case 3: DOS only (단독 DOS 파일도 누락 없이 읽힘)
+    attrs3 = (
+        _resident_attribute(m.AttributeType.STANDARD_INFORMATION, si, 0)
+        + _resident_attribute(m.AttributeType.FILE_NAME, fn_dos, 1)
+        + m.struct.pack("<I", m.END_OF_ATTRIBUTES)
+    )
+    data3 = bytearray(1024)
+    data3[0:4] = m.FILE_SIGNATURE
+    m.struct.pack_into("<HHQHHHHIIQHHI", data3, 0x04, 0x30, 3, 0, 1, 1, 0x38, 1, 0x38 + len(attrs3), 1024, 0, 3, 0, 12345)
+    data3[0x38 : 0x38 + len(attrs3)] = attrs3
+    rec3 = MftRecord(bytes(data3))
+    assert rec3.filename == "EXFIL~1.PY"
+    assert rec3.dos_name == "EXFIL~1.PY"
+
+
 # ==================================================== scope 를 지키는가
 
 

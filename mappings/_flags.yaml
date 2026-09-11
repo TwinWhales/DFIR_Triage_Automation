@@ -250,7 +250,7 @@ flags:
 
   defender_disabled:
     artifacts: [evtx:Defender]
-    condition: 실시간 보호 비활성(5001)·보호 비활성화 알림(5004)·구성 변경(5007)
+    condition: 실시간 보호 비활성(5001)·보호 비활성화 알림(5004)·구성 변경(5007)·위협 감지(1116)
     note: |
       T1562.001 이 요구한다. `registry:SOFTWARE` 의 정책 값 변경과 짝이다 —
       저쪽은 "무엇을 껐는가"가 레지스트리에 남은 것이고, 이쪽은 **당사자인
@@ -264,7 +264,7 @@ flags:
       when:
         - artifact: evtx:Defender
           match: event_id
-          values: [5001, 5004, 5007]
+          values: [1116, 5001, 5004, 5007]
 
   powershell_logged:
     artifacts: [evtx:PowerShell]
@@ -450,7 +450,6 @@ flags:
             - '\fodhelper.exe'
             - '\computerdefaults.exe'
             - '\sdclt.exe'
-            - '\eventvwr.exe'
 
   database_logon:
     artifacts: [evtx:Application]
@@ -491,29 +490,26 @@ flags:
 
   system_crash_recorded:
     artifacts: [evtx:System]
-    condition: System 채널의 BugCheck(1001)·예기치 않은 종료(6008)
+    condition: System 채널의 BugCheck(1001)·예기치 않은 종료(6008)·정상 종료/재부팅(1074)
     note: |
       **커널 익스플로잇이 실패하면 파랗게 죽는다.** T1210(원격 서비스
-      익스플로잇)이 이 채널을 요청하는데 받는 flag 가 없어
-      `test_every_mapped_event_id_has_a_flag_that_receives_it` 가 잡았다 —
+      익스플로잇) 및 T1529(시스템 종료/재부팅)가 이 채널을 요청하는데 받는 flag 다.
       요청은 하는데 표시가 없으면 그 레코드는 04까지 와서 "볼 이유 없이"
       05에 실린다.
 
       `app_crash` 와 다르다. 저쪽은 `evtx:Application` 의 1000·1001·1002 로
       **응용 프로그램**이 죽은 것이고, 이쪽은 `evtx:System` 이라 **커널**이
-      죽은 것이다. EID 번호가 겹치는 것은 우연이다.
+      죽거나 재기동된 것이다. EID 번호가 겹치는 것은 우연이다.
 
       K-001 Stage 3 의 SMBGhost 는 익스플로잇 뒤 POS 가 블루스크린으로
-      죽을 수 있다고 적혀 있다. 이 수집본에는 해당 레코드가 없지만
-      (`evtx:System` 이 선별되지 않았다), 매핑이 그 자리를 여는 이상 표시는
-      있어야 한다.
+      죽거나 재부팅될 수 있다.
 
-      **악성 판정이 아니다.** 정상 하드웨어 문제로도 난다.
+      **악성 판정이 아니다.** 정상 하드웨어 문제나 정기 재부팅으로도 난다.
     rule:
       when:
         - artifact: evtx:System
           match: event_id
-          values: [1001, 6008]
+          values: [1001, 1074, 6008]
 
   remote_interactive_logon:
     artifacts: [evtx:Security]
@@ -1025,7 +1021,7 @@ flags:
           values: [3, 22]
 
   device_connected:
-    artifacts: [evtx:DriverFrameworks, evtx:KernelPnP, evtx:System]
+    artifacts: [evtx:DriverFrameworks, evtx:KernelPnP, evtx:System, evtx:Security]
     condition: 외부 장치 연결·설치 이벤트
     note: |
       Stage 1. 채널 둘이 같은 사실을 다르게 남긴다 — DriverFrameworks 는
@@ -1034,6 +1030,7 @@ flags:
 
       **이벤트 ID는 공개 자료 기준 추정치다.** 실제 증거로 대조하지 않았다 —
       docs/limitations.md 3-7.
+      evtx:Security 6416은 외부 장치(PnP/USB/HID 등) 인식 이벤트다.
     rule:
       when:
         - artifact: evtx:DriverFrameworks
@@ -1048,6 +1045,9 @@ flags:
         - artifact: evtx:System
           match: event_id
           values: [20001, 10000]
+        - artifact: evtx:Security
+          match: event_id
+          values: [6416]
 
   kiosk_restriction_event:
     artifacts: [evtx:AssignedAccess, evtx:AssignedAccessAdmin, evtx:AssignedAccessBroker]
@@ -1255,7 +1255,11 @@ window_independent:
 # 8건 걸리는데, 그것을 여기 적으면 이 랩에만 맞는 값이 된다. 데이터셋이
 # 하나뿐이라 그 값이 맞는지 잴 수단이 없다(`docs/limitations.md` 3-5).
 # 운영 환경에 얹을 때 그 사이트의 서비스 포트를 적는 자리다.
-service_ports: []
+service_ports:
+  - 1514
+  - 5000
+  - 5001
+  - 5002
 
 known_volume_roots:
   - kiosk
@@ -1339,6 +1343,12 @@ prompt_drop_fields:
   # 터미널 세션 번호. 세션을 가르는 판정은 LogonId 로 하고 있고
   # (privileged_group_add 등), 그쪽은 남긴다.
   - TerminalSessionId
+
+  # PowerShell ScriptBlock 로깅 부가 메타데이터. 분할 로깅 번호와 내부 GUID 는
+  # 악성 여부 판단에 기여하지 않으며 본문(ScriptBlockText)만 보면 충분하다.
+  - MessageNumber
+  - MessageTotal
+  - ScriptBlockId
 
 # 05단계가 소견의 claims 를 조립할 때 레코드에서 꺼내는 필드다. **순서가
 # 뜻을 갖는다** — 앞에 있는 것부터 쓰고, 레코드에 있는 것만 골라 상한까지

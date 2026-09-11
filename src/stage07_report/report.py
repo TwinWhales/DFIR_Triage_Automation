@@ -177,6 +177,7 @@ def build_context(
                 "severity_label": SEVERITY_LABELS.get(finding.get("severity", ""), "참고"),
                 "statement": finding["statement"],
                 "evidence": [_evidence_line(ref, records) for ref in finding.get("refs", [])],
+                "evidence_details": _evidence_details(finding.get("refs", []), records),
                 "verified_details": _verified_details(finding),
             }
         )
@@ -200,6 +201,7 @@ def build_context(
                 "statement": finding["statement"],
                 "reason": reasons.get(finding_id, ""),
                 "evidence": [_evidence_line(ref, records) for ref in finding.get("refs", [])],
+                "evidence_details": _evidence_details(finding.get("refs", []), records),
                 "verified_details": _verified_details(finding),
             }
         )
@@ -347,6 +349,108 @@ def _evidence_line(ref: str, records: dict[str, dict[str, Any]] | None) -> str:
     if record and record.get("offset"):
         return f"{label} (오프셋 {record['offset']})"
     return label
+
+
+def _record_detail(ref: str, record: dict[str, Any]) -> str:
+    """분석가가 원본을 직접 확인할 수 있도록 핵심 원본 정보(명령행, 네트워크, 파일 등)를 요약."""
+    fields = record.get("fields") if isinstance(record.get("fields"), dict) else {}
+    canonical = record.get("canonical") if isinstance(record.get("canonical"), dict) else {}
+
+    ts = record.get("timestamp") or canonical.get("event_time")
+    ts_str = f"[{ts}] " if ts else ""
+
+    parts: list[str] = []
+
+    # 1. 프로세스 실행 / 명령행
+    cmdline = str(fields.get("CommandLine") or canonical.get("command_line") or "").strip()
+    img = str(fields.get("Image") or canonical.get("process_image") or "").strip()
+    parent = str(fields.get("ParentImage") or canonical.get("parent_image") or "").strip()
+    user = str(fields.get("User") or canonical.get("user") or "").strip()
+
+    dip = str(fields.get("DestinationIp") or canonical.get("remote_ip") or "").strip()
+    dport = str(fields.get("DestinationPort") or canonical.get("remote_port") or "").strip()
+    dhost = str(fields.get("DestinationHostname") or "").strip()
+
+    if cmdline:
+        cmd_clean = " ".join(cmdline.split())
+        parts.append(f"명령행: `{cmd_clean}`")
+        if parent:
+            p_name = Path(parent.replace("\\", "/")).name
+            parts.append(f"부모: `{p_name}`")
+        if user:
+            parts.append(f"계정: {user}")
+    elif img:
+        img_disp = Path(img.replace("\\", "/")).name if (dip or dport) else img
+        parts.append(f"실행: `{img_disp}`")
+        if parent:
+            p_name = Path(parent.replace("\\", "/")).name
+            parts.append(f"부모: `{p_name}`")
+        if user:
+            parts.append(f"계정: {user}")
+
+    # 2. 네트워크 연결
+    if dip or dport:
+        sip = str(fields.get("SourceIp") or "").strip()
+        sport = str(fields.get("SourcePort") or "").strip()
+        proto = str(fields.get("Protocol") or "").upper()
+        net_info = f"{sip}:{sport} -> {dip}:{dport}" if sip and sport else f"-> {dip}:{dport}"
+        if dhost and dhost != "-":
+            net_info += f" ({dhost})"
+        elif proto:
+            net_info += f" ({proto})"
+        parts.append(f"네트워크: {net_info}")
+
+    # 3. 보안 이벤트 / 계정 활동
+    target_user = str(fields.get("TargetUserName") or "").strip()
+    subj_user = str(fields.get("SubjectUserName") or "").strip()
+    if target_user:
+        parts.append(f"대상계정: {target_user}")
+    if subj_user and not user:
+        parts.append(f"주체계정: {subj_user}")
+
+    # 4. 파일 정보
+    name = str(record.get("name") or fields.get("FileName") or "").strip()
+    reasons = record.get("reason")
+    if name:
+        r_str = f" ({', '.join(reasons)})" if isinstance(reasons, list) and reasons else ""
+        parts.append(f"파일: `{name}`{r_str}")
+
+    # 5. 스크립트 블록
+    script = str(fields.get("ScriptBlockText") or "").strip()
+    if script and not cmdline:
+        script_snippet = " ".join(script.split())[:150]
+        parts.append(f"스크립트: `{script_snippet}`")
+
+    # 6. 레지스트리 / 일반 경로
+    path = str(record.get("path") or canonical.get("subject_path") or "").strip()
+    if path and not img and not cmdline:
+        parts.append(f"경로: `{path}`")
+
+    # 7. 이벤트 ID 및 플래그 (기타 식별 정보가 부족할 때)
+    event_id = record.get("event_id")
+    if event_id and not (cmdline or img or dip or script):
+        flags = record.get("flags")
+        flag_str = f" ({', '.join(flags)})" if isinstance(flags, list) and flags else ""
+        parts.append(f"이벤트ID: {event_id}{flag_str}")
+
+    summary = " | ".join(parts)
+    return f"{ts_str}{ref} — {summary}" if summary else f"{ts_str}{ref}"
+
+
+def _evidence_details(refs_list: list[str], records: dict[str, dict[str, Any]] | None) -> list[str]:
+    """근거 레코드들의 원본 상세 정보를 추려 돌려준다."""
+    if not records:
+        return []
+    details: list[str] = []
+    seen: set[str] = set()
+    for ref in refs_list:
+        if ref in seen or ref not in records:
+            continue
+        seen.add(ref)
+        line = _record_detail(ref, records[ref])
+        if line:
+            details.append(line)
+    return details
 
 
 def _period(selection: dict[str, Any], scenario: dict[str, Any] | None) -> tuple[str, str]:

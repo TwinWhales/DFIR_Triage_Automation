@@ -36,6 +36,8 @@ class MftRecord:
         self.next_attrid = 0
         self.recordnum = 0
         self.filename = ''
+        self.dos_name = ''
+        self.fn_namespace: Optional[int] = None
         self.parent_ref = 0
         self.filesize = 0
         
@@ -205,18 +207,41 @@ class MftRecord:
         try:
             fn_data = self.raw_record[offset+24:]
             if len(fn_data) >= 64:
-                self.parent_ref = struct.unpack("<Q", fn_data[:8])[0] & 0x0000FFFFFFFFFFFF
+                parent_ref = struct.unpack("<Q", fn_data[:8])[0] & 0x0000FFFFFFFFFFFF
                 timestamps = struct.unpack("<QQQQ", fn_data[8:40])
-                self.fn_times = {
-                    'crtime': WindowsTime(timestamps[0] & 0xFFFFFFFF, timestamps[0] >> 32),
-                    'mtime': WindowsTime(timestamps[1] & 0xFFFFFFFF, timestamps[1] >> 32),
-                    'ctime': WindowsTime(timestamps[2] & 0xFFFFFFFF, timestamps[2] >> 32),
-                    'atime': WindowsTime(timestamps[3] & 0xFFFFFFFF, timestamps[3] >> 32)
-                }
-                self.filesize = struct.unpack("<Q", fn_data[48:56])[0]
+                filesize = struct.unpack("<Q", fn_data[48:56])[0]
                 name_len = struct.unpack("B", fn_data[64:65])[0]
+                namespace = fn_data[65] if len(fn_data) > 65 else 0
                 if len(fn_data) >= 66 + name_len * 2:
-                    self.filename = fn_data[66:66+name_len*2].decode('utf-16-le', errors='replace')
+                    name = fn_data[66:66+name_len*2].decode('utf-16-le', errors='replace')
+                    if namespace == 2:
+                        self.dos_name = name
+
+                    # 네임스페이스 우선순위:
+                    # 0: POSIX, 1: Win32, 2: DOS, 3: Win32 & DOS
+                    # 1) 이름이 아직 없으면 무조건 채택 (DOS 단독 파일도 정상 수용)
+                    # 2) 기존 이름이 DOS(2)였는데 더 나은 이름(Win32, POSIX 등)이 오면 갱신
+                    # 3) 새로 온 이름이 Win32/Win32&DOS(1, 3)이고 기존 이름이 Win32/Win32&DOS가 아니면 갱신
+                    # 4) 이미 긴 이름(Win32 1 또는 3)이 있으면 뒤따라오는 DOS(2) 축약명은 덮어쓰지 못하도록 차단
+                    should_update = False
+                    if not self.filename:
+                        should_update = True
+                    elif self.fn_namespace == 2 and namespace != 2:
+                        should_update = True
+                    elif namespace in (1, 3) and self.fn_namespace not in (1, 3):
+                        should_update = True
+
+                    if should_update:
+                        self.filename = name
+                        self.fn_namespace = namespace
+                        self.parent_ref = parent_ref
+                        self.filesize = filesize
+                        self.fn_times = {
+                            'crtime': WindowsTime(timestamps[0] & 0xFFFFFFFF, timestamps[0] >> 32),
+                            'mtime': WindowsTime(timestamps[1] & 0xFFFFFFFF, timestamps[1] >> 32),
+                            'ctime': WindowsTime(timestamps[2] & 0xFFFFFFFF, timestamps[2] >> 32),
+                            'atime': WindowsTime(timestamps[3] & 0xFFFFFFFF, timestamps[3] >> 32)
+                        }
         except struct.error as e:
             self.log(f"Error parsing FN attribute for record {self.recordnum}: {e}", 1)
 

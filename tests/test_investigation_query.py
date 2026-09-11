@@ -411,3 +411,18 @@ def test_collect_passes_the_manifest_through(tmp_path, scenario, catalog):
     _system, user = backend.calls[0]
     assert "prefetch" not in user
     assert "registry:SOFTWARE" in user
+
+
+def test_pivots_filter_unflagged_noise_while_preserving_signals_and_cited_records():
+    """소견에 인용된 레코드나 플래그가 있는 의심 신호만 pivot에 남고, 무플래그 배경 노이즈는 제외된다."""
+    records = [
+        {"ref": "EVTX-PS#101", "timestamp": "2026-09-10T10:00:00Z", "flags": []},
+        {"ref": "EVTX-SEC#202", "timestamp": "2026-09-10T10:05:00Z", "flags": ["account_created"]},
+        {"ref": "EVTX-PS#1327", "timestamp": "2026-09-02T04:32:19Z", "flags": []},
+    ]
+    cited = {"EVTX-PS#101"}
+    table = investigation.pivots(records, cited_refs=cited)
+    assert "EVTX-PS#101" in table
+    assert "EVTX-SEC#202" in table
+    assert "EVTX-PS#1327" not in table
+
