@@ -161,6 +161,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--max-chunks", type=int, default=8, help="assemble 모드의 최대 질의 조각 수 (기본: 8)")
     parser.add_argument("--num-ctx", type=int, default=16384, help="Ollama 컨텍스트 창 (기본: 16384)")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help=(
+            "05가 모델에 실을 최대 레코드 수. 주지 않으면 live_check.py 의 기본값. "
+            "**--max-chunks 와 함께 올려야 는다** — assemble 모드의 배분 예산이 "
+            "조각당 예산 × 조각 수라, 조각 수를 그대로 두면 예산이 먼저 깎는다"
+        ),
+    )
     loop = parser.add_mutually_exclusive_group()
     loop.add_argument(
         "--loop",
@@ -190,6 +200,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--max-chunks는 1 이상이어야 합니다")
     if args.num_ctx < 1:
         parser.error("--num-ctx는 1 이상이어야 합니다")
+    if args.limit is not None and args.limit < 1:
+        parser.error("--limit은 1 이상이어야 합니다")
     if args.overwrite_campaign and not args.campaign_id:
         parser.error("--overwrite-campaign은 --campaign-id와 함께 사용해야 합니다")
     return args
@@ -429,6 +441,10 @@ def build_live_command(
         "--num-ctx",
         str(args.num_ctx),
     ]
+    # 주지 않으면 붙이지 않는다 — live_check.py 의 기본값이 하나뿐인
+    # 진실이어야 두 도구의 기본이 갈라지지 않는다.
+    if args.limit is not None:
+        command += ["--limit", str(args.limit)]
     if args.loop:
         command.append("--loop")
     if entry.get("volume") is not None:
